@@ -1,0 +1,58 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+*.tsbuildinfo
+
+# Next.js
+web/.next/
+web/out/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Server static files (built from web/)
+server/public/_next/
+server/public/index.html
+server/public/404.html
+server/public/_not-found.html
+server/public/*.txt
+
+# Local runtime data
+.im-training-agent/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# Coverage
+coverage/
+
+# Cache
+.cache/
+.eslintcache
+
+# Local tooling / agent notes
+.qwen/
+src/harness/
+AGENTS.md
+CONFIG.md
+multi-model-handoff.md
+
+# Publish artifacts
+im-training-agent-*.tgz
+publish.js

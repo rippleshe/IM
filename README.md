@@ -1,667 +1,281 @@
-# π Multi-Agent
+# IM-Training-Agent
 
-**Production-Grade Multi-Agent Orchestration Framework**
+> 面向挑战杯“领域知识个性化生成与多智能体协同决策系统研究”赛题的多智能体个性化训练项目。
 
-[![MIT License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.3+-3178C6.svg)](https://www.typescriptlang.org/)
-[![Node.js](https://img.shields.io/badge/Node.js-18+-339933.svg)](https://nodejs.org/)
-[![npm](https://img.shields.io/npm/v/pi-multi-agent.svg)](https://www.npmjs.com/package/pi-multi-agent)
+IM-Training-Agent 的目标不是做一个通用聊天机器人，也不是简单堆叠多个大模型 API，而是面向垂直领域技能训练，探索“学习者差异识别—多智能体协同决策—专业内容生成与校验—交互反馈—动态调整”的完整训练闭环。
 
-[Features](#features) · [Execution Modes](#execution-modes) · [Quick Start](#quick-start) · [Architecture](#architecture) · [API Reference](#api-reference) · [Contributing](#contributing)
+## 1. 项目定位
 
----
+挑战杯赛题要求系统能够：
 
-## Overview
+- 根据不同学习者背景和先验知识形成差异化训练；
+- 由至少 3 个职责明确的智能体完成“分析—生成—校验—决策”协作；
+- 结合学习者画像与领域专业知识，动态生成个性化学习资源；
+- 展示多智能体协作过程、个人学情与资源匹配情况；
+- 根据学习反馈继续调整解释难度、训练路径和后续任务；
+- 通过交叉验证、审核、知识溯源等机制降低专业内容幻觉。
 
-π Multi-Agent is a TypeScript-native framework for building production-grade multi-agent orchestration systems. It implements the complete agent lifecycle — **Goal → Plan → Execute → Evaluate → Replan → Output** — with LLM-powered task decomposition, intelligent model routing, real tool calling, and iterative quality refinement.
+因此，本项目最终应围绕下面的业务主链建设：
 
-The framework provides three distinct execution modes to match task complexity: **Direct** for simple queries, **Deep** for research-intensive multi-agent collaboration, and **Workflow** for dynamic pipeline orchestration.
-
----
-
-## Screenshots
-
-<table align="center">
-  <tr>
-    <td><img src="demo.png" alt="Pi Multi-Agent Dashboard" width="400" /></td>
-    <td><img src="demo1.png" alt="Pi Multi-Agent Deep Research" width="400" /></td>
-  </tr>
-</table>
-
----
-
-## Features
-
-- **Three Execution Modes** — Direct, Deep (Agent Cluster), and Workflow (dynamic pipeline)
-- **Multi-Model Adaptive Routing** — Automatically selects the optimal LLM per task by complexity, priority, and required capabilities
-- **LLM-Powered Deep Planning** — Intelligent task decomposition with dependency graphs, agent role assignment, and quality thresholds
-- **Agent Cluster Execution** — Spawn 10+ specialized sub-agents with real tool calling (web search, data analysis, code execution)
-- **Iterative Quality Loop** — Multi-dimensional evaluation → automated replanning → retry until quality threshold is met
-- **Enhanced Shared Memory** — Inter-agent data passing, session context persistence, and output sharing
-- **6 Collaboration Patterns** — Sequential, Parallel, Debate & Consensus, Expert Team, Critic-Reviewer, Hierarchical
-- **6 Communication Topologies** — Single Agent, Network, Supervisor, Supervisor-as-Tool, Hierarchical, Custom
-- **Dynamic Workflow Engine** — Sandboxed JavaScript execution pipeline with budget control and concurrency management
-- **Real-Time Dashboard** — WebSocket-powered Next.js UI with agent status, tool calls, progress tracking, and report viewer
-- **Type-Safe** — Full TypeScript with strict mode, comprehensive public API types
-
----
-
-## Execution Modes
-
-The framework exposes three execution modes, each optimized for a different task complexity spectrum.
-
-### Direct Mode
-
-Suitable for simple, single-step tasks that do not require multi-agent coordination. A single LLM call processes the request and returns the result. This is the default mode for greetings, Q&A, basic calculations, and short-form content generation.
-
-**Characteristics:**
-- Single LLM invocation
-- Lightweight model routing (cost-optimized)
-- Sub-2-second response time
-- No planning or evaluation overhead
-
-**Use cases:** Chat, Q&A, summarization, code explanation, translation
-
-### Deep Mode (Agent Cluster)
-
-Designed for complex, research-intensive tasks requiring multi-agent collaboration. The system performs LLM-driven task decomposition to generate a structured execution plan, then spawns a cluster of specialized agents that execute sub-tasks in parallel with real tool calling, sharing results through enhanced shared memory.
-
-**Execution Pipeline:**
-
-```
-User Task
-  → DeepPlanner: LLM-driven decomposition into N sub-tasks
-    → Dependency graph construction
-    → Agent role & tool assignment per sub-task
-  → AgentCluster: Parallel/sequential execution
-    → Tool calling (web_search, data_analyzer, etc.)
-    → Shared memory inter-agent data passing
-  → DeepEvaluator: 4-dimension quality assessment
-    → Accuracy · Completeness · Consistency · Format
-  → Quality gate: score < threshold → Replan → Retry (up to N iterations)
-  → Final output synthesis
+```text
+学习者输入 / 学情数据
+        ↓
+学情诊断与任务理解
+        ↓
+多智能体协同决策
+        ↓
+领域知识检索 / 工具调用
+        ↓
+个性化资源生成
+        ↓
+审核、评估与迭代修正
+        ↓
+学习交互与测试反馈
+        ↓
+学习状态更新 / 下一轮训练决策
 ```
 
-**Key capabilities:**
-- Up to 10 sub-tasks per execution, with automatic dependency resolution
-- Per-sub-task model selection (light model for simple sub-tasks, reasoning model for analysis)
-- Real tool calling with input/output tracking and duration measurement
-- Iterative quality improvement loop with configurable evaluation thresholds
-- Real-time progress streaming via WebSocket
+## 2. 当前代码底座
 
-**Use cases:** Market research reports, technical deep-dives, comparative analysis, long-form content generation (30,000+ words), multi-source synthesis
+当前仓库已经具备一套可运行的通用多智能体编排底座，主要包括：
 
-### Workflow Mode (Dynamic Pipeline)
+### 多智能体核心
 
-The most flexible execution mode. An LLM auto-generates a structured JavaScript workflow script based on the task description, then executes it in a sandboxed VM environment with controlled concurrency, token budget, and phase tracking.
+`src/core/`
 
-**Execution Pipeline:**
+- Agent 基础抽象；
+- 消息、上下文与类型系统；
+- Agent 执行接口与错误处理。
 
-```
-User Task
-  → LLM generates workflow script (meta + phases + agents)
-    → Script validation (security: forbidden globals check)
-    → VM sandbox execution
-      → Phase-by-phase progress tracking
-      → Concurrent agent execution (configurable concurrency limit)
-      → Token budget enforcement
-      → Structured output (JSON schema support)
-  → Workflow snapshot (agents, phases, logs, status)
-```
+### 协作与通信
 
-**Key capabilities:**
-- LLM-generated execution scripts — no manual coding required
-- Sandboxed `vm` execution with forbidden global protection
-- Phase-based progress tracking with event callbacks
-- Configurable token budget and max concurrent agents
-- Structured output via JSON schema validation
-- Abort support for long-running workflows
+`src/collaboration/`、`src/communication/`
 
-**Use cases:** Custom multi-step pipelines, batch processing, research workflows with sequential phases, automated report generation with custom logic
+- 串行协作；
+- 并行协作；
+- 专家组；
+- 辩论、审核等协作模式；
+- 多种 Agent 通信结构。
 
----
+### 深度规划与协同执行
 
-## Multi-Model Adaptive Routing
+`src/orchestration/`
 
-π Multi-Agent implements an intelligent model routing system that automatically assigns the most appropriate LLM to each task based on complexity analysis, required capabilities, and cost optimization.
+当前核心链路为：
 
-### Architecture
-
-```
-                     ┌──────────────────────────────┐
-                     │     ModelRegistry             │
-                     │  (Provider + Model catalog)   │
-                     └──────────┬───────────────────┘
-                                │
-              ┌─────────────────┼─────────────────┐
-              │                 │                 │
-    ┌─────────▼──────┐  ┌──────▼──────────┐  ┌───▼──────────┐
-    │ ModelRouter    │  │ ModelAwareLLM   │  │ MultiModel   │
-    │                │  │ Client          │  │ Client       │
-    │ • Complexity   │  │ • chat()        │  │ • chat()     │
-    │ • Tool support │  │ • plan()        │  │ • simple()   │
-    │ • Specialty    │  │ • execute()     │  │              │
-    │ • Cheapest     │  │ • evaluate()    │  │              │
-    │                │  │ • simple()      │  │              │
-    └────────────────┘  └─────────────────┘  └──────────────┘
+```text
+DeepPlanner
+   ↓
+任务拆解 / Agent 分工 / 依赖关系
+   ↓
+AgentCluster
+   ↓
+并行或依赖驱动执行
+   ↓
+工具调用 + 共享记忆
+   ↓
+DeepEvaluator
+   ↓
+质量不足时重新规划与迭代
+   ↓
+最终综合输出
 ```
 
-### Routing Strategies
+这部分是真实代码能力，不是前端演示动画。
 
-| Strategy | Description | Applied To |
-|----------|-------------|------------|
-| **Complexity-Based** | Routes based on task complexity hint (light / medium / heavy) | Default; used by all orchestration components |
-| **Tool-Aware** | Prioritizes models with function calling capability | Sub-tasks requiring tool invocation |
-| **Specialty-Match** | Selects models by capability tags (reasoning, coding, writing) | Agent-specific sub-tasks |
-| **Cost-Optimized** | Selects the cheapest model that meets requirements | Low-priority, non-critical tasks |
-| **Direct** | Uses explicitly specified model | User-overridden model selection |
+### 多模型运行时
 
-### Model Selection by Execution Context
+`src/models/`
 
-| Context | Complexity | Required Specialty | Selected Model Tier |
-|---------|-----------|-------------------|-------------------|
-| DeepPlanner (task decomposition) | Heavy | Reasoning, Planning | Large reasoning model |
-| DeepEvaluator (quality assessment) | Heavy | Analysis | Large reasoning model |
-| Agent execution (with tools) | Medium | Tool calling | Mid-tier with tool support |
-| Agent execution (writing) | Medium | Writing | Mid-tier with writing capability |
-| Simple chat / Q&A | Light | General | Lightweight, cost-optimized |
-| Critical priority sub-task | Heavy | Any | Maximum capability |
-| Low priority sub-task | Light | Any | Cost-optimized |
+- 多模型 Provider 注册；
+- 模型路由；
+- 按任务复杂度和能力选择模型；
+- OpenAI-compatible 模型接入。
 
-### Configuration
+### 共享记忆与工具
 
-Create `models.config.ts` in the project root:
+`src/memory/`、`src/tools/`
 
-```typescript
-// models.config.ts
-import type { ModelProvidersConfig } from './src/models/config.js';
+- Agent 间共享任务信息；
+- 工具注册和调用；
+- Agent-as-Tool 等扩展能力。
 
-export const exampleModelProvidersConfig: ModelProvidersConfig = {
-  providers: [
-    {
-      id: 'deepseek',
-      displayName: 'DeepSeek',
-      baseURL: 'https://api.deepseek.com',
-      apiKey: process.env['DEEPSEEK_API_KEY'] ?? '',
-      isDefault: true,
-    },
-    // Add more providers: OpenAI, Anthropic, DashScope, etc.
-  ],
-  models: [
-    {
-      id: 'deepseek-chat',
-      provider: 'deepseek',
-      displayName: 'DeepSeek Chat',
-      complexity: 'light',
-      specialties: ['chat', 'general', 'planning'],
-      tags: ['tools'],
-      contextWindow: 64000,
-      maxOutputTokens: 4096,
-    },
-    {
-      id: 'deepseek-reasoner',
-      provider: 'deepseek',
-      displayName: 'DeepSeek Reasoner',
-      complexity: 'heavy',
-      specialties: ['reasoning', 'analysis'],
-      contextWindow: 64000,
-      maxOutputTokens: 4096,
-    },
-  ],
-};
+### 动态工作流
+
+`src/workflow/`
+
+支持自动生成并运行多阶段协作流程，包括流水线、并行处理、预算控制和结构化结果。
+
+### 服务端与实时通信
+
+`server/`
+
+- Express API；
+- WebSocket 实时事件；
+- 会话持久化；
+- 规划、执行、协作和工作流接口。
+
+### 前端
+
+`web/`
+
+当前是 Next.js 前端，可展示：
+
+- 历史会话；
+- 智能体协作状态；
+- 任务计划与子任务；
+- 工作流阶段；
+- 工具调用；
+- 质量评估；
+- 最终报告和执行统计。
+
+## 3. 当前阶段必须认清的边界
+
+现有代码底座的强项是“通用多智能体编排”，但挑战杯作品不能停留在这里。
+
+比赛真正需要继续产品化和领域化的是：
+
+1. **学习者画像层**：把学历、先验测试、知识点掌握度、学习历史等变成真实状态，而不是一次性 Prompt 文本；
+2. **领域知识层**：建立可检索、可引用、可审核的专业知识库；
+3. **个性化资源层**：生成讲义、实操指南、分阶测试等不同资源，并和学习者能力匹配；
+4. **反馈学习层**：根据答题、交互和资源使用结果更新学习状态；
+5. **比赛创新层**：把多智能体交叉验证、审核、争议处理与决策依据做成可解释机制，而不是只展示“有几个 Agent”；
+6. **评测层**：围绕幻觉率、资源难度适配率、核心知识覆盖率等比赛指标做真实评估。
+
+换句话说：
+
+```text
+通用 Multi-Agent Runtime ≠ 最终挑战杯产品
 ```
 
----
+通用底座应该成为比赛领域内核的基础设施，而不是最终叙事本身。
 
-## Architecture
+## 4. 品牌约定
 
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                        π Multi-Agent Framework                          │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                         │
-│  ┌─────────────────┐  ┌─────────────────┐  ┌────────────────────────┐  │
-│  │  Deep Planner   │  │   Agent         │  │   Deep Evaluator       │  │
-│  │  (LLM-Driven    │  │   Cluster       │  │   (4-Dim Quality       │  │
-│  │   Task Decomp.) │  │   Executor      │  │    Assessment + Replan)│  │
-│  └─────────────────┘  └─────────────────┘  └────────────────────────┘  │
-│                                                                         │
-│  ┌─────────────────────────────────────────────────────────────────┐   │
-│  │                    Enhanced Shared Memory                        │   │
-│  │  ┌──────────────┐  ┌─────────────┐  ┌────────────────────────┐  │   │
-│  │  │ Agent Outputs│  │  Session    │  │  Inter-Agent Messaging │  │   │
-│  │  │ & Artifacts  │  │  Context    │  │  & Data Passing        │  │   │
-│  │  └──────────────┘  └─────────────┘  └────────────────────────┘  │   │
-│  └─────────────────────────────────────────────────────────────────┘   │
-│                                                                         │
-│  ┌─────────────────────────────────────────────────────────────────┐   │
-│  │                  6 Collaboration Patterns                        │   │
-│  │  Sequential │ Parallel │ Debate │ Expert │ Critic │ Hierarchical│  │
-│  └─────────────────────────────────────────────────────────────────┘   │
-│                                                                         │
-│  ┌─────────────────────────────────────────────────────────────────┐   │
-│  │                   Dynamic Workflow Engine                         │   │
-│  │  LLM Script Generation → Sandboxed VM → Phase Tracking          │   │
-│  │  Token Budget │ Concurrency Control │ Structured Output          │   │
-│  └─────────────────────────────────────────────────────────────────┘   │
-│                                                                         │
-│  ┌─────────────────────────────────────────────────────────────────┐   │
-│  │              Multi-Model Routing System                           │   │
-│  │  ModelRegistry │ ModelRouter │ Complexity Estimator │ Adapters   │   │
-│  └─────────────────────────────────────────────────────────────────┘   │
-│                                                                         │
-│  ┌─────────────────────────────────────────────────────────────────┐   │
-│  │                   Tool System (Function Calling)                  │   │
-│  │  web_search │ data_analyzer │ web_scraper │ code_executor        │   │
-│  │  report_writer │ knowledge_base │ calculator │ agent_delegate   │   │
-│  └─────────────────────────────────────────────────────────────────┘   │
-│                                                                         │
-└─────────────────────────────────────────────────────────────────────────┘
+项目统一名称：
+
+```text
+IM-Training-Agent
 ```
 
----
+代码包名使用 npm 合法的小写形式：
 
-## 8-Step Execution Lifecycle
-
-```
-[User Goal]
-    │
-    ▼
- 1. Goal Definition
-    Capture, validate, and classify task complexity
-    │
-    ▼
- 2. Deep Planner (LLM-Driven)
-    Decompose into structured sub-tasks with dependencies
-    Assign agent roles, tools, and quality thresholds
-    │
-    ▼
- 3. Model Routing
-    Assign optimal model per sub-task
-    (light / medium / heavy based on complexity, tools, priority)
-    │
-    ▼
- 4. Agent Cluster Execution
-    Spawn specialized agents, execute sub-tasks
-    Real tool calling → Shared memory → Inter-agent data passing
-    │
-    ▼
- 5. Deep Evaluator (4-Dimension Assessment)
-    Accuracy · Completeness · Consistency · Format
-    │
-    ▼
- 6. Quality Gate
-    Score >= threshold? ──── Yes ──→ 8. Final Output
-    │
-    No
-    ▼
- 7. Replan & Retry
-    Adjust strategy, re-execute failed sub-tasks
-    (up to configurable max iterations)
-    │
-    ▼
- 8. Final Output
-    Synthesized report with full audit trail
+```text
+im-training-agent
 ```
 
----
+新的运行环境变量优先使用：
 
-## Quick Start
-
-### Installation
-
-```bash
-npm install pi-multi-agent
+```text
+IM_TRAINING_AGENT_DATA_DIR
+IM_TRAINING_AGENT_RUNNING_SESSION_TIMEOUT_MS
 ```
 
-### Prerequisites
+为避免已有开发环境突然失效，服务端暂时兼容旧的 `PI_MULTI_AGENT_*` 环境变量作为回退。兼容字段只属于迁移层，不再作为产品品牌对外展示。
+
+## 5. 本地运行
+
+### 环境要求
 
 - Node.js 18+
-- A DeepSeek API key (or any OpenAI-compatible endpoint)
+- 可用的大模型 API Key
 
-### 1. Configure Environment
-
-```bash
-# .env
-DEEPSEEK_API_KEY=your-api-key
-```
-
-### 2. Run Deep Research (Agent Cluster)
-
-```typescript
-import { DeepPlanner, AgentCluster, ModelRegistry, loadModelProvidersConfig } from 'pi-multi-agent';
-
-const registry = new ModelRegistry();
-const config = loadModelProvidersConfig();
-for (const p of config.providers) {
-  if (p.apiKey) registry.registerProvider(p);
-}
-for (const m of config.models) {
-  registry.registerModel(m);
-}
-
-const planner = new DeepPlanner({ registry });
-const plan = await planner.createDeepPlan(
-  'Complete a comprehensive AI Agent market research report',
-  { targetWordCount: 30000, maxAgents: 8 }
-);
-
-const cluster = new AgentCluster({ registry }, 'session-1');
-cluster.onEvent((event) => console.log(`[${event.type}]`, event.data));
-const result = await cluster.executePlan(plan, 3);
-```
-
-### 3. Collaboration Modes
-
-```typescript
-import { LLMAgentCollaboration } from 'pi-multi-agent';
-
-const collab = new LLMAgentCollaboration(apiKey, baseURL);
-
-// Sequential: Researcher → Analyst → Writer
-await collab.executeSequential(agents, task);
-
-// Parallel: All agents work simultaneously
-await collab.executeParallel(agents, task);
-
-// Debate: Multi-round discussion for consensus
-await collab.executeDebate(agents, topic, maxRounds);
-
-// Expert Team: Domain specialists + integrator
-await collab.executeExpertTeam(experts, task);
-
-// Hierarchical: Supervisor → Subordinates → Synthesize
-await collab.executeHierarchical(supervisor, subordinates, task);
-
-// Critic-Reviewer: Create → Review → Iterate
-await collab.executeCriticReviewer(creator, critic, task, maxRounds);
-```
-
----
-
-## 6 Collaboration Patterns
-
-| Pattern | Description | Best For |
-|---------|-------------|----------|
-| **Sequential Handoffs** | Pipeline: Agent A → B → C | Structured workflows with clear stages |
-| **Parallel Processing** | All agents work simultaneously | Independent multi-perspective tasks |
-| **Debate & Consensus** | Multi-round discussion + moderator | Decision-making, strategy, consensus-building |
-| **Expert Team** | Domain specialists + integrator | Complex multi-domain tasks |
-| **Critic-Reviewer** | Create → Review → Iterate | Quality-critical content generation |
-| **Hierarchical** | Supervisor → Subordinates → Synthesize | Large-scale task decomposition |
-
-## 6 Communication Structures
-
-| Structure | Description |
-|-----------|-------------|
-| **Single Agent** | Standalone execution, no inter-agent communication |
-| **Network** | Decentralized peer-to-peer topology |
-| **Supervisor** | Centralized management with task distribution |
-| **Supervisor as Tool** | Advisory pattern, agents consult supervisor |
-| **Hierarchical** | Multi-level management tree |
-| **Custom** | User-defined topology and routing |
-
-## Tool System
-
-Agents invoke real tools via structured LLM function calling:
-
-| Tool | Description |
-|------|-------------|
-| `web_search` | Internet search (DuckDuckGo API) |
-| `data_analyzer` | Statistical analysis and data insights |
-| `web_scraper` | Web content extraction |
-| `code_executor` | Code snippet execution with result capture |
-| `report_writer` | Report structuring and formatting |
-| `knowledge_base` | Knowledge retrieval and querying |
-| `calculator` | Mathematical computations |
-| `agent_delegate` | Sub-task delegation to other agents |
-
-Tool assignment is automatic per agent type:
-
-```typescript
-// Researcher → web_search, web_scraper, knowledge_base
-// Analyst   → data_analyzer, calculator, knowledge_base
-// Writer    → report_writer
-// Coder     → code_executor, web_scraper
-```
-
-## Deep Evaluator
-
-The evaluator applies a 4-dimensional quality assessment:
-
-| Dimension | Assessment Focus |
-|-----------|-----------------|
-| **Accuracy** | Factual correctness, data validity, source reliability |
-| **Completeness** | Topic coverage, depth, minimum thresholds met |
-| **Consistency** | Logical coherence, cross-reference integrity |
-| **Format** | Structure, readability, professional presentation |
-
-When the composite score falls below the configured threshold, the system automatically triggers a replan-and-retry cycle with adjusted strategy.
-
----
-
-## Web Dashboard
-
-The bundled Next.js dashboard provides real-time visualization and control:
+### 安装依赖
 
 ```bash
-# Terminal 1: Start the backend API server
-npm run server
-
-# Terminal 2: Start the web dashboard
-cd web && npm run dev
-```
-
-### Dashboard Capabilities
-
-| Panel | Description |
-|-------|-------------|
-| **Agent Cluster** | Live agent status, sub-task progress, model usage |
-| **Thread History** | Session management with restore and new session |
-| **Plan Inspector** | Sub-task breakdown with dependencies and agent assignments |
-| **Tool Call Log** | Every tool invocation with input, output, and duration |
-| **Quality Dashboard** | Evaluation scores with per-dimension breakdown |
-| **Report Viewer** | Final output with Markdown / HTML / TXT export |
-
----
-
-## Dynamic Workflow API
-
-```typescript
-import { DynamicWorkflow } from 'pi-multi-agent';
-
-const workflow = new DynamicWorkflow({
-  apiKey: process.env.DEEPSEEK_API_KEY,
-  baseURL: 'https://api.deepseek.com',
-  model: 'deepseek-chat',
-  tokenBudget: 200000,
-  maxConcurrentAgents: 5,
-});
-
-workflow.onEvent((event) => {
-  // workflow:started, phase:changed, agent:started,
-  // agent:completed, agent:failed, workflow:completed
-});
-
-const result = await workflow.run(
-  'Research AI market trends and generate a structured report with executive summary'
-);
-
-console.log(result.output);          // Structured output
-console.log(result.snapshot);         // Full execution snapshot
-console.log(result.totalTokens);      // Token consumption
-```
-
----
-
-## Project Structure
-
-```
-pi-multi-agent/
-├── src/
-│   ├── core/                          # Agent base, types, error hierarchy
-│   │   ├── agent.ts                   # Agent lifecycle & execution engine
-│   │   ├── types.ts                   # Core TypeScript type definitions
-│   │   ├── errors.ts                  # Custom error hierarchy
-│   │   └── message.ts                 # Message bus & event types
-│   ├── orchestration/                 # Planning, execution, evaluation
-│   │   ├── deep-planner.ts            # LLM-driven task decomposition
-│   │   ├── agent-cluster.ts           # Cluster execution engine with model routing
-│   │   ├── deep-evaluator.ts          # 4-dimension quality assessment
-│   │   ├── orchestrator.ts            # Task scheduling & coordination
-│   │   ├── planner.ts                 # Basic task planning
-│   │   └── evaluator.ts               # Basic evaluation
-│   ├── collaboration/                 # 6 collaboration patterns
-│   │   ├── patterns.ts                # Core pattern implementations
-│   │   └── llm-collaboration.ts       # LLM-powered collaboration orchestration
-│   ├── communication/                 # 6 communication topologies
-│   │   └── structures.ts              # Topology implementations
-│   ├── memory/                        # Memory management
-│   │   ├── memory.ts                  # Short-term + long-term memory
-│   │   └── enhanced-shared-memory.ts  # Inter-agent shared memory
-│   ├── models/                        # Multi-model routing system
-│   │   ├── config.ts                  # Provider & Model type definitions
-│   │   ├── registry.ts                # ModelRegistry — provider/model catalog
-│   │   ├── router.ts                  # ModelRouter — 5 routing strategies
-│   │   ├── client.ts                  # MultiModelClient — unified chat API
-│   │   ├── loader.ts                  # Config loader (.ts / .json)
-│   │   ├── adapter.ts                 # OpenAI-compatible provider adapter
-│   │   ├── deepseek-compatible-client.ts  # DeepSeek API bridge
-│   │   ├── complexity-estimator.ts    # Task complexity → model mapping
-│   │   └── model-aware-client.ts      # High-level routing API for orchestration
-│   └── tools/                         # Tool system
-│       ├── index.ts                   # 8 core tools + agent-as-tool
-│       └── agent-as-tool.ts           # Agent delegation via tool calling
-├── workflow/                          # Dynamic workflow engine
-│   ├── workflow.ts                    # Workflow definition & script generation
-│   ├── runtime.ts                     # Sandboxed VM execution engine
-│   ├── types.ts                       # Workflow type definitions
-│   └── budget.ts                      # Token budget management
-├── server/                            # Backend API server
-│   ├── index.ts                       # Express + WebSocket server
-│   └── session-store.ts               # File-based session persistence
-├── web/                               # Next.js dashboard
-│   └── src/app/page.tsx               # Real-time dashboard UI
-├── examples/                          # Usage examples
-│   ├── deep-research.ts               # Deep research (Agent Cluster)
-│   └── collaboration-modes.ts         # All 6 collaboration patterns
-├── models.config.ts                   # Multi-model configuration
-├── models.config.example.ts           # Example config with all providers
-└── package.json
-```
-
----
-
-## API Reference
-
-### DeepPlanner
-
-```typescript
-const planner = new DeepPlanner({ registry? | apiKey?, baseURL?, strategy? });
-const plan = await planner.createDeepPlan(goal, options?);
-// options: { targetWordCount?: number, maxAgents?: number, depth?: number }
-// Returns: DeepPlan { id, goal, subTasks, collaborationMode, qualityThresholds }
-```
-
-### AgentCluster
-
-```typescript
-const cluster = new AgentCluster({ registry?, apiKey?, baseURL? }, sessionId);
-cluster.onEvent((event: ClusterEvent) => { /* WebSocket streaming */ });
-const result = await cluster.executePlan(plan, maxIterations?);
-// Returns: ClusterExecutionResult { success, finalOutput, evaluationScore,
-//          iterations, totalTokensUsed, modelUsage, progress }
-```
-
-### LLMAgentCollaboration
-
-```typescript
-const collab = new LLMAgentCollaboration(apiKey, baseURL?);
-await collab.executeSequential(agents, task);
-await collab.executeParallel(agents, task);
-await collab.executeDebate(agents, topic, maxRounds?);
-await collab.executeHierarchical(supervisor, subordinates, task);
-await collab.executeExpertTeam(experts, task);
-await collab.executeCriticReviewer(creator, critic, task, maxRounds?);
-```
-
-### ModelRegistry
-
-```typescript
-const registry = new ModelRegistry();
-registry.registerProvider({ id, displayName, baseURL, apiKey, isDefault? });
-registry.registerModel({ id, provider, complexity, specialties, tags?, ... });
-registry.getClient(providerId);              // Get cached OpenAI client
-registry.getClientForModel(modelId);         // Get client for a specific model
-registry.getDefaultProvider();               // Get default provider
-registry.listModels();                       // All registered models
-registry.listModelsByComplexity('heavy');    // Filter by complexity
-```
-
-### DynamicWorkflow
-
-```typescript
-const workflow = new DynamicWorkflow({ apiKey, baseURL?, model?, tokenBudget?, maxConcurrentAgents? });
-workflow.onEvent(callback);
-const result = await workflow.run(taskDescription, args?);
-// Returns: WorkflowResult { success, output, snapshot, totalTokens, totalExecutionTime }
-```
-
----
-
-## Environment Variables
-
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `DEEPSEEK_API_KEY` | Yes | DeepSeek API key for LLM calls |
-| `DEEPSEEK_BASE_URL` | No | Custom API base URL (default: `https://api.deepseek.com`) |
-| `OPENAI_API_KEY` | Optional | OpenAI API key (if using GPT models) |
-| `ANTHROPIC_API_KEY` | Optional | Anthropic API key (if using Claude models) |
-| `PORT` | No | Server port (default: 3001) |
-| `PI_MULTI_AGENT_DATA_DIR` | No | Session persistence directory |
-| `PI_MULTI_AGENT_RUNNING_SESSION_TIMEOUT_MS` | No | Running session timeout (default: 10 min) |
-
----
-
-## Development
-
-```bash
-# Install dependencies
 npm install
+cd web
+npm install
+```
 
-# Build the framework
-npm run build
+### 模型配置
 
-# Run type checking
-npm run typecheck
+默认主模型为通义千问 `qwen-plus`，通过 DashScope 的 OpenAI-compatible API 调用。真实密钥放在本地 `.env`：
 
-# Run tests
-npm run test
+```bash
+DASHSCOPE_API_KEY=your-dashscope-api-key
+DASHSCOPE_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+QWEN_MODEL=qwen-plus
+```
 
-# Start backend server (port 3001)
+也可以在根目录 `models.config.ts` 扩展其他 Provider。
+
+### 启动后端
+
+```bash
 npm run server
+```
 
-# Start web dashboard (port 3000)
-npm run dev:web
+默认地址：`http://localhost:3001`
 
-# Start both simultaneously
+### 启动前端
+
+另开终端：
+
+```bash
+cd web
+npm run dev
+```
+
+默认地址：`http://localhost:3000`
+
+### 同时启动
+
+```bash
 npm run dev:full
 ```
 
----
+## 6. 目录结构
 
-## Contributing
+```text
+IM-Training-Agent/
+├─ src/
+│  ├─ core/              # Agent 核心抽象
+│  ├─ orchestration/     # 深度规划、Agent 集群与质量评估
+│  ├─ collaboration/     # 多智能体协作模式
+│  ├─ communication/     # Agent 通信结构
+│  ├─ models/            # 多模型注册、路由与客户端
+│  ├─ memory/            # 共享记忆
+│  ├─ tools/             # 工具系统
+│  └─ workflow/          # 动态工作流
+├─ server/               # Express + WebSocket 服务
+├─ web/                  # Next.js 前端
+├─ models.config.ts      # 模型配置
+└─ 挑战杯.md             # 官方赛题与评分要求
+```
 
-We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details on development setup, pull request process, coding standards, and testing guidelines.
+## 7. 开发原则
 
-## Community
+后续开发应遵循以下原则：
 
-- **B 站 (Bilibili)** — AI 技术深度解析与实战教程
-- **视频号 (WeChat Video)** — AI 前沿动态与产品评测
-- **公众号 (WeChat Official Account)** — AI 技术文章与行业洞察
-- **YouTube** — AI tutorials and open-source project walkthroughs
+- 测试通过只是底线，不等于产品完成；
+- 所有比赛展示功能必须有真实后端状态和数据链路支撑；
+- 不通过堆叠 Agent 名称包装创新；
+- 不把一次 Prompt 生成伪装成持续学习；
+- 多智能体过程要能够实时、自然地展示，而不是任务结束后一次性回放；
+- 用户可见内容优先使用中文，技术协议、代码标识和第三方标准名按需要保留英文；
+- 任何“高准确率、低幻觉率、个性化有效”等结论都应由可复现评测支撑。
 
-## License
+## 8. 比赛目标
 
-[MIT](LICENSE) © Pi Multi-Agent Contributors
-# IM
+最终作品应能够在一次完整演示中清晰呈现：
+
+```text
+不同背景学习者
+   ↓
+差异化学情诊断
+   ↓
+多智能体实时协作与决策
+   ↓
+专业知识约束与交叉校验
+   ↓
+个性化学习资源
+   ↓
+学习 / 作答反馈
+   ↓
+学习状态更新
+   ↓
+下一轮个性化训练
+```
+
+这条闭环才是 IM-Training-Agent 作为挑战杯项目最重要的产品主线。
