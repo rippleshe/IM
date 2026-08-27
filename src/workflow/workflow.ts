@@ -70,6 +70,7 @@ export class DynamicWorkflow {
   private apiKey: string;
   private baseURL: string;
   private model: string;
+  private temperature: number;
   private defaultTokenBudget: number;
   private maxConcurrentAgents: number;
   private eventCallbacks: WorkflowEventCallback[] = [];
@@ -78,6 +79,7 @@ export class DynamicWorkflow {
     this.apiKey = config.apiKey;
     this.baseURL = config.baseURL || 'https://api.deepseek.com';
     this.model = config.model || 'deepseek-chat';
+    this.temperature = config.temperature ?? 0.7;
     this.defaultTokenBudget = config.tokenBudget || 200000;
     this.maxConcurrentAgents = config.maxConcurrentAgents || 5;
     this.llmClient = new OpenAI({ apiKey: config.apiKey, baseURL: this.baseURL });
@@ -95,11 +97,11 @@ export class DynamicWorkflow {
   async generateScript(taskDescription: string): Promise<string> {
     const response = await this.llmClient.chat.completions.create({
       model: this.model,
+      temperature: this.temperature,
       messages: [
         { role: 'system', content: WORKFLOW_SYSTEM_PROMPT },
         { role: 'user', content: taskDescription },
       ],
-      temperature: 0.3,
       max_tokens: 4096,
     });
 
@@ -129,6 +131,7 @@ export class DynamicWorkflow {
       apiKey: this.apiKey,
       baseURL: this.baseURL,
       model: this.model,
+      temperature: this.temperature,
       tokenBudget: budget,
       args,
       cwd: process.cwd(),

@@ -9,6 +9,8 @@ export interface DeepPlannerOptions {
   baseURL?: string;
   registry?: ModelRegistry;
   strategy?: string;
+  model?: string;
+  temperature?: number;
 }
 
 export interface SubTask {
@@ -48,6 +50,7 @@ export class DeepPlanner {
   private llmClient: OpenAI;
   private modelAware: { registry: ModelRegistry } | null = null;
   private planModel: string | undefined;
+  private temperature = 0.3;
 
   private buildClient(options?: DeepPlannerOptions): OpenAI {
     const registry = options?.registry;
@@ -60,9 +63,9 @@ export class DeepPlanner {
         const result = router.select('complexity', {
           complexityHint: { complexity: 'heavy', requiredSpecialties: ['reasoning', 'planning'], requiresStreaming: false },
         });
-        this.planModel = result.model.id;
+        this.planModel = options?.model ?? result.model.id;
       } catch {
-        this.planModel = undefined;
+        this.planModel = options?.model;
       }
       return client;
     }
@@ -73,6 +76,7 @@ export class DeepPlanner {
   }
 
   constructor(options?: DeepPlannerOptions) {
+    this.temperature = options?.temperature ?? 0.3;
     this.llmClient = this.buildClient(options);
   }
 
@@ -130,7 +134,7 @@ export class DeepPlanner {
         },
         { role: 'user', content: planningPrompt },
       ],
-      temperature: 0.3,
+      temperature: this.temperature,
       max_tokens: 4096,
     });
 

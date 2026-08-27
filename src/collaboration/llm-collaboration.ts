@@ -6,6 +6,9 @@ export interface LLMAgentCollaborationOptions {
   apiKey?: string;
   baseURL?: string;
   registry?: ModelRegistry;
+  model?: string;
+  temperature?: number;
+  maxTokens?: number;
 }
 
 export interface LLMAgent {
@@ -14,6 +17,9 @@ export interface LLMAgent {
   type: string;
   systemPrompt: string;
   tools?: string[];
+  model?: string;
+  temperature?: number;
+  maxTokens?: number;
 }
 
 export interface LLMAgentResult {
@@ -39,6 +45,9 @@ export interface LLMAgentCollaborationResult {
 
 export class LLMAgentCollaboration {
   private llmClient: OpenAI;
+  private model: string;
+  private temperature: number;
+  private maxTokens: number;
 
   constructor(apiKeyOrOptions: string | LLMAgentCollaborationOptions = '', baseURL?: string) {
     let options: LLMAgentCollaborationOptions;
@@ -49,6 +58,10 @@ export class LLMAgentCollaboration {
       options = apiKeyOrOptions;
     }
 
+    this.model = options.model ?? 'deepseek-chat';
+    this.temperature = options.temperature ?? 0.7;
+    this.maxTokens = options.maxTokens ?? 4096;
+
     if (options.registry) {
       this.llmClient = new DeepSeekCompatibleClient({ registry: options.registry }) as unknown as OpenAI;
     } else {
@@ -56,17 +69,17 @@ export class LLMAgentCollaboration {
     }
   }
 
-  private async callAgent(agent: LLMAgent, input: string, maxTokens: number = 4096): Promise<LLMAgentResult> {
+  private async callAgent(agent: LLMAgent, input: string, maxTokens: number = agent.maxTokens ?? this.maxTokens): Promise<LLMAgentResult> {
     const startTime = Date.now();
 
     try {
       const response = await this.llmClient.chat.completions.create({
-        model: 'deepseek-chat',
+        model: agent.model ?? this.model,
         messages: [
           { role: 'system', content: agent.systemPrompt },
           { role: 'user', content: input },
         ],
-        temperature: 0.7,
+        temperature: agent.temperature ?? this.temperature,
         max_tokens: maxTokens,
       });
 

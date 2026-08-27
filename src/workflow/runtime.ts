@@ -11,6 +11,7 @@ export interface RuntimeDeps {
   apiKey: string;
   baseURL?: string;
   model?: string;
+  temperature?: number;
   tokenBudget: TokenBudget;
   args?: unknown;
   cwd?: string;
@@ -158,7 +159,7 @@ export async function runWorkflowScript(
         ];
 
         const maxTokens = opts?.maxTokens || 4096;
-        const temperature = opts?.temperature ?? 0.7;
+        const temperature = opts?.temperature ?? deps.temperature ?? 0.7;
 
         let responseText = '';
         let tokensUsed = 0;

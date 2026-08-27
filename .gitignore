@@ -6,6 +6,7 @@ dist/
 *.tsbuildinfo
 
 # Next.js
+/.next/
 web/.next/
 web/out/
 

@@ -53,6 +53,7 @@ export interface WorkflowConfig {
   apiKey: string;
   baseURL?: string;
   model?: string;
+  temperature?: number;
   maxTokens?: number;
   tokenBudget?: number;
   maxConcurrentAgents?: number;

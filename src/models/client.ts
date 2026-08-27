@@ -47,9 +47,10 @@ export class MultiModelClient {
     this.defaultStrategy = options.defaultStrategy ?? 'complexity';
   }
 
-  async simple(options: { messages: OpenAI.ChatCompletionMessageParam[]; temperature?: number; maxTokens?: number }): Promise<ModelCallResult> {
+  async simple(options: { messages: OpenAI.ChatCompletionMessageParam[]; model?: string; temperature?: number; maxTokens?: number }): Promise<ModelCallResult> {
     return this.chat({
       messages: options.messages,
+      model: options.model,
       temperature: options.temperature,
       maxTokens: options.maxTokens,
     });

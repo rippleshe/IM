@@ -12,6 +12,9 @@ export interface AgentClusterOptions {
   apiKey?: string;
   baseURL?: string;
   registry?: ModelRegistry;
+  model?: string;
+  temperature?: number;
+  roleRouting?: Record<string, { model?: string; temperature?: number; maxTokens?: number }>;
 }
 
 export interface AgentClusterProgress {
@@ -87,6 +90,9 @@ export class AgentCluster {
   private toolInstances: Map<string, ToolDefinition<unknown, unknown>> = new Map();
   private apiKey: string;
   private baseURL: string;
+  private requestedModel?: string;
+  private temperature = 0.7;
+  private roleRouting: Record<string, { model?: string; temperature?: number; maxTokens?: number }> = {};
   private deepEvaluator: DeepEvaluator;
   public sharedMemory: EnhancedSharedMemory;
   private lastEvaluation: { overallScore: number } | null = null;
@@ -126,6 +132,9 @@ export class AgentCluster {
       apiKey = first.apiKey ?? '';
       baseURL = first.baseURL ?? baseURL;
       registry = first.registry;
+      this.requestedModel = first.model;
+      this.temperature = first.temperature ?? 0.7;
+      this.roleRouting = first.roleRouting ?? {};
       sessionId = second;
     }
 
@@ -156,6 +165,11 @@ export class AgentCluster {
 
   getSelectedModelForSubTask(subTask: SubTask): { modelId: string; providerId: string } | null {
     if (!this.modelAware) return null;
+    const routedModel = this.getRoleRoute(subTask)?.model;
+    if (routedModel) {
+      const routed = this.modelAware.getRegistry().getModel(routedModel);
+      if (routed) return { modelId: routed.id, providerId: routed.provider };
+    }
     return this.modelAware.selectModelForSubTask(this.modelAware.getRegistry(), {
       priority: subTask.priority,
       tools: subTask.tools,
@@ -257,7 +271,10 @@ export class AgentCluster {
   private resolveComplexityHint(task: SubTask): TaskComplexityHint | undefined {
     if (!this.modelAware) return undefined;
     const registry = this.modelAware.getRegistry();
-    const selection = this.modelAware.selectModelForSubTask(registry, { priority: task.priority, tools: task.tools, assignedAgentType: task.assignedAgentType });
+    const routedModel = this.getRoleRoute(task)?.model;
+    const selection = routedModel
+      ? { modelId: routedModel }
+      : this.modelAware.selectModelForSubTask(registry, { priority: task.priority, tools: task.tools, assignedAgentType: task.assignedAgentType });
     const progressEntry = this.progress.get(task.id);
     if (progressEntry) progressEntry.modelUsed = selection.modelId;
     const model = registry.getModel(selection.modelId);
@@ -266,24 +283,24 @@ export class AgentCluster {
 
   private async executeLLMCall(
     messages: { role: string; content: string }[],
-    opts: { tools?: OpenAI.Chat.ChatCompletionTool[]; complexityHint?: TaskComplexityHint; temperature?: number; maxTokens?: number } = {}
+    opts: { tools?: OpenAI.Chat.ChatCompletionTool[]; complexityHint?: TaskComplexityHint; model?: string; temperature?: number; maxTokens?: number } = {}
   ): Promise<{ text: string; toolCalls?: OpenAI.Chat.ChatCompletionMessageToolCall[]; usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number } }> {
     if (this.modelAware && opts.tools && opts.tools.length > 0) {
       const registry = this.modelAware.getRegistry();
       const models = registry.listModels();
-      const modelId = models.find((m) => m.tags?.includes('tools'))?.id ?? models[0]?.id ?? 'deepseek-chat';
+      const modelId = opts.model ?? this.requestedModel ?? models.find((m) => m.tags?.includes('tools'))?.id ?? models[0]?.id ?? 'deepseek-chat';
       const client = registry.getClientForModel(modelId);
       if (client) {
-        const response = await client.chat.completions.create({ model: modelId, messages: messages as any, tools: opts.tools, temperature: opts.temperature ?? 0.7, max_tokens: opts.maxTokens ?? 4096 });
+        const response = await client.chat.completions.create({ model: modelId, messages: messages as any, tools: opts.tools, temperature: opts.temperature ?? this.temperature, max_tokens: opts.maxTokens ?? 4096 });
         const choice = response.choices[0];
         return { text: choice?.message?.content || '', toolCalls: choice?.message?.tool_calls, usage: response.usage ? { prompt_tokens: response.usage.prompt_tokens, completion_tokens: response.usage.completion_tokens, total_tokens: response.usage.total_tokens } : undefined };
       }
     }
     if (this.modelAware) {
-      const result = await this.modelAware.execute({ messages, complexityHint: opts.complexityHint, temperature: opts.temperature, maxTokens: opts.maxTokens });
+      const result = await this.modelAware.execute({ messages, model: opts.model ?? this.requestedModel, complexityHint: opts.complexityHint, temperature: opts.temperature ?? this.temperature, maxTokens: opts.maxTokens });
       return { text: result.text, usage: result.usage ? { prompt_tokens: result.usage.promptTokens, completion_tokens: result.usage.completionTokens, total_tokens: result.usage.totalTokens } : undefined };
     }
-    const response = await this.llmClient.chat.completions.create({ model: 'deepseek-chat', messages: messages as any, tools: opts.tools, temperature: opts.temperature ?? 0.7, max_tokens: opts.maxTokens ?? 4096 });
+    const response = await this.llmClient.chat.completions.create({ model: opts.model ?? this.requestedModel ?? 'deepseek-chat', messages: messages as any, tools: opts.tools, temperature: opts.temperature ?? this.temperature, max_tokens: opts.maxTokens ?? 4096 });
     const choice = response.choices[0];
     return { text: choice?.message?.content || '', toolCalls: choice?.message?.tool_calls, usage: response.usage ? { prompt_tokens: response.usage.prompt_tokens, completion_tokens: response.usage.completion_tokens, total_tokens: response.usage.total_tokens } : undefined };
   }
@@ -295,6 +312,7 @@ export class AgentCluster {
     const agentTools = this.getToolDefinitions(task);
     const contextInput = this.buildTaskInput(task, previousResults);
     const complexityHint = this.resolveComplexityHint(task);
+    const route = this.getRoleRoute(task);
 
     const rawMessages: OpenAI.Chat.ChatCompletionMessageParam[] = [{ role: 'system', content: task.assignedAgentPrompt }];
     if (agentTools.length > 0) {
@@ -311,7 +329,7 @@ export class AgentCluster {
     try {
       while (maxToolRounds > 0) {
         this.emitEvent('agent_thinking', { round: 6 - maxToolRounds, messageCount: currentMessages.length }, task.id, task.assignedAgentName);
-        const result = await this.executeLLMCall(currentMessages, { tools: openaiTools, complexityHint, maxTokens: 4096 });
+        const result = await this.executeLLMCall(currentMessages, { tools: openaiTools, complexityHint, model: route?.model, temperature: route?.temperature, maxTokens: route?.maxTokens ?? 4096 });
         if (result.usage) this.totalTokens += result.usage.total_tokens;
 
         const assistantMsg: typeof currentMessages[0] = { role: 'assistant', content: result.text ?? '' };
@@ -349,7 +367,7 @@ export class AgentCluster {
       }
 
       if (!finalText) {
-        const finalResult = await this.executeLLMCall([...currentMessages, { role: 'user', content: '请基于以上所有工具调用结果和已有信息，完成你的任务。输出完整的、结构化的、专业的分析报告。' }], { complexityHint, maxTokens: 4096 });
+        const finalResult = await this.executeLLMCall([...currentMessages, { role: 'user', content: '请基于以上所有工具调用结果和已有信息，完成你的任务。输出完整的、结构化的、专业的分析报告。' }], { complexityHint, model: route?.model, temperature: route?.temperature, maxTokens: route?.maxTokens ?? 4096 });
         finalText = finalResult.text;
         if (finalResult.usage) this.totalTokens += finalResult.usage.total_tokens;
       }
@@ -369,6 +387,10 @@ export class AgentCluster {
     const tools: ToolDefinition<unknown, unknown>[] = [];
     for (const name of task.tools) { const def = this.toolInstances.get(name); if (def) tools.push(def); }
     return tools.length > 0 ? tools : (getToolsForAgentType(task.assignedAgentType) as ToolDefinition<unknown, unknown>[]);
+  }
+
+  private getRoleRoute(task: SubTask): { model?: string; temperature?: number; maxTokens?: number } | undefined {
+    return this.roleRouting[task.assignedAgentType] ?? this.roleRouting['general'];
   }
 
   private buildTaskInput(task: SubTask, previousResults: Map<string, string>): string {
