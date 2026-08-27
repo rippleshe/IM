@@ -16,6 +16,8 @@ import { resolveAutoExecution } from "@/lib/execution-mode";
 import { getRestoreMessage } from "@/lib/session-restore-message";
 import { AuthEntry, type AuthenticatedUser } from "@/components/auth-entry";
 import { LearningPathWorkbench } from "@/components/learning-path-workbench";
+import { LearningWorkbench } from "@/components/learning-workbench";
+import { ResourceWorkbench } from "@/components/resource-workbench";
 import {
   Bot,
   Send,
@@ -450,6 +452,7 @@ interface PrivacyAuditEventInfo {
 export default function MultiAgentUI() {
   const [authLoading, setAuthLoading] = useState(true);
   const [authenticatedUser, setAuthenticatedUser] = useState<AuthenticatedUser | null>(null);
+  const [learningView, setLearningView] = useState<"path" | "study" | "resources">("path");
   const learnerId = authenticatedUser?.id ?? "";
   const [sessionId, setSessionId] = useState<string>("");
   const [agents, setAgents] = useState<AgentInfo[]>([]);
@@ -2398,7 +2401,9 @@ blockquote{border-left:4px solid #6366f1;padding-left:1em;margin:1em 0;color:#4b
     return <AuthEntry apiBase={API_BASE} user={authenticatedUser} onAuthenticated={setAuthenticatedUser} />;
   }
 
-  return <LearningPathWorkbench apiBase={API_BASE} user={authenticatedUser} onLogout={() => setAuthenticatedUser(null)} />;
+  if (learningView === "study") return <LearningWorkbench apiBase={API_BASE} user={authenticatedUser} onLogout={() => setAuthenticatedUser(null)} onNavigate={setLearningView} />;
+  if (learningView === "resources") return <ResourceWorkbench apiBase={API_BASE} user={authenticatedUser} onLogout={() => setAuthenticatedUser(null)} onNavigate={setLearningView} />;
+  return <LearningPathWorkbench apiBase={API_BASE} user={authenticatedUser} onLogout={() => setAuthenticatedUser(null)} onNavigate={setLearningView} />;
 
   return (
     <div className={`relative flex h-screen bg-background overflow-hidden ${resizingPanel ? "select-none" : ""}`}>

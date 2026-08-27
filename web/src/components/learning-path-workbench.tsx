@@ -26,7 +26,7 @@ type PathStatus = "not_started" | "learning" | "completed";
 type PathRelation = "prerequisite" | "branch" | "application" | "review";
 type AvatarKey = AuthenticatedUser["avatarKey"];
 
-type PathNode = {
+export type PathNode = {
   id: string;
   knowledgePointId: string;
   title: string;
@@ -36,14 +36,14 @@ type PathNode = {
   sortOrder: number;
 };
 
-type PathEdge = {
+export type PathEdge = {
   id: string;
   fromNodeId: string;
   toNodeId: string;
   relation: PathRelation;
 };
 
-type PathGraph = { nodes: PathNode[]; edges: PathEdge[] };
+export type PathGraph = { nodes: PathNode[]; edges: PathEdge[] };
 
 type ProfileMetric = {
   summary: string;
@@ -68,6 +68,7 @@ type LearningPathWorkbenchProps = {
   apiBase: string;
   user: AuthenticatedUser;
   onLogout: () => void;
+  onNavigate?: (view: "path" | "study" | "resources") => void;
 };
 
 const avatarStyles: Record<AvatarKey, string> = {
@@ -159,7 +160,7 @@ function getTreeLayout(graph: PathGraph): TreeLayout {
   return { width: Math.max(650, (Math.max(0, ...columns.keys()) + 1) * (nodeWidth + columnGap) + 20), height, positions };
 }
 
-function TreeCanvas({ graph, selectedNodeId, onSelect }: { graph: PathGraph; selectedNodeId: string | null; onSelect: (node: PathNode) => void }) {
+export function TreeCanvas({ graph, selectedNodeId, onSelect }: { graph: PathGraph; selectedNodeId: string | null; onSelect: (node: PathNode) => void }) {
   const layout = useMemo(() => getTreeLayout(graph), [graph]);
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const [fitZoom, setFitZoom] = useState(1);
@@ -327,7 +328,7 @@ function PathSettingsDialog({ apiBase, onClose }: { apiBase: string; onClose: ()
   </div>;
 }
 
-export function LearningPathWorkbench({ apiBase, user, onLogout }: LearningPathWorkbenchProps) {
+export function LearningPathWorkbench({ apiBase, user, onLogout, onNavigate }: LearningPathWorkbenchProps) {
   const [path, setPath] = useState<PathGraph>({ nodes: [], edges: [] });
   const [profile, setProfile] = useState<ProfileMetric | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -460,7 +461,7 @@ export function LearningPathWorkbench({ apiBase, user, onLogout }: LearningPathW
   return <main className="flex h-screen min-h-0 flex-col overflow-hidden bg-background text-foreground">
     <header className="flex h-16 shrink-0 items-center justify-between border-b px-5 sm:px-7">
       <button type="button" onClick={() => setProfileOpen(true)} className="flex min-w-0 items-center gap-2.5 text-left" aria-label="打开学习画像"><span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-semibold ${avatarStyles[activeAvatar]}`}>{user.displayName.slice(0, 1).toUpperCase()}</span><span className="min-w-0"><span className="block text-sm font-semibold tracking-tight">IM-Training-Agent</span><span className="block text-[11px] text-muted-foreground">{user.displayName} · 学习画像</span></span></button>
-      <nav aria-label="学习空间" className="flex items-center rounded-lg border bg-muted/40 p-1 text-sm"><span className="rounded-md bg-background px-4 py-1.5 font-medium shadow-sm">路径</span><span className="px-4 py-1.5 text-muted-foreground">学习</span><span className="px-4 py-1.5 text-muted-foreground">资源</span></nav>
+      <nav aria-label="学习空间" className="flex items-center rounded-lg border bg-muted/40 p-1 text-sm"><button type="button" className="rounded-md bg-background px-4 py-1.5 font-medium shadow-sm">路径</button><button type="button" onClick={() => onNavigate?.("study")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">学习</button><button type="button" onClick={() => onNavigate?.("resources")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">资源</button></nav>
       <button type="button" onClick={logout} className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-2 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"><LogOut className="h-3.5 w-3.5" />退出</button>
     </header>
 

@@ -67,6 +67,21 @@ export interface ResourceBlock {
   evidenceIds: string[];
 }
 
+export interface QuizOption {
+  id: string;
+  text: string;
+}
+
+export interface QuizQuestion {
+  id: string;
+  level: 'L1' | 'L2' | 'L3';
+  prompt: string;
+  options: QuizOption[];
+  answerId: string;
+  explanation: string;
+  evidenceIds: string[];
+}
+
 export interface ResourceDocument {
   id: string;
   taskId: string;

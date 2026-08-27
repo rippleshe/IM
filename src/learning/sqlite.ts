@@ -160,11 +160,30 @@ export function initializeLearningDatabase(db: SqliteDatabase): void {
       asset_id TEXT NOT NULL,
       completed INTEGER NOT NULL DEFAULT 0,
       mastered INTEGER NOT NULL DEFAULT 0,
+      mastery_level TEXT,
       difficulty_rating INTEGER,
       user_rating INTEGER,
       note TEXT,
       updated_at INTEGER NOT NULL,
       UNIQUE(learner_id, asset_id)
+    );
+    CREATE TABLE IF NOT EXISTS learning_asset_page_notes (
+      learner_id TEXT NOT NULL,
+      asset_id TEXT NOT NULL,
+      page_key TEXT NOT NULL,
+      content TEXT NOT NULL,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (learner_id, asset_id, page_key)
+    );
+    CREATE TABLE IF NOT EXISTS learning_quiz_attempts (
+      id TEXT PRIMARY KEY,
+      learner_id TEXT NOT NULL,
+      asset_id TEXT NOT NULL,
+      question_id TEXT NOT NULL,
+      answer_json TEXT NOT NULL,
+      correct INTEGER NOT NULL,
+      duration_ms INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL
     );
     CREATE TABLE IF NOT EXISTS evidence_items (
       id TEXT PRIMARY KEY,
@@ -228,6 +247,8 @@ export function initializeLearningDatabase(db: SqliteDatabase): void {
     CREATE INDEX IF NOT EXISTS idx_path_nodes_learner ON learning_path_nodes(learner_id, sort_order, updated_at DESC);
     CREATE INDEX IF NOT EXISTS idx_path_edges_learner ON learning_path_edges(learner_id, from_node_id, to_node_id);
     CREATE INDEX IF NOT EXISTS idx_asset_feedback_learner ON learning_asset_feedback(learner_id, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_page_notes_asset ON learning_asset_page_notes(learner_id, asset_id, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_quiz_attempts_asset ON learning_quiz_attempts(learner_id, asset_id, question_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_events_learner ON learning_events(learner_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_chat_messages_learner ON learning_chat_messages(learner_id, created_at ASC);
     CREATE INDEX IF NOT EXISTS idx_profile_learner ON learner_profile_snapshots(learner_id, generated_at DESC);
@@ -238,6 +259,7 @@ export function initializeLearningDatabase(db: SqliteDatabase): void {
   ensureColumn(db, 'evidence_items', 'source_scope', "TEXT NOT NULL DEFAULT 'system'");
   ensureColumn(db, 'evidence_items', 'metadata_json', "TEXT NOT NULL DEFAULT '{}'");
   ensureColumn(db, 'users', 'avatar_key', "TEXT NOT NULL DEFAULT 'graphite'");
+  ensureColumn(db, 'learning_asset_feedback', 'mastery_level', 'TEXT');
 }
 
 export function initializeDatasetDatabase(db: SqliteDatabase): void {

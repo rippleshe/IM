@@ -308,6 +308,7 @@ import { IdentityStore, type AuthenticatedLearner, type OnboardingInput } from '
 import { LearningStore, type LearningPathEdgeView, type LearningPathRevisionInput } from '../src/learning/store.js';
 import { buildResourceDraft } from '../src/learning/resource-builder.js';
 import { auditResource } from '../src/learning/audit.js';
+import type { LearningResourceType, ResourceDocument } from '../src/learning/types.js';
 
 interface ActiveSession {
   id: string;
@@ -347,6 +348,28 @@ const learningStore = new LearningStore(learningDb);
 const identityStore = new IdentityStore(learningDb);
 
 const AUTH_COOKIE_NAME = 'im_training_agent_auth';
+const LEARNING_RESOURCE_TYPES: LearningResourceType[] = ['lecture', 'tiered_quiz', 'practice_guide', 'concept_map', 'review_cards', 'challenge_task'];
+
+function isLearningResourceType(value: unknown): value is LearningResourceType {
+  return typeof value === 'string' && LEARNING_RESOURCE_TYPES.includes(value as LearningResourceType);
+}
+
+function resourceToMarkdown(resource: ResourceDocument): string {
+  const lines = [`# ${resource.title}`, '', `- 类型：${resource.type}`, `- 难度：${Math.round(resource.difficulty * 100)}%`, '', '## 学习目标', ...resource.learningObjectives.map((item) => `- ${item}`), ''];
+  for (const block of resource.blocks) {
+    if (block.type === 'heading') lines.push(`## ${String(block.content)}`, '');
+    else if (block.type === 'list' || block.type === 'checklist') {
+      const items = Array.isArray(block.content) ? block.content : [block.content];
+      lines.push(...items.map((item) => `- ${typeof item === 'string' ? item : JSON.stringify(item)}`), '');
+    } else if (block.type === 'evidence') {
+      const content = block.content as { label?: string; locator?: string; summary?: string };
+      lines.push(`> ${content.label ?? '证据'}：${content.locator ?? ''}`, '', String(content.summary ?? ''), '');
+    } else {
+      lines.push(typeof block.content === 'string' ? block.content : `\`\`\`json\n${JSON.stringify(block.content, null, 2)}\n\`\`\``, '');
+    }
+  }
+  return lines.join('\n');
+}
 
 function readCookie(header: string | undefined, name: string): string | undefined {
   if (!header) return undefined;
@@ -888,7 +911,8 @@ app.patch('/api/auth/avatar', (req, res) => {
 app.get('/api/learning/chat', (req, res) => {
   const learner = requireLearner(req, res);
   if (!learner) return;
-  res.json({ success: true, messages: learningStore.listChatMessages(learner.id) });
+  const surface = req.query.surface === 'study' ? 'study' : 'path';
+  res.json({ success: true, messages: learningStore.listChatMessages(learner.id, 80, surface) });
 });
 
 app.post('/api/learning/chat', async (req, res) => {
@@ -913,6 +937,77 @@ app.post('/api/learning/chat', async (req, res) => {
     path: learningStore.getPathGraph(learner.id),
     profile: outcome.profile,
   });
+});
+
+app.post('/api/learning/study/chat', (req, res) => {
+  const learner = requireLearner(req, res);
+  if (!learner) return;
+  const content = typeof req.body?.content === 'string' ? req.body.content.trim().slice(0, 12_000) : '';
+  const pathNodeId = typeof req.body?.pathNodeId === 'string' ? req.body.pathNodeId : '';
+  const resourceType: LearningResourceType = isLearningResourceType(req.body?.resourceType) ? req.body.resourceType : 'lecture';
+  const collaborationPreference = req.body?.collaborationPreference === 'custom' ? 'custom' : 'auto';
+  const selectedAgentIds = Array.isArray(req.body?.selectedAgentIds)
+    ? req.body.selectedAgentIds.filter((id: unknown): id is LearningAgentId => typeof id === 'string' && (LEARNING_AGENT_IDS as readonly string[]).includes(id))
+    : [];
+  const temporaryReference = req.body?.temporaryReference && typeof req.body.temporaryReference === 'object'
+    ? {
+        name: typeof req.body.temporaryReference.name === 'string' ? req.body.temporaryReference.name : '临时参考资料',
+        content: typeof req.body.temporaryReference.content === 'string' ? req.body.temporaryReference.content.slice(0, 120_000) : '',
+      }
+    : undefined;
+  if (!content) {
+    res.status(400).json({ success: false, error: '请输入要生成的学习资源或问题' });
+    return;
+  }
+  const pathNode = learningStore.getPathGraph(learner.id).nodes.find((node) => node.id === pathNodeId);
+  const userMessage = learningStore.saveChatMessage(learner.id, 'user', content, {
+    surface: 'study', pathNodeId: pathNode?.id ?? null, resourceType,
+  });
+  try {
+    const evidencePack = evidenceService.buildEvidencePack(content, { learnerId: learner.id, sessionId: `study-${Date.now()}`, temporaryReference });
+    const requestedAgents = collaborationPreference === 'custom' && selectedAgentIds.length > 0
+      ? selectedAgentIds
+      : ['learning_planning', 'evidence_retrieval', 'domain_expert'] as LearningAgentId[];
+    const optionalAgents = Array.from(new Set<LearningAgentId>([
+      ...requestedAgents,
+      'resource_generation',
+      'cross_validation',
+      'privacy_compliance',
+    ]));
+    const activities = [
+      {
+        agentId: 'orchestrator', name: '协同总控 Agent', action: collaborationPreference === 'custom' ? '按你的角色偏好编排本次任务' : '分析目标并自动编排本次协同',
+        status: 'completed', tools: [
+          { name: '任务编排', detail: pathNode ? `关联路径节点：${pathNode.title}` : '按当前学习目标创建任务' },
+          { name: 'DAG 调度', detail: collaborationPreference === 'custom' ? '遵循指定角色，按依赖关系调度' : '根据目标与风险自动选择串行或并行阶段' },
+          { name: '发布门禁', detail: '资源生成后必须经过 Claim 审核、交叉验证与隐私检查' },
+        ],
+      },
+      ...(optionalAgents.includes('learning_planning') ? [{ agentId: 'learning_planning', name: '学情与路径智能体', action: '读取当前画像和学习路径，确定资源粒度', status: 'completed', tools: [{ name: '学习状态读取', detail: pathNode ? `当前节点：${pathNode.title}` : '未指定路径节点' }] }] : []),
+      ...(optionalAgents.includes('evidence_retrieval') ? [{ agentId: 'evidence_retrieval', name: '知识检索与溯源 Agent', action: `整理 ${evidencePack.items.length} 条可用依据`, status: 'completed', tools: evidencePack.retrievalPlan.map((method) => ({ name: method === 'structured' ? 'SQLite 数据查询' : 'FTS5 文档检索', detail: method === 'structured' ? '查询字段和时间窗口' : '定位领域资料片段' })) }] : []),
+      ...(optionalAgents.includes('domain_expert') ? [{ agentId: 'domain_expert', name: '领域诊断 Agent', action: '核对设备字段语义与诊断边界', status: 'completed', tools: [{ name: '字段语义核对', detail: '避免将异常数据直接写成确定故障' }] }] : []),
+    ];
+    const resource = buildResourceDraft(`study-${Date.now()}`, content, resourceType, evidencePack);
+    const audit = auditResource(resource, evidencePack);
+    const publication = resolveResourcePublication(audit.summary.status);
+    const auditedResource = { ...resource, evidencePackId: evidencePack.id, auditSummary: audit.summary, auditStatus: publication.auditStatus };
+    learningStore.saveResourceAudit(auditedResource.id, audit.claims);
+    if (publication.persist) learningStore.saveAsset(learner.id, undefined, auditedResource);
+    if (optionalAgents.includes('resource_generation')) activities.push({ agentId: 'resource_generation', name: '个性化资源生成 Agent', action: `生成${resource.title}`, status: 'completed', tools: [{ name: '资源模板', detail: `按 ${resourceType} 契约组织内容` }] });
+    if (optionalAgents.includes('cross_validation')) activities.push({ agentId: 'cross_validation', name: '辩论交叉验证 Agent', action: audit.summary.status === 'corroborated' ? '交叉验证通过' : '标记需要复核的内容', status: 'completed', tools: [{ name: 'Claim 审核', detail: `${audit.claims.length} 条声明已核对` }] });
+    if (optionalAgents.includes('privacy_compliance')) activities.push({ agentId: 'privacy_compliance', name: '合规与隐私 Agent', action: temporaryReference ? '临时资料仅用于本次任务，未写入知识库' : '确认本次任务未使用临时资料', status: 'completed', tools: [{ name: '资料边界检查', detail: temporaryReference ? '会话结束后不保留原文' : '无上传资料' }] });
+    const assistantMessage = learningStore.saveChatMessage(learner.id, 'assistant', publication.persist
+      ? `已完成${resource.title}，并通过发布检查，已保存到学习资产。`
+      : `已生成${resource.title}，但审核发现需要复核的内容，暂未作为已审核资产发布。`, {
+      surface: 'study', pathNodeId: pathNode?.id ?? null, resourceType, activities,
+      asset: { id: auditedResource.id, title: auditedResource.title, type: auditedResource.type, auditStatus: auditedResource.auditStatus, persisted: publication.persist },
+      evidence: { count: evidencePack.items.length, score: evidencePack.coverageScore, crossValidation: audit.summary.status },
+    });
+    learningStore.recordLearningEvent(learner.id, 'study_resource_generated', { pathNodeId: pathNode?.id ?? null, resourceId: auditedResource.id, resourceType, persisted: publication.persist, evidenceCount: evidencePack.items.length });
+    res.json({ success: true, userMessage, assistantMessage, asset: auditedResource, evidencePack, activities });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error instanceof Error ? error.message : String(error) });
+  }
 });
 
 app.post('/api/auth/register', (req, res) => {
@@ -1034,10 +1129,69 @@ app.post('/api/learning/assets/:assetId/feedback', (req, res) => {
   learningStore.saveAssetFeedback(learner.id, req.params.assetId, {
     completed: typeof req.body?.completed === 'boolean' ? req.body.completed : undefined,
     mastered: typeof req.body?.mastered === 'boolean' ? req.body.mastered : undefined,
+    masteryLevel: ['high', 'medium', 'low'].includes(req.body?.masteryLevel) ? req.body.masteryLevel : req.body?.masteryLevel === null ? null : undefined,
     difficultyRating: typeof req.body?.difficultyRating === 'number' ? req.body.difficultyRating : undefined,
     userRating: typeof req.body?.userRating === 'number' ? req.body.userRating : undefined,
     note: typeof req.body?.note === 'string' ? req.body.note : undefined,
   });
+  res.json({ success: true, profile: learningStore.getProfile(learner.id) });
+});
+
+app.get('/api/learning/assets/:assetId/reader', (req, res) => {
+  const learner = requireLearner(req, res);
+  if (!learner) return;
+  const asset = learningStore.getAsset(learner.id, req.params.assetId);
+  if (!asset) {
+    res.status(404).json({ success: false, error: '未找到该学习资产' });
+    return;
+  }
+  res.json({
+    success: true,
+    asset,
+    feedback: learningStore.getAssetFeedback(learner.id, asset.id),
+    pageNotes: learningStore.listAssetPageNotes(learner.id, asset.id),
+    quizAttempts: asset.type === 'tiered_quiz' ? learningStore.listQuizAttempts(learner.id, asset.id) : [],
+  });
+});
+
+app.put('/api/learning/assets/:assetId/pages/:pageKey/note', (req, res) => {
+  const learner = requireLearner(req, res);
+  if (!learner) return;
+  if (!learningStore.getAsset(learner.id, req.params.assetId)) {
+    res.status(404).json({ success: false, error: '未找到该学习资产' });
+    return;
+  }
+  const content = typeof req.body?.content === 'string' ? req.body.content : '';
+  const note = learningStore.saveAssetPageNote(learner.id, req.params.assetId, req.params.pageKey, content);
+  res.json({ success: true, note });
+});
+
+app.post('/api/learning/assets/:assetId/quiz-attempts', (req, res) => {
+  const learner = requireLearner(req, res);
+  if (!learner) return;
+  const questionId = typeof req.body?.questionId === 'string' ? req.body.questionId : '';
+  const answerId = typeof req.body?.answerId === 'string' ? req.body.answerId : '';
+  const durationMs = typeof req.body?.durationMs === 'number' ? req.body.durationMs : 0;
+  if (!questionId || !answerId) {
+    res.status(400).json({ success: false, error: '请选择一个答案后再提交' });
+    return;
+  }
+  try {
+    const result = learningStore.submitQuizAttempt(learner.id, req.params.assetId, questionId, answerId, durationMs);
+    res.json({ success: true, ...result, profile: learningStore.getProfile(learner.id) });
+  } catch (error) {
+    res.status(400).json({ success: false, error: error instanceof Error ? error.message : '提交答案失败' });
+  }
+});
+
+app.delete('/api/learning/assets/:assetId', (req, res) => {
+  const learner = requireLearner(req, res);
+  if (!learner) return;
+  const deleted = learningStore.deleteAsset(learner.id, req.params.assetId);
+  if (!deleted) {
+    res.status(404).json({ success: false, error: '未找到该学习资产' });
+    return;
+  }
   res.json({ success: true, profile: learningStore.getProfile(learner.id) });
 });
 
@@ -1412,9 +1566,7 @@ app.post('/api/learning/resources/generate', (req, res) => {
   if (!learner) return;
   const query = typeof req.body?.query === 'string' ? req.body.query.trim() : '';
   const sessionId = typeof req.body?.sessionId === 'string' ? req.body.sessionId : undefined;
-  const type = ['practice_guide', 'tiered_quiz', 'concept_map'].includes(req.body?.type)
-    ? req.body.type
-    : 'lecture';
+  const type: LearningResourceType = isLearningResourceType(req.body?.type) ? req.body.type : 'lecture';
   if (!query) {
     res.status(400).json({ success: false, error: 'query is required' });
     return;
@@ -1436,6 +1588,27 @@ app.post('/api/learning/resources/generate', (req, res) => {
   } catch (error) {
     res.status(500).json({ success: false, error: error instanceof Error ? error.message : String(error) });
   }
+});
+
+app.get('/api/learning/assets/:assetId/export', (req, res) => {
+  const learner = requireLearner(req, res);
+  if (!learner) return;
+  const resource = learningStore.getAsset(learner.id, req.params.assetId);
+  if (!resource) {
+    res.status(404).json({ success: false, error: '未找到该学习资产' });
+    return;
+  }
+  const format = req.query.format === 'json' ? 'json' : req.query.format === 'txt' ? 'txt' : 'md';
+  const safeName = resource.title.replace(/[\\/:*?"<>|]/g, '-').slice(0, 80) || 'learning-resource';
+  if (format === 'json') {
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${safeName}.json"`);
+    res.send(JSON.stringify(resource, null, 2));
+    return;
+  }
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="${safeName}.${format}"`);
+  res.send(format === 'md' ? resourceToMarkdown(resource) : resourceToMarkdown(resource).replace(/^#+\s?/gm, '').replace(/`/g, ''));
 });
 
 app.post('/api/clarify', async (req, res) => {

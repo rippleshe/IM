@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { SqliteDatabase } from './sqlite.js';
-import type { ResourceDocument } from './types.js';
+import type { QuizQuestion, ResourceDocument } from './types.js';
 import type { ClaimAuditRecord } from './audit.js';
 
 export interface LearningPathItemView {
@@ -45,9 +45,40 @@ export interface LearningPathRevisionInput {
 export interface AssetFeedbackInput {
   completed?: boolean;
   mastered?: boolean;
+  masteryLevel?: 'high' | 'medium' | 'low' | null;
   difficultyRating?: number | null;
   userRating?: number | null;
   note?: string | null;
+}
+
+export interface AssetFeedbackView {
+  completed: boolean;
+  mastered: boolean;
+  masteryLevel: 'high' | 'medium' | 'low' | null;
+  difficultyRating: number | null;
+  userRating: number | null;
+  note: string | null;
+  updatedAt: number;
+}
+
+export interface AssetPageNoteView {
+  pageKey: string;
+  content: string;
+  updatedAt: number;
+}
+
+export interface QuizAttemptView {
+  id: string;
+  questionId: string;
+  answerId: string;
+  correct: boolean;
+  durationMs: number;
+  createdAt: number;
+}
+
+export interface QuizSubmissionResult {
+  attempt: QuizAttemptView;
+  question: QuizQuestion;
 }
 
 export interface LearningChatMessageView {
@@ -123,7 +154,123 @@ export class LearningStore {
       SELECT content_json AS contentJson FROM learning_assets
       WHERE learner_id = ? ORDER BY created_at DESC
     `).all(learnerId) as Array<{ contentJson: string }>;
-    return rows.map((row) => JSON.parse(row.contentJson) as ResourceDocument);
+    return rows.map((row) => normalizeResourceDocument(JSON.parse(row.contentJson) as ResourceDocument));
+  }
+
+  getAsset(learnerId: string, assetId: string): ResourceDocument | null {
+    const row = this.db.prepare(`
+      SELECT content_json AS contentJson FROM learning_assets
+      WHERE learner_id = ? AND id = ?
+    `).get(learnerId, assetId) as { contentJson?: string } | undefined;
+    if (!row?.contentJson) return null;
+    try {
+      return normalizeResourceDocument(JSON.parse(row.contentJson) as ResourceDocument);
+    } catch {
+      return null;
+    }
+  }
+
+  deleteAsset(learnerId: string, assetId: string): boolean {
+    const asset = this.getAsset(learnerId, assetId);
+    if (!asset) return false;
+    this.db.prepare('DELETE FROM learning_asset_page_notes WHERE learner_id = ? AND asset_id = ?').run(learnerId, assetId);
+    this.db.prepare('DELETE FROM learning_quiz_attempts WHERE learner_id = ? AND asset_id = ?').run(learnerId, assetId);
+    this.db.prepare('DELETE FROM learning_asset_feedback WHERE learner_id = ? AND asset_id = ?').run(learnerId, assetId);
+    this.db.prepare('DELETE FROM claim_evidence WHERE claim_id IN (SELECT id FROM claims WHERE resource_id = ?)').run(assetId);
+    this.db.prepare('DELETE FROM claims WHERE resource_id = ?').run(assetId);
+    this.db.prepare('DELETE FROM learning_assets WHERE learner_id = ? AND id = ?').run(learnerId, assetId);
+    this.recordLearningEvent(learnerId, 'asset_deleted', { assetId, type: asset.type });
+    return true;
+  }
+
+  listAssetPageNotes(learnerId: string, assetId: string): AssetPageNoteView[] {
+    return this.db.prepare(`
+      SELECT page_key AS pageKey, content, updated_at AS updatedAt
+      FROM learning_asset_page_notes
+      WHERE learner_id = ? AND asset_id = ? ORDER BY updated_at DESC
+    `).all(learnerId, assetId) as AssetPageNoteView[];
+  }
+
+  saveAssetPageNote(learnerId: string, assetId: string, pageKey: string, content: string): AssetPageNoteView {
+    const safePageKey = pageKey.trim().slice(0, 160);
+    const safeContent = content.trim().slice(0, 12_000);
+    const updatedAt = Date.now();
+    this.db.prepare(`
+      INSERT INTO learning_asset_page_notes (learner_id, asset_id, page_key, content, updated_at)
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(learner_id, asset_id, page_key) DO UPDATE SET
+        content = excluded.content, updated_at = excluded.updated_at
+    `).run(learnerId, assetId, safePageKey, safeContent, updatedAt);
+    this.recordLearningEvent(learnerId, 'asset_page_note_saved', { assetId, pageKey: safePageKey, characters: safeContent.length });
+    return { pageKey: safePageKey, content: safeContent, updatedAt };
+  }
+
+  getAssetFeedback(learnerId: string, assetId: string): AssetFeedbackView | null {
+    const row = this.db.prepare(`
+      SELECT completed, mastered, mastery_level AS masteryLevel, difficulty_rating AS difficultyRating,
+        user_rating AS userRating, note, updated_at AS updatedAt
+      FROM learning_asset_feedback WHERE learner_id = ? AND asset_id = ?
+    `).get(learnerId, assetId) as {
+      completed: number; mastered: number; masteryLevel: string | null; difficultyRating: number | null;
+      userRating: number | null; note: string | null; updatedAt: number;
+    } | undefined;
+    if (!row) return null;
+    return {
+      completed: Boolean(row.completed),
+      mastered: Boolean(row.mastered),
+      masteryLevel: row.masteryLevel === 'high' || row.masteryLevel === 'medium' || row.masteryLevel === 'low' ? row.masteryLevel : null,
+      difficultyRating: row.difficultyRating,
+      userRating: row.userRating,
+      note: row.note,
+      updatedAt: Number(row.updatedAt),
+    };
+  }
+
+  listQuizAttempts(learnerId: string, assetId: string): QuizAttemptView[] {
+    const rows = this.db.prepare(`
+      SELECT id, question_id AS questionId, answer_json AS answerJson, correct, duration_ms AS durationMs, created_at AS createdAt
+      FROM learning_quiz_attempts WHERE learner_id = ? AND asset_id = ? ORDER BY created_at ASC
+    `).all(learnerId, assetId) as Array<{ id: string; questionId: string; answerJson: string; correct: number; durationMs: number; createdAt: number }>;
+    return rows.map((row) => {
+      let answerId = '';
+      try { answerId = String((JSON.parse(row.answerJson) as { answerId?: string }).answerId ?? ''); } catch { /* historical malformed attempt */ }
+      return { id: row.id, questionId: row.questionId, answerId, correct: Boolean(row.correct), durationMs: Number(row.durationMs), createdAt: Number(row.createdAt) };
+    });
+  }
+
+  submitQuizAttempt(learnerId: string, assetId: string, questionId: string, answerId: string, durationMs: number): QuizSubmissionResult {
+    const asset = this.getAsset(learnerId, assetId);
+    if (!asset || asset.type !== 'tiered_quiz') throw new Error('未找到这份习题资产');
+    const question = extractQuizQuestions(asset).find((item) => item.id === questionId);
+    if (!question) throw new Error('未找到这道题');
+    const normalizedAnswerId = answerId.trim().slice(0, 32);
+    const correct = normalizedAnswerId === question.answerId;
+    const safeDuration = Math.max(0, Math.min(Math.round(durationMs), 3_600_000));
+    const attempt: QuizAttemptView = {
+      id: `quiz-attempt-${randomUUID()}`,
+      questionId: question.id,
+      answerId: normalizedAnswerId,
+      correct,
+      durationMs: safeDuration,
+      createdAt: Date.now(),
+    };
+    this.db.prepare(`
+      INSERT INTO learning_quiz_attempts (id, learner_id, asset_id, question_id, answer_json, correct, duration_ms, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(attempt.id, learnerId, assetId, question.id, JSON.stringify({ answerId: normalizedAnswerId }), correct ? 1 : 0, safeDuration, attempt.createdAt);
+    const knowledgePointId = asset.knowledgePointIds[0] ?? 'industrial-diagnosis-foundation';
+    this.db.prepare(`
+      INSERT INTO learner_skill_states (learner_id, knowledge_point_id, mastery, confidence, attempt_count, correct_count, updated_at)
+      VALUES (?, ?, ?, ?, 1, ?, ?)
+      ON CONFLICT(learner_id, knowledge_point_id) DO UPDATE SET
+        attempt_count = learner_skill_states.attempt_count + 1,
+        correct_count = learner_skill_states.correct_count + excluded.correct_count,
+        mastery = MIN(1, MAX(0, learner_skill_states.mastery + CASE WHEN excluded.correct_count = 1 THEN 0.08 ELSE -0.04 END)),
+        confidence = MIN(1, learner_skill_states.confidence + 0.08),
+        updated_at = excluded.updated_at
+    `).run(learnerId, knowledgePointId, correct ? 0.28 : 0.16, 0.18, correct ? 1 : 0, attempt.createdAt);
+    this.recordLearningEvent(learnerId, 'answer_recorded', { assetId, questionId: question.id, correct: correct ? 1 : 0, total: 1, durationMs: safeDuration, knowledgePointId });
+    return { attempt, question };
   }
 
   recordLearningEvent(learnerId: string, eventType: string, payload: unknown): string {
@@ -155,14 +302,14 @@ export class LearningStore {
     return message;
   }
 
-  listChatMessages(learnerId: string, limit = 80): LearningChatMessageView[] {
+  listChatMessages(learnerId: string, limit = 80, surface: 'path' | 'study' = 'path'): LearningChatMessageView[] {
     const rows = this.db.prepare(`
       SELECT id, role, content, metadata_json AS metadataJson, created_at AS createdAt
       FROM learning_chat_messages WHERE learner_id = ? ORDER BY created_at DESC LIMIT ?
     `).all(learnerId, Math.max(1, Math.min(limit, 200))) as Array<{
       id: string; role: string; content: string; metadataJson: string; createdAt: number;
     }>;
-    return rows.reverse().map((row) => {
+    const messages: LearningChatMessageView[] = rows.reverse().map((row): LearningChatMessageView => {
       let metadata: Record<string, unknown> = {};
       try {
         const parsed = JSON.parse(row.metadataJson) as unknown;
@@ -172,6 +319,9 @@ export class LearningStore {
       }
       return { id: row.id, role: row.role === 'assistant' ? 'assistant' : 'user', content: row.content, metadata, createdAt: Number(row.createdAt) };
     });
+    return messages.filter((message) => surface === 'study'
+      ? message.metadata['surface'] === 'study'
+      : message.metadata['surface'] !== 'study');
   }
 
   clearLegacySeedPath(learnerId: string): void {
@@ -371,33 +521,42 @@ export class LearningStore {
 
   saveAssetFeedback(learnerId: string, assetId: string, patch: AssetFeedbackInput): void {
     const previous = this.db.prepare(`
-      SELECT completed, mastered, difficulty_rating AS difficultyRating, user_rating AS userRating, note
+      SELECT completed, mastered, mastery_level AS masteryLevel, difficulty_rating AS difficultyRating, user_rating AS userRating, note
       FROM learning_asset_feedback WHERE learner_id = ? AND asset_id = ?
     `).get(learnerId, assetId) as {
       completed: number;
       mastered: number;
+      masteryLevel: string | null;
       difficultyRating: number | null;
       userRating: number | null;
       note: string | null;
     } | undefined;
-    const completed = patch.completed ?? Boolean(previous?.completed);
-    const mastered = patch.mastered ?? Boolean(previous?.mastered);
+    const requestedLevel = patch.masteryLevel === 'high' || patch.masteryLevel === 'medium' || patch.masteryLevel === 'low'
+      ? patch.masteryLevel
+      : patch.masteryLevel === null
+      ? null
+      : previous?.masteryLevel === 'high' || previous?.masteryLevel === 'medium' || previous?.masteryLevel === 'low'
+      ? previous.masteryLevel
+      : null;
+    const completed = patch.completed ?? (requestedLevel ? true : Boolean(previous?.completed));
+    const mastered = patch.mastered ?? (requestedLevel === 'high' ? true : requestedLevel ? false : Boolean(previous?.mastered));
     const difficultyRating = normalizeRating(patch.difficultyRating ?? previous?.difficultyRating ?? null);
     const userRating = normalizeRating(patch.userRating ?? previous?.userRating ?? null);
     const note = (patch.note ?? previous?.note ?? '').trim().slice(0, 2_000) || null;
     this.db.prepare(`
       INSERT INTO learning_asset_feedback
-        (id, learner_id, asset_id, completed, mastered, difficulty_rating, user_rating, note, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (id, learner_id, asset_id, completed, mastered, mastery_level, difficulty_rating, user_rating, note, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(learner_id, asset_id) DO UPDATE SET
         completed = excluded.completed,
         mastered = excluded.mastered,
+        mastery_level = excluded.mastery_level,
         difficulty_rating = excluded.difficulty_rating,
         user_rating = excluded.user_rating,
         note = excluded.note,
         updated_at = excluded.updated_at
-    `).run(`asset-feedback-${randomUUID()}`, learnerId, assetId, completed ? 1 : 0, mastered ? 1 : 0, difficultyRating, userRating, note, Date.now());
-    this.recordLearningEvent(learnerId, 'asset_feedback_recorded', { assetId, completed, mastered, difficultyRating, userRating });
+    `).run(`asset-feedback-${randomUUID()}`, learnerId, assetId, completed ? 1 : 0, mastered ? 1 : 0, requestedLevel, difficultyRating, userRating, note, Date.now());
+    this.recordLearningEvent(learnerId, 'asset_feedback_recorded', { assetId, completed, mastered, masteryLevel: requestedLevel, difficultyRating, userRating });
   }
 
   getProfile(learnerId: string): LearnerProfileView {
@@ -594,6 +753,60 @@ export class LearningStore {
       };
     });
   }
+}
+
+function extractQuizQuestions(asset: ResourceDocument): QuizQuestion[] {
+  const questionBlock = asset.blocks.find((block) => block.type === 'question');
+  const raw = questionBlock?.content;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return [];
+  const candidate = (raw as { questions?: unknown }).questions;
+  if (!Array.isArray(candidate)) return [];
+  return candidate.flatMap((item): QuizQuestion[] => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return [];
+    const value = item as Partial<QuizQuestion>;
+    if (typeof value.id !== 'string' || typeof value.prompt !== 'string' || typeof value.answerId !== 'string' || !Array.isArray(value.options)) return [];
+    const options = value.options.flatMap((option) => option && typeof option.id === 'string' && typeof option.text === 'string'
+      ? [{ id: option.id, text: option.text }]
+      : []);
+    if (options.length < 2 || !options.some((option) => option.id === value.answerId)) return [];
+    return [{
+      id: value.id,
+      level: value.level === 'L2' || value.level === 'L3' ? value.level : 'L1',
+      prompt: value.prompt,
+      options,
+      answerId: value.answerId,
+      explanation: typeof value.explanation === 'string' ? value.explanation : '',
+      evidenceIds: Array.isArray(value.evidenceIds) ? value.evidenceIds.filter((id): id is string => typeof id === 'string') : [],
+    }];
+  });
+}
+
+function normalizeResourceDocument(asset: ResourceDocument): ResourceDocument {
+  if (asset.type !== 'tiered_quiz' || extractQuizQuestions(asset).length > 0) return asset;
+  const questionBlock = asset.blocks.find((block) => block.type === 'question');
+  if (!questionBlock) return asset;
+  const evidenceIds = asset.evidenceIds.slice(0, 3);
+  const questions: QuizQuestion[] = [
+    {
+      id: 'legacy-evidence-boundary', level: 'L1', prompt: '设备传感器出现异常时，哪种判断最符合证据边界？',
+      options: [{ id: 'A', text: '已经证明设备确定故障。' }, { id: 'B', text: '提示风险，需要补充证据或现场复核。' }, { id: 'C', text: '不再需要说明不确定性。' }, { id: 'D', text: '直接删除异常记录。' }],
+      answerId: 'B', explanation: '单一读数支持的是风险判断，不等于确定故障；仍应保留复核边界。', evidenceIds,
+    },
+    {
+      id: 'legacy-cross-check', level: 'L2', prompt: '为了降低单一时间窗口带来的误判，最合适的动作是？',
+      options: [{ id: 'A', text: '忽略相邻工况。' }, { id: 'B', text: '直接写出故障名称。' }, { id: 'C', text: '补充关联字段、时间窗口或现场复核。' }, { id: 'D', text: '只保留最终结论。' }],
+      answerId: 'C', explanation: '交叉核验需要更多可定位证据，或通过现场复核来降低不确定性。', evidenceIds,
+    },
+    {
+      id: 'legacy-traceability', level: 'L3', prompt: '一份可追溯的风险结论至少应保留什么？',
+      options: [{ id: 'A', text: '风险判断、依据和复核动作。' }, { id: 'B', text: '一个无来源的结论。' }, { id: 'C', text: '只写建议维修。' }, { id: 'D', text: '删除推理过程。' }],
+      answerId: 'A', explanation: '可追溯的判断需要明确依据、结论边界和后续可以执行的动作。', evidenceIds,
+    },
+  ];
+  return {
+    ...asset,
+    blocks: asset.blocks.map((block) => block.id === questionBlock.id ? { ...block, content: { questions } } : block),
+  };
 }
 
 function normalizeRating(value: number | null): number | null {
