@@ -15,8 +15,6 @@ import {
   Layers3,
   LogOut,
   Map,
-  PanelLeftClose,
-  PanelLeftOpen,
   Save,
   Settings,
   Trash2,
@@ -138,7 +136,8 @@ export function ResourceWorkbench({ apiBase, user, onLogout, onNavigate }: Resou
   const [reader, setReader] = useState<ReaderData | null>(null);
   const [loading, setLoading] = useState(true);
   const [notice, setNotice] = useState("");
-  const [catalogOpen, setCatalogOpen] = useState(true);
+  const [catalogHover, setCatalogHover] = useState(false);
+  const closeTimer = useRef<number | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [notesWidth, setNotesWidth] = useState(330);
   const [resizing, setResizing] = useState(false);
@@ -179,6 +178,17 @@ export function ResourceWorkbench({ apiBase, user, onLogout, onNavigate }: Resou
     setActiveType(type);
     setSelectedId(assets.find((asset) => asset.type === type)?.id ?? null);
     setNotice("");
+    if (closeTimer.current) { window.clearTimeout(closeTimer.current); closeTimer.current = null; }
+  };
+
+  const openCatalog = () => {
+    if (closeTimer.current) { window.clearTimeout(closeTimer.current); closeTimer.current = null; }
+    setCatalogHover(true);
+  };
+
+  const scheduleCatalogClose = () => {
+    if (closeTimer.current) window.clearTimeout(closeTimer.current);
+    closeTimer.current = window.setTimeout(() => setCatalogHover(false), 180);
   };
 
   const deleteAsset = async (asset: ResourceAsset) => {
@@ -209,17 +219,18 @@ export function ResourceWorkbench({ apiBase, user, onLogout, onNavigate }: Resou
     </header>
 
     <div className="relative flex min-h-0 min-w-[1040px] flex-1 overflow-hidden">
-      <aside className={`absolute inset-y-0 left-0 z-30 flex w-[316px] overflow-hidden border-r bg-card shadow-xl transition-transform duration-200 ${catalogOpen ? "translate-x-0" : "-translate-x-[316px]"}`} aria-label="学习资产目录">
-        <div className="flex w-11 shrink-0 flex-col items-center border-r bg-muted/20 pt-3">
-          <div className="space-y-2">{typeItems.map((item) => { const Icon = item.icon; const active = activeType === item.type; return <button key={item.type} type="button" onClick={() => { setCatalogOpen(true); selectType(item.type); }} title={item.label} className={`flex h-9 w-9 items-center justify-center rounded-lg transition-colors ${active ? "bg-foreground text-background" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}><Icon className="h-4 w-4" /></button>; })}</div>
+      <div aria-hidden onMouseEnter={openCatalog} className="absolute inset-y-0 left-0 z-40 w-3" />
+      <aside onMouseLeave={scheduleCatalogClose} className={`absolute inset-y-0 left-0 z-30 w-[236px] overflow-hidden border-r bg-card shadow-xl transition-transform duration-200 ${catalogHover ? "translate-x-0" : "-translate-x-full"}`} aria-label="资源类型导航">
+        <div className="flex h-14 shrink-0 items-center border-b px-4 text-sm font-semibold">资源类型</div>
+        <div className="p-2">
+          {typeItems.map((item) => { const Icon = item.icon; const active = activeType === item.type; const count = assets.filter((asset) => asset.type === item.type).length; return <button key={item.type} type="button" onClick={() => { selectType(item.type); setCatalogHover(false); }} className={`mb-1 flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2.5 text-left text-xs transition-colors ${active ? "bg-muted font-medium" : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"}`}><Icon className="h-4 w-4 shrink-0" /><span className="min-w-0 flex-1">{item.label}</span><span className="shrink-0 text-[10px] text-muted-foreground">{count} 份</span></button>; })}
         </div>
-        {catalogOpen ? <div className="flex min-w-0 flex-1 flex-col"><div className="flex h-14 shrink-0 items-center justify-between border-b px-4"><div><div className="text-sm font-semibold">{typeLabel(activeType)}</div><div className="mt-0.5 text-[11px] text-muted-foreground">{activeAssets.length} 份</div></div></div><div className="min-h-0 flex-1 overflow-y-auto p-3">{loading ? <div className="px-2 py-4 text-xs text-muted-foreground">正在读取资源</div> : activeAssets.length === 0 ? <div className="rounded-xl border border-dashed px-3 py-8 text-center text-xs leading-5 text-muted-foreground">还没有{typeLabel(activeType)}。<br />从学习页生成后会自动入库。</div> : <div className="space-y-2">{activeAssets.map((asset) => <article key={asset.id} className={`group rounded-xl border p-3 transition-colors ${selectedId === asset.id ? "border-foreground/35 bg-muted/50" : "hover:border-foreground/25"}`}><button type="button" onClick={() => setSelectedId(asset.id)} className="block w-full text-left"><div className="line-clamp-2 text-xs font-semibold leading-5">{asset.title}</div><div className="mt-2 text-[10px] text-muted-foreground">{new Intl.DateTimeFormat("zh-CN", { month: "numeric", day: "numeric" }).format(asset.createdAt)}</div></button><button type="button" onClick={() => void deleteAsset(asset)} className="mt-2 inline-flex items-center gap-1 text-[10px] text-muted-foreground opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100"><Trash2 className="h-3 w-3" />删除</button></article>)}</div>}</div></div> : null}
       </aside>
-      <button type="button" onClick={() => setCatalogOpen((open) => !open)} style={{ transform: `translateX(${catalogOpen ? 316 : 0}px)` }} className="absolute left-0 top-3 z-40 flex h-9 w-9 items-center justify-center rounded-r-lg border border-l-0 bg-card shadow-sm transition-transform duration-200 hover:bg-muted" aria-label={catalogOpen ? "隐藏资源导航" : "显示资源导航"}>{catalogOpen ? <PanelLeftClose className="h-4 w-4" /> : <PanelLeftOpen className="h-4 w-4" />}</button>
 
       <section className="flex min-w-[460px] flex-1 flex-col overflow-hidden bg-card" aria-label="资源阅读与作答">
         {notice ? <div className="shrink-0 border-b border-destructive/20 bg-destructive/5 px-5 py-2 text-xs text-destructive">{notice}</div> : null}
-        {reader?.asset.type === "lecture" ? <LectureReader apiBase={apiBase} reader={reader} onReaderChange={setReader} onExport={exportAsset} /> : reader?.asset.type === "tiered_quiz" ? <QuizReader apiBase={apiBase} reader={reader} onReaderChange={setReader} /> : reader ? <GenericReader apiBase={apiBase} reader={reader} onReaderChange={setReader} onExport={exportAsset} /> : <EmptyReader label={typeLabel(activeType)} />}
+        {selectedAsset ? <div className="flex shrink-0 items-center gap-2 border-b bg-background px-5 py-2"><span className="shrink-0 rounded-full border px-2 py-0.5 text-[10px] text-muted-foreground">{typeLabel(selectedAsset.type)}</span><select value={selectedAsset.id} onChange={(event) => setSelectedId(event.target.value)} aria-label="切换同类型资源" className="h-7 min-w-0 flex-1 truncate rounded-lg border bg-background px-2 text-xs">{activeAssets.map((asset) => <option key={asset.id} value={asset.id}>{asset.title}</option>)}</select><button type="button" onClick={() => void deleteAsset(selectedAsset)} aria-label="删除当前资源" className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-destructive"><Trash2 className="h-3.5 w-3.5" /></button></div> : null}
+        {reader?.asset.type === "lecture" ? <LectureReader apiBase={apiBase} reader={reader} onReaderChange={setReader} onExport={exportAsset} /> : reader?.asset.type === "tiered_quiz" ? <QuizReader apiBase={apiBase} reader={reader} onReaderChange={setReader} /> : reader ? <GenericReader apiBase={apiBase} reader={reader} onReaderChange={setReader} onExport={exportAsset} /> : loading ? <div className="flex h-full items-center justify-center text-sm text-muted-foreground">正在读取资源</div> : <EmptyReader label={typeLabel(activeType)} />}
       </section>
 
       <div role="separator" aria-orientation="vertical" onMouseDown={() => setResizing(true)} className="w-1.5 shrink-0 cursor-col-resize bg-border/60 transition-colors hover:bg-foreground/30" />
