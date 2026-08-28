@@ -987,7 +987,7 @@ app.post('/api/learning/study/chat', (req, res) => {
       ...(optionalAgents.includes('evidence_retrieval') ? [{ agentId: 'evidence_retrieval', name: '知识检索与溯源 Agent', action: `整理 ${evidencePack.items.length} 条可用依据`, status: 'completed', tools: evidencePack.retrievalPlan.map((method) => ({ name: method === 'structured' ? 'SQLite 数据查询' : 'FTS5 文档检索', detail: method === 'structured' ? '查询字段和时间窗口' : '定位领域资料片段' })) }] : []),
       ...(optionalAgents.includes('domain_expert') ? [{ agentId: 'domain_expert', name: '领域诊断 Agent', action: '核对设备字段语义与诊断边界', status: 'completed', tools: [{ name: '字段语义核对', detail: '避免将异常数据直接写成确定故障' }] }] : []),
     ];
-    const resource = buildResourceDraft(`study-${Date.now()}`, content, resourceType, evidencePack);
+    const resource = buildResourceDraft(`study-${Date.now()}`, content, resourceType, evidencePack, pathNode?.knowledgePointId);
     const audit = auditResource(resource, evidencePack);
     const publication = resolveResourcePublication(audit.summary.status);
     const auditedResource = { ...resource, evidencePackId: evidencePack.id, auditSummary: audit.summary, auditStatus: publication.auditStatus };
@@ -1539,7 +1539,8 @@ app.post('/api/learning/context/sync', async (req, res) => {
 
     const assets = runtimeWorkbenchSettings.autoAssetTypes
       .map((type) => {
-        const resource = buildResourceDraft(sessionId ?? `training-${Date.now()}`, goal, type, evidencePack);
+        const activeKnowledgePointId = pathItems.find((item) => item.status === 'active')?.knowledgePointId ?? pathItems[0]?.knowledgePointId;
+        const resource = buildResourceDraft(sessionId ?? `training-${Date.now()}`, goal, type, evidencePack, activeKnowledgePointId);
         const audit = auditResource(resource, evidencePack);
         const publication = resolveResourcePublication(audit.summary.status);
         const auditedResource = {
@@ -1566,6 +1567,7 @@ app.post('/api/learning/resources/generate', (req, res) => {
   if (!learner) return;
   const query = typeof req.body?.query === 'string' ? req.body.query.trim() : '';
   const sessionId = typeof req.body?.sessionId === 'string' ? req.body.sessionId : undefined;
+  const knowledgePointId = typeof req.body?.knowledgePointId === 'string' ? req.body.knowledgePointId : undefined;
   const type: LearningResourceType = isLearningResourceType(req.body?.type) ? req.body.type : 'lecture';
   if (!query) {
     res.status(400).json({ success: false, error: 'query is required' });
@@ -1573,7 +1575,7 @@ app.post('/api/learning/resources/generate', (req, res) => {
   }
   try {
     const evidencePack = evidenceService.buildEvidencePack(query, { learnerId: learner.id, sessionId });
-    const resource = buildResourceDraft(sessionId ?? `training-${Date.now()}`, query, type, evidencePack);
+    const resource = buildResourceDraft(sessionId ?? `training-${Date.now()}`, query, type, evidencePack, knowledgePointId);
     const audit = auditResource(resource, evidencePack);
     const publication = resolveResourcePublication(audit.summary.status);
     const auditedResource = {

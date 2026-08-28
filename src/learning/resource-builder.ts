@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
+import { normalizeKnowledgePointId } from './store.js';
 import type { EvidencePack, LearningResourceType, QuizQuestion, ResourceBlock, ResourceDocument } from './types.js';
 
-function evidenceBlocks(pack: EvidencePack, positionOffset = 2): ResourceBlock[] {
+function evidenceBlocks(pack: EvidencePack, knowledgePointId: string, positionOffset = 2): ResourceBlock[] {
   return pack.items.slice(0, 6).map((item, index) => ({
     id: `resource-block-${randomUUID()}`,
     type: 'evidence',
@@ -11,7 +12,7 @@ function evidenceBlocks(pack: EvidencePack, positionOffset = 2): ResourceBlock[]
       locator: item.locator,
       summary: item.content,
     },
-    knowledgePointIds: ['compressor-diagnosis-evidence'],
+    knowledgePointIds: [knowledgePointId],
     evidenceIds: [item.id],
   }));
 }
@@ -21,6 +22,7 @@ export function buildResourceDraft(
   query: string,
   type: LearningResourceType,
   pack: EvidencePack,
+  knowledgePointId = 'compressor-diagnosis-evidence',
 ): ResourceDocument {
   const isLecture = type === 'lecture';
   const title = isLecture
@@ -34,7 +36,7 @@ export function buildResourceDraft(
     : type === 'challenge_task'
     ? `挑战任务：${query}`
     : `知识图谱：${query}`;
-  const knowledgePointId = 'compressor-diagnosis-evidence';
+  const knowledgePoint = normalizeKnowledgePointId(knowledgePointId) || 'compressor-diagnosis-evidence';
   const opening: ResourceBlock = {
     id: `resource-block-${randomUUID()}`,
     type: 'paragraph',
@@ -50,7 +52,7 @@ export function buildResourceDraft(
       : type === 'challenge_task'
       ? '请用给出的数据、证据和约束完成一个可验证的小型诊断任务，并明确说明结论边界。'
       : '下面的 Mermaid 图把学习目标、数据证据、风险判断和现场复核串成一条可追溯关系。',
-    knowledgePointIds: [knowledgePointId],
+    knowledgePointIds: [knowledgePoint],
     evidenceIds: pack.items.map((item) => item.id),
   };
   const taskBlock: ResourceBlock = {
@@ -68,7 +70,7 @@ export function buildResourceDraft(
       : type === 'challenge_task'
       ? ['读取给定证据', '形成风险判断', '写出复核方案', '提交带依据的结论']
       : ['目标：理解压缩机诊断证据', '证据：传感器与状态记录', '判断：风险与不确定性', '行动：现场复核与维护训练'],
-    knowledgePointIds: [knowledgePointId],
+    knowledgePointIds: [knowledgePoint],
     evidenceIds: pack.items.map((item) => item.id),
   };
 
@@ -126,7 +128,7 @@ export function buildResourceDraft(
       content: {
         questions,
       },
-      knowledgePointIds: [knowledgePointId],
+      knowledgePointIds: [knowledgePoint],
       evidenceIds: pack.items.map((item) => item.id),
     });
   }
@@ -136,7 +138,7 @@ export function buildResourceDraft(
       type: 'paragraph',
       position: 2,
       content: `flowchart TD\n  A[学习目标：${escapeMermaid(query)}] --> B[传感器与状态证据]\n  B --> C[风险判断]\n  C --> D[现场复核]\n  D --> E[维护动作]\n  C --> F[保留不确定性]`,
-      knowledgePointIds: [knowledgePointId],
+      knowledgePointIds: [knowledgePoint],
       evidenceIds: pack.items.map((item) => item.id),
     });
   }
@@ -152,7 +154,7 @@ export function buildResourceDraft(
           { prompt: '复核动作有什么作用？', answer: '它补充数据无法观察到的现场信息，降低误判风险。' },
         ],
       },
-      knowledgePointIds: [knowledgePointId],
+      knowledgePointIds: [knowledgePoint],
       evidenceIds: pack.items.map((item) => item.id),
     });
   }
@@ -162,7 +164,7 @@ export function buildResourceDraft(
       type: 'checklist',
       position: 2,
       content: ['选择一个异常窗口或案例片段', '引用至少两条可定位证据', '给出风险判断与不确定性说明', '提出一项可执行的现场复核动作'],
-      knowledgePointIds: [knowledgePointId],
+      knowledgePointIds: [knowledgePoint],
       evidenceIds: pack.items.map((item) => item.id),
     });
   }
@@ -184,8 +186,8 @@ export function buildResourceDraft(
       : type === 'challenge_task'
       ? ['完成一次可追溯的小型诊断任务', '提交有边界的风险结论']
       : ['建立从数据证据到诊断行动的知识关系'],
-    knowledgePointIds: [knowledgePointId],
-    blocks: [opening, taskBlock, ...extraBlocks, ...evidenceBlocks(pack, extraBlocks.length + 2)],
+    knowledgePointIds: [knowledgePoint],
+    blocks: [opening, taskBlock, ...extraBlocks, ...evidenceBlocks(pack, knowledgePoint, extraBlocks.length + 2)],
     evidenceIds: pack.items.map((item) => item.id),
     auditStatus: pack.items.length > 0 ? 'passed' : 'revise',
     createdAt: Date.now(),

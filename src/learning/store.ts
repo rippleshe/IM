@@ -22,6 +22,51 @@ export interface LearningPathNodeView {
   userStatus: 'not_started' | 'learning' | 'completed';
   mastered: boolean;
   sortOrder: number;
+  recommendation?: PathNodeRecommendation;
+}
+
+export type PathNodeRecommendationLevel = 'no_evidence' | 'reinforce' | 'maintain' | 'advance';
+
+export interface PathNodeRecommendation {
+  level: PathNodeRecommendationLevel;
+  reason: string;
+  attemptCount: number;
+  correctCount: number;
+  mastery: number;
+}
+
+export interface NodeRecommendationInput {
+  skill?: { mastery: number; attemptCount: number; correctCount: number } | null;
+  feedbackLevel?: 'high' | 'medium' | 'low' | null;
+}
+
+// 路径节点建议由确定性规则从作答与反馈证据推导，不自动改写用户手动状态。
+export function computeNodeRecommendation(input: NodeRecommendationInput): PathNodeRecommendation {
+  const attemptCount = input.skill?.attemptCount ?? 0;
+  const correctCount = input.skill?.correctCount ?? 0;
+  const mastery = Number((input.skill?.mastery ?? 0).toFixed(2));
+  const correctRate = attemptCount > 0 ? correctCount / attemptCount : 0;
+  const percent = Math.round(correctRate * 100);
+  const metrics = { attemptCount, correctCount, mastery };
+  if (attemptCount === 0) {
+    if (input.feedbackLevel === 'low') {
+      return { level: 'reinforce', reason: '你对相关资料的掌握反馈是“掌握不好”，建议先补强这个节点', ...metrics };
+    }
+    if (input.feedbackLevel === 'high' || input.feedbackLevel === 'medium') {
+      return { level: 'maintain', reason: '已阅读相关资料但还没有作答记录，建议做一组练习验证掌握情况', ...metrics };
+    }
+    return { level: 'no_evidence', reason: '该节点还没有作答或学习反馈，从一次讲义学习或练习开始', ...metrics };
+  }
+  if (input.feedbackLevel === 'low') {
+    return { level: 'reinforce', reason: `你将资料掌握反馈标为“掌握不好”，建议先补强这个节点（已作答 ${attemptCount} 次，正确率 ${percent}%）`, ...metrics };
+  }
+  if (correctRate < 0.6 || mastery < 0.3) {
+    return { level: 'reinforce', reason: `已作答 ${attemptCount} 次，正确率 ${percent}%，建议补强后再继续后续节点`, ...metrics };
+  }
+  if (attemptCount >= 4 && correctRate >= 0.75 && mastery >= 0.5) {
+    return { level: 'advance', reason: `已作答 ${attemptCount} 次，正确率 ${percent}%，可以尝试进阶任务或挑战题`, ...metrics };
+  }
+  return { level: 'maintain', reason: `已作答 ${attemptCount} 次，正确率 ${percent}%，按当前节奏继续`, ...metrics };
 }
 
 export interface LearningPathEdgeView {
@@ -258,7 +303,7 @@ export class LearningStore {
       INSERT INTO learning_quiz_attempts (id, learner_id, asset_id, question_id, answer_json, correct, duration_ms, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `).run(attempt.id, learnerId, assetId, question.id, JSON.stringify({ answerId: normalizedAnswerId }), correct ? 1 : 0, safeDuration, attempt.createdAt);
-    const knowledgePointId = asset.knowledgePointIds[0] ?? 'industrial-diagnosis-foundation';
+    const knowledgePointId = normalizeKnowledgePointId(asset.knowledgePointIds[0] ?? '') || 'industrial-diagnosis-foundation';
     this.db.prepare(`
       INSERT INTO learner_skill_states (learner_id, knowledge_point_id, mastery, confidence, attempt_count, correct_count, updated_at)
       VALUES (?, ?, ?, ?, 1, ?, ?)
@@ -425,6 +470,7 @@ export class LearningStore {
       SELECT id, from_node_id AS fromNodeId, to_node_id AS toNodeId, relation
       FROM learning_path_edges WHERE learner_id = ? ORDER BY created_at ASC
     `).all(learnerId) as LearningPathEdgeView[];
+    const evidence = this.getRecommendationEvidence(learnerId);
     return {
       nodes: nodes.map((node) => ({
         ...node,
@@ -432,9 +478,61 @@ export class LearningStore {
           ? node.userStatus as LearningPathNodeView['userStatus']
           : 'not_started',
         mastered: Boolean(node.mastered),
+        recommendation: this.recommendationForNode(node, evidence),
       })),
       edges,
     };
+  }
+
+  private getRecommendationEvidence(learnerId: string): {
+    skills: Map<string, { mastery: number; attemptCount: number; correctCount: number }>;
+    feedbackLevels: Map<string, 'high' | 'medium' | 'low'>;
+  } {
+    const skillRows = this.db.prepare(`
+      SELECT knowledge_point_id AS knowledgePointId, mastery, attempt_count AS attemptCount, correct_count AS correctCount
+      FROM learner_skill_states WHERE learner_id = ?
+    `).all(learnerId) as Array<{ knowledgePointId: string; mastery: number; attemptCount: number; correctCount: number }>;
+    const skills = new Map<string, { mastery: number; attemptCount: number; correctCount: number }>();
+    for (const row of skillRows) {
+      skills.set(normalizeKnowledgePointId(row.knowledgePointId), {
+        mastery: Number(row.mastery),
+        attemptCount: Number(row.attemptCount),
+        correctCount: Number(row.correctCount),
+      });
+    }
+    const feedbackRows = this.db.prepare(`
+      SELECT a.content_json AS contentJson, f.mastery_level AS masteryLevel
+      FROM learning_asset_feedback f
+      JOIN learning_assets a ON a.learner_id = f.learner_id AND a.id = f.asset_id
+      WHERE f.learner_id = ? AND f.mastery_level IN ('high', 'medium', 'low')
+      ORDER BY f.updated_at DESC
+    `).all(learnerId) as Array<{ contentJson: string; masteryLevel: string }>;
+    const feedbackLevels = new Map<string, 'high' | 'medium' | 'low'>();
+    for (const row of feedbackRows) {
+      let firstKnowledgePointId = '';
+      try {
+        const parsed = JSON.parse(row.contentJson) as { knowledgePointIds?: unknown };
+        firstKnowledgePointId = Array.isArray(parsed.knowledgePointIds) && typeof parsed.knowledgePointIds[0] === 'string'
+          ? parsed.knowledgePointIds[0]
+          : '';
+      } catch {
+        // 忽略历史损坏的资产 JSON，反馈证据继续按其余资产计算。
+      }
+      const key = normalizeKnowledgePointId(firstKnowledgePointId);
+      if (key && !feedbackLevels.has(key)) feedbackLevels.set(key, row.masteryLevel as 'high' | 'medium' | 'low');
+    }
+    return { skills, feedbackLevels };
+  }
+
+  private recommendationForNode(
+    node: { knowledgePointId: string },
+    evidence: ReturnType<LearningStore['getRecommendationEvidence']>,
+  ): PathNodeRecommendation {
+    const key = normalizeKnowledgePointId(node.knowledgePointId);
+    return computeNodeRecommendation({
+      skill: evidence.skills.get(key) ?? null,
+      feedbackLevel: evidence.feedbackLevels.get(key) ?? null,
+    });
   }
 
   applyPathRevision(learnerId: string, revision: LearningPathRevisionInput): { path: LearningPathGraphView; changed: boolean } {
@@ -516,7 +614,8 @@ export class LearningStore {
       WHERE learner_id = ? AND id = ?
     `).run(userStatus, mastered ? 1 : 0, Date.now(), learnerId, nodeId);
     this.recordLearningEvent(learnerId, 'path_node_status_changed', { nodeId, userStatus, mastered });
-    return { ...current, userStatus, mastered };
+    const recommendation = this.recommendationForNode(current, this.getRecommendationEvidence(learnerId));
+    return { ...current, userStatus, mastered, recommendation };
   }
 
   saveAssetFeedback(learnerId: string, assetId: string, patch: AssetFeedbackInput): void {
@@ -814,6 +913,6 @@ function normalizeRating(value: number | null): number | null {
   return Math.max(1, Math.min(5, Math.round(value)));
 }
 
-function normalizeKnowledgePointId(value: string): string {
+export function normalizeKnowledgePointId(value: string): string {
   return value.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 72);
 }
