@@ -21,6 +21,7 @@ import {
   ZoomOut,
 } from "lucide-react";
 import type { AuthenticatedUser } from "@/components/auth-entry";
+import { SettingsDialog } from "@/components/settings-dialog";
 
 type PathStatus = "not_started" | "learning" | "completed";
 type PathRelation = "prerequisite" | "branch" | "application" | "review";
@@ -243,121 +244,6 @@ function Metric({ label, value }: { label: string; value: string | number }) {
   return <div className="rounded-lg bg-muted/60 p-2.5"><div className="text-muted-foreground">{label}</div><div className="mt-1 text-base font-semibold">{value}</div></div>;
 }
 
-type ThinkingDepth = "low" | "medium" | "high" | "max";
-type PathAgentRoute = { modelId: string; thinkingDepth: "inherit" | ThinkingDepth };
-type PathRuntimeSettings = {
-  activeModel: string;
-  defaultThinkingDepth: ThinkingDepth;
-  providers: Array<{ id: string; displayName: string; baseURL: string; apiKeyConfigured: boolean; models: Array<{ id: string; displayName: string }> }>;
-  models: Array<{ id: string; displayName: string; provider: string; providerDisplayName: string }>;
-  agentRouting: Record<string, PathAgentRoute>;
-  autoAssetTypes: Array<"lecture" | "tiered_quiz" | "concept_map">;
-};
-
-const pathAgentLabels = [
-  ["learning_planning", "学情与路径"],
-  ["evidence_retrieval", "知识检索"],
-  ["domain_expert", "领域诊断"],
-  ["resource_generation", "资源生成"],
-  ["cross_validation", "交叉验证"],
-  ["privacy_compliance", "合规审计"],
-] as const;
-
-function PathSettingsDialog({ apiBase, onClose }: { apiBase: string; onClose: () => void }) {
-  const [tab, setTab] = useState<"models" | "agents" | "assets" | "privacy">("models");
-  const [settings, setSettings] = useState<PathRuntimeSettings | null>(null);
-  const [error, setError] = useState("");
-  const [providerOpen, setProviderOpen] = useState(false);
-  const [providerForm, setProviderForm] = useState({ id: "", displayName: "", baseURL: "", apiKey: "", modelId: "", modelDisplayName: "" });
-  const [saving, setSaving] = useState(false);
-
-  const loadSettings = useCallback(async () => {
-    try {
-      const response = await fetch(`${apiBase}/api/settings`);
-      const data = await response.json() as PathRuntimeSettings & { success?: boolean };
-      if (!response.ok || !data.success) throw new Error("设置读取失败");
-      setSettings(data);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "设置读取失败");
-    }
-  }, [apiBase]);
-
-  useEffect(() => { void loadSettings(); }, [loadSettings]);
-
-  const saveDefault = async (patch: Partial<Pick<PathRuntimeSettings, "activeModel" | "defaultThinkingDepth">>) => {
-    if (!settings) return;
-    const next = { ...settings, ...patch };
-    setSettings(next);
-    setSaving(true);
-    setError("");
-    try {
-      const response = await fetch(`${apiBase}/api/settings/default-execution`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ modelId: next.activeModel, thinkingDepth: next.defaultThinkingDepth }) });
-      const data = await response.json() as PathRuntimeSettings & { success?: boolean; error?: string };
-      if (!response.ok || !data.success) throw new Error(data.error || "默认设置保存失败");
-      setSettings(data);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "默认设置保存失败");
-      await loadSettings();
-    } finally { setSaving(false); }
-  };
-
-  const saveProvider = async () => {
-    setSaving(true);
-    setError("");
-    try {
-      const response = await fetch(`${apiBase}/api/settings/providers`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(providerForm) });
-      const data = await response.json() as PathRuntimeSettings & { success?: boolean; error?: string };
-      if (!response.ok || !data.success) throw new Error(data.error || "模型服务保存失败");
-      setSettings(data);
-      setProviderOpen(false);
-      setProviderForm({ id: "", displayName: "", baseURL: "", apiKey: "", modelId: "", modelDisplayName: "" });
-    } catch (reason) { setError(reason instanceof Error ? reason.message : "模型服务保存失败"); }
-    finally { setSaving(false); }
-  };
-
-  const saveAgentRoute = async (agentId: string, patch: Partial<PathAgentRoute>) => {
-    if (!settings) return;
-    const agentRouting = { ...settings.agentRouting, [agentId]: { modelId: settings.agentRouting[agentId]?.modelId ?? "", thinkingDepth: settings.agentRouting[agentId]?.thinkingDepth ?? "inherit", ...patch } };
-    setSaving(true);
-    setError("");
-    try {
-      const response = await fetch(`${apiBase}/api/settings/agent-routing`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ agentRouting }) });
-      const data = await response.json() as PathRuntimeSettings & { success?: boolean; error?: string };
-      if (!response.ok || !data.success) throw new Error(data.error || "协同设置保存失败");
-      setSettings(data);
-    } catch (reason) { setError(reason instanceof Error ? reason.message : "协同设置保存失败"); await loadSettings(); }
-    finally { setSaving(false); }
-  };
-
-  const toggleAsset = async (type: "lecture" | "tiered_quiz" | "concept_map") => {
-    if (!settings) return;
-    const next = settings.autoAssetTypes.includes(type) ? settings.autoAssetTypes.filter((item) => item !== type) : [...settings.autoAssetTypes, type];
-    if (next.length === 0) return;
-    setSaving(true);
-    try {
-      const response = await fetch(`${apiBase}/api/settings/asset-policy`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ autoAssetTypes: next }) });
-      const data = await response.json() as PathRuntimeSettings & { success?: boolean; error?: string };
-      if (!response.ok || !data.success) throw new Error(data.error || "资产设置保存失败");
-      setSettings(data);
-    } catch (reason) { setError(reason instanceof Error ? reason.message : "资产设置保存失败"); }
-    finally { setSaving(false); }
-  };
-
-  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/20 p-4" role="dialog" aria-modal="true" aria-label="设置">
-    <section className="max-h-[calc(100vh-2rem)] w-full max-w-2xl overflow-y-auto rounded-2xl border bg-card p-5 shadow-xl">
-      <div className="flex items-center justify-between"><h2 className="text-sm font-semibold">设置</h2><button type="button" onClick={onClose} className="rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-muted">关闭</button></div>
-      <div className="mt-4 grid grid-cols-4 rounded-lg bg-muted/70 p-1 text-xs">{([["models", "模型服务"], ["agents", "协同编排"], ["assets", "学习资产"], ["privacy", "数据隐私"]] as const).map(([key, label]) => <button key={key} type="button" onClick={() => { setTab(key); setError(""); }} className={`rounded-md px-2 py-2 ${tab === key ? "bg-background font-medium shadow-sm" : "text-muted-foreground hover:text-foreground"}`}>{label}</button>)}</div>
-      {error && <div className="mt-3 rounded-lg border border-destructive/25 bg-destructive/5 px-3 py-2 text-xs text-destructive">{error}</div>}
-      <div className="mt-4 min-h-[300px]">
-        {tab === "models" && <div className="space-y-3"><div className="rounded-xl border p-3"><div className="flex items-center justify-between gap-3"><span className="text-xs font-medium">默认执行</span><span className="text-[10px] text-muted-foreground">路径与资源生成共用</span></div><div className="mt-3 grid grid-cols-[minmax(0,1fr)_100px] gap-2"><select value={settings?.activeModel ?? ""} disabled={saving || !settings?.models.length} onChange={(event) => void saveDefault({ activeModel: event.target.value })} className="h-9 min-w-0 rounded-lg border bg-background px-2 text-xs"><option value="">请选择模型</option>{settings?.models.map((model) => <option key={model.id} value={model.id}>{model.displayName}</option>)}</select><select value={settings?.defaultThinkingDepth ?? "medium"} disabled={saving || !settings} onChange={(event) => void saveDefault({ defaultThinkingDepth: event.target.value as ThinkingDepth })} className="h-9 rounded-lg border bg-background px-2 text-xs"><option value="low">low</option><option value="medium">medium</option><option value="high">high</option><option value="max">max</option></select></div></div><div className="rounded-xl border p-3"><div className="flex items-center justify-between"><span className="text-xs font-medium">已配置服务</span><button type="button" onClick={() => setProviderOpen((value) => !value)} className="rounded-md border px-2.5 py-1.5 text-xs hover:bg-muted">添加服务</button></div><div className="mt-3 space-y-2">{settings?.providers.map((provider) => <div key={provider.id} className="flex items-center justify-between gap-3 rounded-lg bg-muted/50 px-3 py-2.5"><div className="min-w-0"><div className="truncate text-xs font-medium">{provider.displayName}</div><div className="mt-1 truncate text-[10px] text-muted-foreground">{provider.models.map((model) => model.displayName).join("、") || "未添加模型"}</div></div><span className={`shrink-0 text-[10px] ${provider.apiKeyConfigured ? "text-emerald-600" : "text-muted-foreground"}`}>{provider.apiKeyConfigured ? "已连接" : "未配置"}</span></div>)}</div>{providerOpen && <div className="mt-3 grid grid-cols-2 gap-2 border-t pt-3"><input value={providerForm.displayName} onChange={(event) => setProviderForm((form) => ({ ...form, displayName: event.target.value }))} placeholder="服务名称" className="h-8 rounded-md border bg-background px-2 text-xs" /><input value={providerForm.id} onChange={(event) => setProviderForm((form) => ({ ...form, id: event.target.value }))} placeholder="服务 ID" className="h-8 rounded-md border bg-background px-2 text-xs" /><input value={providerForm.baseURL} onChange={(event) => setProviderForm((form) => ({ ...form, baseURL: event.target.value }))} placeholder="接口地址 https://…" className="col-span-2 h-8 rounded-md border bg-background px-2 text-xs" /><input type="password" value={providerForm.apiKey} onChange={(event) => setProviderForm((form) => ({ ...form, apiKey: event.target.value }))} placeholder="API Key" className="col-span-2 h-8 rounded-md border bg-background px-2 text-xs" /><input value={providerForm.modelId} onChange={(event) => setProviderForm((form) => ({ ...form, modelId: event.target.value }))} placeholder="模型 ID" className="h-8 rounded-md border bg-background px-2 text-xs" /><input value={providerForm.modelDisplayName} onChange={(event) => setProviderForm((form) => ({ ...form, modelDisplayName: event.target.value }))} placeholder="模型显示名" className="h-8 rounded-md border bg-background px-2 text-xs" /><button type="button" disabled={saving} onClick={() => void saveProvider()} className="col-span-2 h-8 rounded-md bg-foreground text-xs text-background disabled:opacity-50">{saving ? "保存中…" : "保存服务"}</button></div>}</div></div>}
-        {tab === "agents" && <div className="divide-y rounded-xl border">{pathAgentLabels.map(([id, label]) => { const route = settings?.agentRouting[id] ?? { modelId: "", thinkingDepth: "inherit" as const }; return <div key={id} className="grid grid-cols-[minmax(0,1fr)_150px_95px] items-center gap-3 px-3 py-3"><span className="text-xs font-medium">{label}</span><select value={route.modelId} disabled={saving || !settings} onChange={(event) => void saveAgentRoute(id, { modelId: event.target.value })} className="h-8 min-w-0 rounded-md border bg-background px-2 text-xs"><option value="">继承默认模型</option>{settings?.models.map((model) => <option key={model.id} value={model.id}>{model.displayName}</option>)}</select><select value={route.thinkingDepth} disabled={saving || !settings} onChange={(event) => void saveAgentRoute(id, { thinkingDepth: event.target.value as PathAgentRoute["thinkingDepth"] })} className="h-8 rounded-md border bg-background px-2 text-xs"><option value="inherit">继承默认</option><option value="low">low</option><option value="medium">medium</option><option value="high">high</option><option value="max">max</option></select></div>; })}</div>}
-        {tab === "assets" && <div className="grid grid-cols-3 gap-2">{([["lecture", "讲义"], ["tiered_quiz", "分层习题"], ["concept_map", "知识图谱"]] as const).map(([type, label]) => { const enabled = settings?.autoAssetTypes.includes(type) ?? false; return <button key={type} type="button" disabled={saving || !settings} onClick={() => void toggleAsset(type)} className={`rounded-xl border p-4 text-left ${enabled ? "border-foreground bg-muted/60" : "hover:bg-muted/40"}`}><div className="text-xs font-medium">{label}</div><div className="mt-2 text-[11px] text-muted-foreground">{enabled ? "自动生成" : "关闭"}</div></button>; })}</div>}
-        {tab === "privacy" && <div className="divide-y rounded-xl border text-xs"><div className="flex items-center justify-between px-3 py-3"><span>学习记录</span><span className="text-muted-foreground">本地 SQLite</span></div><div className="flex items-center justify-between px-3 py-3"><span>上传资料原文</span><span className="text-muted-foreground">任务结束后不保存</span></div><div className="flex items-center justify-between px-3 py-3"><span>公共知识库写入</span><span className="text-muted-foreground">仅审核后的固定资料</span></div></div>}
-      </div>
-    </section>
-  </div>;
-}
-
 export function LearningPathWorkbench({ apiBase, user, onLogout, onNavigate }: LearningPathWorkbenchProps) {
   const [path, setPath] = useState<PathGraph>({ nodes: [], edges: [] });
   const [profile, setProfile] = useState<ProfileMetric | null>(null);
@@ -491,7 +377,7 @@ export function LearningPathWorkbench({ apiBase, user, onLogout, onNavigate }: L
   return <main className="flex h-screen min-h-0 flex-col overflow-hidden bg-background text-foreground">
     <header className="flex h-16 shrink-0 items-center justify-between border-b px-5 sm:px-7">
       <button type="button" onClick={() => setProfileOpen(true)} className="flex min-w-0 items-center gap-2.5 text-left" aria-label="打开学习画像"><span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-semibold ${avatarStyles[activeAvatar]}`}>{user.displayName.slice(0, 1).toUpperCase()}</span><span className="min-w-0"><span className="block text-sm font-semibold tracking-tight">IM-Training-Agent</span><span className="block text-[11px] text-muted-foreground">{user.displayName} · 学习画像</span></span></button>
-      <nav aria-label="学习空间" className="flex items-center rounded-lg border bg-muted/40 p-1 text-sm"><button type="button" className="rounded-md bg-background px-4 py-1.5 font-medium shadow-sm">路径</button><button type="button" onClick={() => onNavigate?.("study")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">学习</button><button type="button" onClick={() => onNavigate?.("resources")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">资源</button></nav>
+      <nav aria-label="学习空间" className="flex items-center rounded-lg border bg-muted/40 p-1 text-sm"><button type="button" onClick={() => setSettingsOpen(true)} className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-muted-foreground hover:text-foreground"><Settings className="h-3.5 w-3.5" />设置</button><button type="button" className="rounded-md bg-background px-4 py-1.5 font-medium shadow-sm">路径</button><button type="button" onClick={() => onNavigate?.("study")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">学习</button><button type="button" onClick={() => onNavigate?.("resources")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">资源</button></nav>
       <button type="button" onClick={logout} className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-2 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"><LogOut className="h-3.5 w-3.5" />退出</button>
     </header>
 
@@ -505,8 +391,7 @@ export function LearningPathWorkbench({ apiBase, user, onLogout, onNavigate }: L
           </div>
         </div>
         <div className="shrink-0 border-t bg-background p-4 sm:px-6">{notice && <div className="mb-2 rounded-lg border border-destructive/25 bg-destructive/5 px-3 py-2 text-xs text-destructive">{notice}</div>}<div className="mx-auto flex max-w-2xl items-end gap-2 rounded-2xl border bg-card p-2 focus-within:ring-2 focus-within:ring-foreground/10"><textarea value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void sendMessage(); } }} rows={2} placeholder="输入想如何调整路径" className="max-h-32 min-h-[42px] flex-1 resize-none bg-transparent px-2 py-2 text-sm leading-5 outline-none placeholder:text-muted-foreground" /><button type="button" disabled={!draft.trim() || sending} onClick={() => void sendMessage()} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-foreground text-background disabled:cursor-not-allowed disabled:opacity-35"><Send className="h-4 w-4" /></button></div></div>
-        <div className="flex shrink-0 items-center justify-between border-t bg-background px-4 py-2.5 text-xs">
-          <button type="button" onClick={() => setSettingsOpen(true)} className="inline-flex items-center gap-1.5 text-muted-foreground hover:text-foreground"><Settings className="h-3.5 w-3.5" />设置</button>
+        <div className="flex shrink-0 items-center justify-end border-t bg-background px-4 py-2.5 text-xs">
           <span className={`inline-flex items-center gap-1.5 ${serviceReady ? "text-emerald-600" : "text-amber-600"}`}><Radio className="h-2.5 w-2.5" />{serviceReady ? "服务正常" : "服务未连接"}</span>
         </div>
       </section>
@@ -521,6 +406,6 @@ export function LearningPathWorkbench({ apiBase, user, onLogout, onNavigate }: L
     </div>
 
     {profileOpen && <div className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/20 p-4" role="dialog" aria-modal="true" aria-label="学习画像"><section className="max-h-[calc(100vh-2rem)] w-full max-w-lg overflow-y-auto rounded-2xl border bg-card p-5 shadow-xl"><div className="flex items-center justify-between"><div className="flex items-center gap-2 text-sm font-semibold"><Sparkles className="h-4 w-4" />学习画像</div><button type="button" onClick={() => setProfileOpen(false)} className="rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-muted">关闭</button></div><div className="mt-5 flex items-center gap-3"><span className={`flex h-12 w-12 items-center justify-center rounded-full text-sm font-semibold ${avatarStyles[activeAvatar]}`}>{user.displayName.slice(0, 1).toUpperCase()}</span><div><div className="text-sm font-semibold">{user.displayName}</div><div className="text-xs text-muted-foreground">@{user.loginName}</div></div></div><div className="mt-4 flex items-center gap-2"><span className="text-xs text-muted-foreground">头像</span>{(Object.keys(avatarStyles) as AvatarKey[]).map((avatar) => <button key={avatar} type="button" onClick={() => void saveAvatar(avatar)} aria-label={`设置${avatar}头像`} className={`h-6 w-6 rounded-full ${avatarStyles[avatar]} ${activeAvatar === avatar ? "ring-2 ring-offset-2 ring-foreground" : ""}`} />)}</div><p className="mt-4 rounded-xl bg-muted/60 p-3 text-sm leading-6">{profile?.summary || "首次路径已建立；你的后续学习记录会持续完善画像。"}</p><div className="mt-4 flex flex-wrap gap-1.5">{profile?.keywords?.map((keyword) => <span key={keyword} className="rounded-full border px-2.5 py-1 text-[11px]">{keyword}</span>)}</div><div className="mt-5"><ProfileRadar items={profile?.radar ?? []} /></div><div className="mt-5 grid grid-cols-3 gap-2 text-xs"><Metric label="学习时间" value={`${profile?.studyMinutes ?? 0} 分`} /><Metric label="学习资产" value={profile?.assetsCount ?? 0} /><Metric label="今日新增" value={profile?.todayAssetsCount ?? 0} /><Metric label="正确率" value={profile?.accuracy === null || profile?.accuracy === undefined ? "—" : `${Math.round(profile.accuracy * 100)}%`} /><Metric label="已学完节点" value={completedNodes} /><Metric label="已掌握节点" value={masteredNodes} /></div><button type="button" onClick={() => void regenerateProfile()} disabled={regeneratingProfile} className="mt-5 inline-flex h-9 w-full items-center justify-center gap-2 rounded-lg border text-xs font-medium hover:bg-muted disabled:opacity-60">{regeneratingProfile ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}重新生成画像</button></section></div>}
-    {settingsOpen && <PathSettingsDialog apiBase={apiBase} onClose={() => setSettingsOpen(false)} />}
+    {settingsOpen && <SettingsDialog apiBase={apiBase} onClose={() => setSettingsOpen(false)} />}
   </main>;
 }

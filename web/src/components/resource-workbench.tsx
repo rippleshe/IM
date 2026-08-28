@@ -18,11 +18,13 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Save,
+  Settings,
   Trash2,
   Wrench,
   XCircle,
 } from "lucide-react";
 import type { AuthenticatedUser } from "@/components/auth-entry";
+import { SettingsDialog } from "@/components/settings-dialog";
 
 type ResourceType = "lecture" | "tiered_quiz" | "practice_guide" | "concept_map" | "review_cards" | "challenge_task";
 type ResourceBlock = { id: string; type: string; position: number; content: unknown; evidenceIds: string[] };
@@ -137,6 +139,7 @@ export function ResourceWorkbench({ apiBase, user, onLogout, onNavigate }: Resou
   const [loading, setLoading] = useState(true);
   const [notice, setNotice] = useState("");
   const [catalogOpen, setCatalogOpen] = useState(true);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [notesWidth, setNotesWidth] = useState(330);
   const [resizing, setResizing] = useState(false);
   const [lecturePageIndex, setLecturePageIndex] = useState(0);
@@ -201,7 +204,7 @@ export function ResourceWorkbench({ apiBase, user, onLogout, onNavigate }: Resou
   return <LecturePageContext.Provider value={{ pageIndex: lecturePageIndex, setPageIndex: setLecturePageIndex }}><main className={`flex h-screen min-h-0 flex-col overflow-hidden bg-background ${resizing ? "select-none" : ""}`}>
     <header className="flex h-16 shrink-0 items-center justify-between border-b px-5 sm:px-7">
       <button type="button" onClick={() => onNavigate("path")} className="flex items-center gap-2.5 text-left"><span className={`flex h-9 w-9 items-center justify-center rounded-full text-xs font-semibold ${avatarClasses[user.avatarKey]}`}>{user.displayName.slice(0, 1).toUpperCase()}</span><span><span className="block text-sm font-semibold tracking-tight">IM-Training-Agent</span><span className="block text-[11px] text-muted-foreground">{user.displayName} · 学习画像</span></span></button>
-      <nav aria-label="学习空间" className="flex items-center rounded-lg border bg-muted/40 p-1 text-sm"><button type="button" onClick={() => onNavigate("path")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">路径</button><button type="button" onClick={() => onNavigate("study")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">学习</button><button type="button" className="rounded-md bg-background px-4 py-1.5 font-medium shadow-sm">资源</button></nav>
+      <nav aria-label="学习空间" className="flex items-center rounded-lg border bg-muted/40 p-1 text-sm"><button type="button" onClick={() => setSettingsOpen(true)} className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-muted-foreground hover:text-foreground"><Settings className="h-3.5 w-3.5" />设置</button><button type="button" onClick={() => onNavigate("path")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">路径</button><button type="button" onClick={() => onNavigate("study")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">学习</button><button type="button" className="rounded-md bg-background px-4 py-1.5 font-medium shadow-sm">资源</button></nav>
       <button type="button" onClick={logout} className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-2 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"><LogOut className="h-3.5 w-3.5" />退出</button>
     </header>
 
@@ -224,6 +227,7 @@ export function ResourceWorkbench({ apiBase, user, onLogout, onNavigate }: Resou
         {reader?.asset.type === "lecture" ? <LectureNotes apiBase={apiBase} reader={reader} onReaderChange={setReader} /> : reader?.asset.type === "tiered_quiz" ? <QuizAnswerPanel reader={reader} /> : reader ? <GenericFeedback apiBase={apiBase} reader={reader} onReaderChange={setReader} /> : <div className="flex h-full items-center justify-center px-8 text-center text-sm text-muted-foreground">选择一份资源后，在这里查看笔记、反馈或答案解析。</div>}
       </aside>
     </div>
+    {settingsOpen && <SettingsDialog apiBase={apiBase} onClose={() => setSettingsOpen(false)} />}
   </main></LecturePageContext.Provider>;
 }
 
