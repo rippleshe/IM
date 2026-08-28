@@ -422,6 +422,8 @@ export const studyRuns = pgTable('study_runs', {
   learnerId: text('learner_id').notNull(),
   requestJson: jsonb('request_json').notNull(),
   planJson: jsonb('plan_json').notNull(),
+  /** 节点间传递的中间产物（证据摘要、生成草稿、审核结果），支持 Worker 重启后恢复 */
+  contextJson: jsonb('context_json'),
   status: text('status').notNull().default('queued'),
   revisionRound: integer('revision_round').notNull().default(0),
   riskLevel: text('risk_level').notNull().default('low'),

@@ -65,6 +65,9 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx scripts/db-migrate.ts",
     "migrate:sqlite-to-pg": "tsx scripts/migrate-sqlite-to-pg.ts",
+    "demo:seed": "tsx scripts/demo-seed.ts",
+    "evaluate": "tsx scripts/evaluate.ts",
+    "worker": "tsx server/worker.ts",
     "start": "node dist/server.js"
   },
   "keywords": [

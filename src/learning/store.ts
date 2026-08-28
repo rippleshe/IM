@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { bktUpdate, createBktState, type BktState } from './bkt.js';
 import type { SqliteDatabase } from './sqlite.js';
 import type { QuizQuestion, ResourceDocument } from './types.js';
 import type { ClaimAuditRecord } from './audit.js';
@@ -178,8 +179,8 @@ export class LearningStore {
   saveAsset(learnerId: string, sessionId: string | undefined, resource: ResourceDocument): ResourceDocument {
     this.db.prepare(`
       INSERT OR REPLACE INTO learning_assets
-        (id, learner_id, session_id, type, title, content_json, audit_status, evidence_ids_json, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (id, learner_id, session_id, type, title, content_json, audit_status, evidence_ids_json, difficulty, difficulty_calibration, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       resource.id,
       learnerId,
@@ -189,6 +190,8 @@ export class LearningStore {
       JSON.stringify(resource),
       resource.auditStatus,
       JSON.stringify(resource.evidenceIds),
+      resource.difficultyCalibration ? resource.difficulty : null,
+      resource.difficultyCalibration ? JSON.stringify(resource.difficultyCalibration) : null,
       resource.createdAt,
     );
     return resource;
@@ -304,18 +307,92 @@ export class LearningStore {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `).run(attempt.id, learnerId, assetId, question.id, JSON.stringify({ answerId: normalizedAnswerId }), correct ? 1 : 0, safeDuration, attempt.createdAt);
     const knowledgePointId = normalizeKnowledgePointId(asset.knowledgePointIds[0] ?? '') || 'industrial-diagnosis-foundation';
-    this.db.prepare(`
-      INSERT INTO learner_skill_states (learner_id, knowledge_point_id, mastery, confidence, attempt_count, correct_count, updated_at)
-      VALUES (?, ?, ?, ?, 1, ?, ?)
-      ON CONFLICT(learner_id, knowledge_point_id) DO UPDATE SET
-        attempt_count = learner_skill_states.attempt_count + 1,
-        correct_count = learner_skill_states.correct_count + excluded.correct_count,
-        mastery = MIN(1, MAX(0, learner_skill_states.mastery + CASE WHEN excluded.correct_count = 1 THEN 0.08 ELSE -0.04 END)),
-        confidence = MIN(1, learner_skill_states.confidence + 0.08),
-        updated_at = excluded.updated_at
-    `).run(learnerId, knowledgePointId, correct ? 0.28 : 0.16, 0.18, correct ? 1 : 0, attempt.createdAt);
+    this.applySkillObservation(learnerId, knowledgePointId, correct, 'quiz_attempt');
     this.recordLearningEvent(learnerId, 'answer_recorded', { assetId, questionId: question.id, correct: correct ? 1 : 0, total: 1, durationMs: safeDuration, knowledgePointId });
     return { attempt, question };
+  }
+
+  /** BKT 观测更新（总规 §7.1）：读状态 → bktUpdate → 写状态 + bkt_updates 审计行 */
+  applySkillObservation(learnerId: string, knowledgePointId: string, correct: boolean, trigger: string): BktState {
+    const key = normalizeKnowledgePointId(knowledgePointId);
+    const before = this.getSkillState(learnerId, key) ?? createBktState(0.15);
+    const after = bktUpdate(before, correct);
+    this.db.prepare(`
+      INSERT INTO learner_skill_states (learner_id, knowledge_point_id, mastery, confidence, attempt_count, correct_count, p_guess, p_slip, p_learn, evidence_source, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(learner_id, knowledge_point_id) DO UPDATE SET
+        mastery = excluded.mastery, confidence = excluded.confidence,
+        attempt_count = excluded.attempt_count, correct_count = excluded.correct_count,
+        p_guess = excluded.p_guess, p_slip = excluded.p_slip, p_learn = excluded.p_learn,
+        evidence_source = excluded.evidence_source, updated_at = excluded.updated_at
+    `).run(
+      learnerId, key, after.pMastery, after.confidence, after.attemptCount, after.correctCount,
+      after.pGuess, after.pSlip, after.pLearn, trigger, Date.now(),
+    );
+    this.db.prepare(`
+      INSERT INTO bkt_updates (id, learner_id, knowledge_point_id, trigger_type, before_json, after_json, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      `bkt-${randomUUID()}`, learnerId, key, trigger,
+      JSON.stringify(before), JSON.stringify(after), Date.now(),
+    );
+    return after;
+  }
+
+  getSkillState(learnerId: string, knowledgePointId: string): BktState | null {
+    const row = this.db.prepare(`
+      SELECT mastery, confidence, attempt_count AS attemptCount, correct_count AS correctCount,
+        p_guess AS pGuess, p_slip AS pSlip, p_learn AS pLearn
+      FROM learner_skill_states WHERE learner_id = ? AND knowledge_point_id = ?
+    `).get(learnerId, normalizeKnowledgePointId(knowledgePointId)) as
+      { mastery: number; confidence: number; attemptCount: number; correctCount: number; pGuess: number; pSlip: number; pLearn: number } | undefined;
+    if (!row) return null;
+    return {
+      pMastery: Number(row.mastery), confidence: Number(row.confidence),
+      attemptCount: Number(row.attemptCount), correctCount: Number(row.correctCount),
+      pGuess: Number(row.pGuess), pSlip: Number(row.pSlip), pLearn: Number(row.pLearn),
+    };
+  }
+
+  getSkillStates(learnerId: string): Array<BktState & { knowledgePointId: string }> {
+    const rows = this.db.prepare(`
+      SELECT knowledge_point_id AS knowledgePointId, mastery, confidence, attempt_count AS attemptCount, correct_count AS correctCount,
+        p_guess AS pGuess, p_slip AS pSlip, p_learn AS pLearn
+      FROM learner_skill_states WHERE learner_id = ? ORDER BY updated_at DESC
+    `).all(learnerId) as Array<{ knowledgePointId: string; mastery: number; confidence: number; attemptCount: number; correctCount: number; pGuess: number; pSlip: number; pLearn: number }>;
+    return rows.map((row) => ({
+      knowledgePointId: row.knowledgePointId,
+      pMastery: Number(row.mastery), confidence: Number(row.confidence),
+      attemptCount: Number(row.attemptCount), correctCount: Number(row.correctCount),
+      pGuess: Number(row.pGuess), pSlip: Number(row.pSlip), pLearn: Number(row.pLearn),
+    }));
+  }
+
+  /** 诊断会话落库：结果 + 逐题作答，可审计（总规 §7.3） */
+  saveDiagnosticSession(learnerId: string, result: { total: number; correct: number; byDimension: Record<string, { total: number; correct: number }> }, answers: Array<{ questionId: string; answerId: string; correct: boolean; durationMs: number }>): string {
+    const sessionId = `diag-session-${randomUUID()}`;
+    const now = Date.now();
+    this.db.prepare(`
+      INSERT INTO diagnostic_sessions (id, learner_id, status, total, correct, by_dimension_json, result_json, created_at)
+      VALUES (?, ?, 'completed', ?, ?, ?, ?, ?)
+    `).run(sessionId, learnerId, result.total, result.correct, JSON.stringify(result.byDimension), JSON.stringify({ total: result.total, correct: result.correct }), now);
+    const insert = this.db.prepare(`
+      INSERT INTO diagnostic_answers (id, session_id, learner_id, question_id, answer_id, correct, duration_ms, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    for (const answer of answers) {
+      insert.run(`diag-answer-${randomUUID()}`, sessionId, learnerId, answer.questionId, answer.answerId, answer.correct ? 1 : 0, answer.durationMs, now);
+    }
+    this.recordLearningEvent(learnerId, 'diagnostic_completed', { sessionId, total: result.total, correct: result.correct });
+    return sessionId;
+  }
+
+  getLatestDiagnosticSession(learnerId: string): { sessionId: string; total: number; correct: number; createdAt: number } | null {
+    const row = this.db.prepare(`
+      SELECT id AS sessionId, total, correct, created_at AS createdAt
+      FROM diagnostic_sessions WHERE learner_id = ? ORDER BY created_at DESC LIMIT 1
+    `).get(learnerId) as { sessionId: string; total: number; correct: number; createdAt: number } | undefined;
+    return row ?? null;
   }
 
   recordLearningEvent(learnerId: string, eventType: string, payload: unknown): string {

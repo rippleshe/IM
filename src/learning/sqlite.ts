@@ -113,6 +113,34 @@ export function initializeLearningDatabase(db: SqliteDatabase): void {
       updated_at INTEGER NOT NULL,
       PRIMARY KEY (learner_id, knowledge_point_id)
     );
+    CREATE TABLE IF NOT EXISTS bkt_updates (
+      id TEXT PRIMARY KEY,
+      learner_id TEXT NOT NULL,
+      knowledge_point_id TEXT NOT NULL,
+      trigger_type TEXT NOT NULL,
+      before_json TEXT NOT NULL,
+      after_json TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS diagnostic_sessions (
+      id TEXT PRIMARY KEY,
+      learner_id TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'completed',
+      total INTEGER NOT NULL DEFAULT 0,
+      correct INTEGER NOT NULL DEFAULT 0,
+      by_dimension_json TEXT NOT NULL DEFAULT '{}',
+      created_at INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS diagnostic_answers (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      learner_id TEXT NOT NULL,
+      question_id TEXT NOT NULL,
+      answer_id TEXT NOT NULL,
+      correct INTEGER NOT NULL,
+      duration_ms INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS learning_path_items (
       id TEXT PRIMARY KEY,
       learner_id TEXT NOT NULL,
@@ -260,6 +288,15 @@ export function initializeLearningDatabase(db: SqliteDatabase): void {
   ensureColumn(db, 'evidence_items', 'metadata_json', "TEXT NOT NULL DEFAULT '{}'");
   ensureColumn(db, 'users', 'avatar_key', "TEXT NOT NULL DEFAULT 'graphite'");
   ensureColumn(db, 'learning_asset_feedback', 'mastery_level', 'TEXT');
+  // BKT 参数列（总规 §7.1）：迁移源只有 mastery/confidence，参数走默认值
+  ensureColumn(db, 'learner_skill_states', 'p_guess', 'REAL NOT NULL DEFAULT 0.25');
+  ensureColumn(db, 'learner_skill_states', 'p_slip', 'REAL NOT NULL DEFAULT 0.1');
+  ensureColumn(db, 'learner_skill_states', 'p_learn', 'REAL NOT NULL DEFAULT 0.1');
+  ensureColumn(db, 'learner_skill_states', 'evidence_source', "TEXT NOT NULL DEFAULT 'none'");
+  // 资源难度校准（总规 §7.2）：替换历史硬编码 0.42
+  ensureColumn(db, 'learning_assets', 'difficulty', 'REAL');
+  ensureColumn(db, 'learning_assets', 'difficulty_calibration', 'TEXT');
+  ensureColumn(db, 'diagnostic_sessions', 'result_json', "TEXT NOT NULL DEFAULT '{}'");
 }
 
 export function initializeDatasetDatabase(db: SqliteDatabase): void {

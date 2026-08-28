@@ -1,0 +1,125 @@
+/**
+ * 三账号差异化种子（docs/挑战杯技术开发总规.md §8.1）
+ * 幂等：按 login_name upsert；演示密码只从 IM_TRAINING_AGENT_DEMO_PASSWORD 注入。
+ * 用法：pnpm demo:seed
+ */
+import 'dotenv/config';
+import { existsSync } from 'node:fs';
+import path from 'node:path';
+import { DIAGNOSTIC_QUESTIONS, scoreDiagnostic } from '../src/learning/diagnostic.js';
+import { identityStore, learningStore } from '../server/study-context.js';
+
+interface PersonaSeed {
+  loginName: 'learner-foundation' | 'learner-advanced' | 'learner-maintenance';
+  displayName: string;
+  onboarding: { role: string; programmingFoundation: string; goal: string; weeklyHours: number | null; selfDescription: string };
+  /** 诊断作答模式：按维度正确率确定性生成，驱动差异化 BKT 初始状态 */
+  accuracyByDimension: Record<string, number>;
+}
+
+const PERSONAS: PersonaSeed[] = [
+  {
+    loginName: 'learner-foundation',
+    displayName: '基础学习者（中职机电）',
+    onboarding: {
+      role: 'vocational_mechatronics',
+      programmingFoundation: 'zero',
+      goal: '看懂数据并完成基础诊断',
+      weeklyHours: 6,
+      selfDescription: '中职机电专业毕业，Python 零基础，希望能看懂设备数据并完成基础诊断判断。',
+    },
+    accuracyByDimension: { python: 0.2, data_processing: 0.15, statistics: 0.35, time_series: 0.1, device_diagnosis: 0.4 },
+  },
+  {
+    loginName: 'learner-advanced',
+    displayName: '进阶学习者（自动化本科）',
+    onboarding: {
+      role: 'automation_undergraduate',
+      programmingFoundation: 'intermediate',
+      goal: '时序异常检测与算法比较',
+      weeklyHours: 10,
+      selfDescription: '自动化专业本科，会 MATLAB 和基础 Python，做过课程项目，想做时序异常检测与算法比较。',
+    },
+    accuracyByDimension: { python: 0.85, data_processing: 0.8, statistics: 0.75, time_series: 0.65, device_diagnosis: 0.6 },
+  },
+  {
+    loginName: 'learner-maintenance',
+    displayName: '在职运维（转岗）',
+    onboarding: {
+      role: 'field_maintenance',
+      programmingFoundation: 'beginner',
+      goal: '形成可执行的诊断报告',
+      weeklyHours: 4,
+      selfDescription: '企业在职设备运维转岗，每周学习时间有限，熟悉现场但对数据分析不熟，目标形成可执行的诊断报告。',
+    },
+    accuracyByDimension: { python: 0.4, data_processing: 0.45, statistics: 0.6, time_series: 0.5, device_diagnosis: 0.85 },
+  },
+];
+
+function deterministicAnswers(accuracyByDimension: Record<string, number>) {
+  // 以题目 code 的稳定哈希决定该题"分给谁"，再按维度正确率阈值判对错 —— 完全确定性、可复现
+  const answers: Array<{ questionId: string; answerId: string; durationMs: number }> = [];
+  for (const question of DIAGNOSTIC_QUESTIONS) {
+    let hash = 0;
+    for (const ch of question.code) hash = (hash * 31 + ch.charCodeAt(0)) % 997;
+    const draw = hash / 997;
+    const correct = draw < (accuracyByDimension[question.dimension] ?? 0.5);
+    answers.push({
+      questionId: question.id,
+      answerId: correct ? question.answerId : question.options.find((option) => option.id !== question.answerId)!.id,
+      durationMs: 8_000 + hash * 20,
+    });
+  }
+  return answers;
+}
+
+async function main(): Promise<void> {
+  const password = process.env['IM_TRAINING_AGENT_DEMO_PASSWORD'];
+  if (!password) {
+    console.error('[demo:seed] 缺少 IM_TRAINING_AGENT_DEMO_PASSWORD：演示密码只能由环境注入，不提交仓库（总规 §8.1）');
+    process.exit(2);
+  }
+  if (!existsSync(path.join(process.cwd(), '.im-training-agent', 'learning.sqlite'))) {
+    console.error('[demo:seed] 学习数据库不存在：请先启动 pnpm server 完成初始化');
+    process.exit(2);
+  }
+
+  for (const persona of PERSONAS) {
+    let learnerId: string;
+    const existing = lookupByLoginName(persona.loginName);
+    if (existing) {
+      learnerId = existing;
+      console.log(`[demo:seed] = ${persona.loginName} 已存在，复用（幂等）`);
+    } else {
+      const user = identityStore.register({ loginName: persona.loginName, displayName: persona.displayName, password });
+      learnerId = user.id;
+      console.log(`[demo:seed] ✔ ${persona.loginName} 注册成功`);
+    }
+    identityStore.saveOnboarding(learnerId, persona.onboarding);
+
+    const answers = deterministicAnswers(persona.accuracyByDimension);
+    const result = scoreDiagnostic(answers);
+    for (const observation of result.byKnowledgePoint) {
+      learningStore.applySkillObservation(learnerId, observation.knowledgePointId, observation.correct, 'diagnostic_seed');
+    }
+    learningStore.saveDiagnosticSession(
+      learnerId, result,
+      result.items.map((item) => ({ questionId: item.question.id, answerId: item.answerId, correct: item.correct, durationMs: item.durationMs })),
+    );
+    console.log(`[demo:seed]   诊断 ${result.correct}/${result.total} 正确，BKT 初始状态与路径先验已写入`);
+  }
+  console.log('[demo:seed] ✔ 三个差异化账号就绪：首次登录建档后将生成差异化路径');
+  process.exit(0);
+}
+
+function lookupByLoginName(loginName: string): string | null {
+  // IdentityStore 未暴露按登录名查询；这里经其实例的原始连接做只读查询
+  const db = (identityStore as unknown as { db: { prepare: (sql: string) => { get: (...params: unknown[]) => unknown } } }).db;
+  const row = db.prepare('SELECT id FROM users WHERE login_name = ?').get(loginName) as { id?: string } | undefined;
+  return row?.id ?? null;
+}
+
+main().catch((error) => {
+  console.error('[demo:seed] 失败：', error instanceof Error ? error.message : error);
+  process.exit(1);
+});

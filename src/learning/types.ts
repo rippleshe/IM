@@ -96,6 +96,12 @@ export interface ResourceDocument {
   type: LearningResourceType;
   title: string;
   difficulty: number;
+  /** 难度校准依据（总规 §7.2），无校准信息时缺省 */
+  difficultyCalibration?: {
+    targetDifficulty: number;
+    expectedSuccessRate: number;
+    rationale: string[];
+  };
   learningObjectives: string[];
   knowledgePointIds: string[];
   blocks: ResourceBlock[];

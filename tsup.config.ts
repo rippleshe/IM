@@ -24,6 +24,7 @@ export default defineConfig([
   {
     entry: {
       server: 'server/index.ts',
+      worker: 'server/worker.ts',
     },
     format: ['cjs', 'esm'],
     dts: false,

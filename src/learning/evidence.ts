@@ -44,6 +44,8 @@ interface EvidenceBuildOptions {
   learnerId?: string;
   sessionId?: string;
   temporaryReference?: TemporaryReference;
+  /** DAG 检索节点按路径拆分：不传 = 双路全检（docs/挑战杯技术开发总规.md §5.2） */
+  retrievalPlan?: Array<'structured' | 'document'>;
 }
 
 function normalizeSearchTerms(query: string): string[] {
@@ -201,7 +203,7 @@ function structuredEvidence(datasetDb: SqliteDatabase): EvidenceItem[] {
   return [summaryItem, ...rowItems, ...genericDatasetEvidence(datasetDb)];
 }
 
-function crossValidate(items: EvidenceItem[]): CrossValidationResult {
+export function crossValidate(items: EvidenceItem[]): CrossValidationResult {
   const structured = items.filter((item) => item.sourceType === 'dataset');
   const documents = items.filter((item) => item.sourceType === 'document');
   const locatable = items.filter((item) => item.locator.trim().length > 0);
@@ -286,8 +288,10 @@ export class EvidenceService {
   }
 
   buildEvidencePack(query: string, options: EvidenceBuildOptions = {}): EvidencePack {
-    const structured = structuredEvidence(this.datasetDb);
-    const documents = searchDocuments(this.datasetDb, normalizeSearchTerms(query));
+    const wantStructured = !options.retrievalPlan || options.retrievalPlan.includes('structured');
+    const wantDocuments = !options.retrievalPlan || options.retrievalPlan.includes('document');
+    const structured = wantStructured ? structuredEvidence(this.datasetDb) : [];
+    const documents = wantDocuments ? searchDocuments(this.datasetDb, normalizeSearchTerms(query)) : [];
     const items = [...structured, ...documents];
     items.forEach((item) => persistEvidence(this.learningDb, item));
     const crossValidation = crossValidate(items);
@@ -295,7 +299,10 @@ export class EvidenceService {
       id: `evidence-pack-${randomUUID()}`,
       query,
       items,
-      retrievalPlan: documents.length > 0 ? ['structured', 'document'] : ['structured'],
+      retrievalPlan: [
+        ...(wantStructured && structured.length > 0 ? ['structured' as const] : []),
+        ...(wantDocuments && documents.length > 0 ? ['document' as const] : []),
+      ],
       coverageScore: Math.min(1, Math.round((0.35 + Math.min(0.35, documents.length * 0.06) + Math.min(0.3, structured.length * 0.04)) * 100) / 100),
       crossValidation,
       structuredCount: structured.length,
@@ -326,6 +333,12 @@ export class EvidenceService {
       );
     }
     return pack;
+  }
+
+  /** DAG 合并证据包复用同一持久化通道（INSERT OR REPLACE 幂等） */
+  persistEvidencePack(pack: EvidencePack): void {
+    pack.items.forEach((item) => persistEvidence(this.learningDb, item));
+    persistPack(this.learningDb, pack);
   }
 }
 

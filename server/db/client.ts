@@ -8,6 +8,14 @@ import * as schema from './schema.js';
 
 export type LearningDatabase = ReturnType<typeof createLearningDatabase>;
 
+let shared: LearningDatabase | null = null;
+
+/** 进程级单例：api 与 worker 各自持有一个连接池 */
+export function getLearningDatabase(): LearningDatabase {
+  shared ??= createLearningDatabase();
+  return shared;
+}
+
 export function resolveDatabaseUrl(): string {
   const url = process.env['DATABASE_URL'];
   if (!url) {

@@ -41,11 +41,27 @@ const resourceOptions: Array<{ value: ResourceType; label: string }> = [
   { value: "challenge_task", label: "挑战任务" },
 ];
 
-const selectableAgents: Array<{ id: Exclude<AgentId, "orchestrator" | "resource_generation" | "cross_validation" | "privacy_compliance">; label: string }> = [
+const selectableAgents: Array<{ id: AgentId; label: string }> = [
   { id: "learning_planning", label: "学情与路径" },
   { id: "evidence_retrieval", label: "知识检索" },
   { id: "domain_expert", label: "领域诊断" },
+  { id: "resource_generation", label: "资源生成" },
 ];
+
+const nodeLabels: Record<string, { name: string; agentId: AgentId }> = {
+  "assess.learner": { name: "学情建模", agentId: "learning_planning" },
+  "retrieve.structured": { name: "结构化证据检索", agentId: "evidence_retrieval" },
+  "retrieve.document": { name: "文档证据检索", agentId: "evidence_retrieval" },
+  "analyze.domain": { name: "领域分析", agentId: "domain_expert" },
+  "generate.resource": { name: "资源生成", agentId: "resource_generation" },
+  "audit.claims": { name: "Claim 逐条审核", agentId: "cross_validation" },
+  "debate.challenge": { name: "反方质询", agentId: "cross_validation" },
+  "adjudicate.verdict": { name: "证据裁决", agentId: "cross_validation" },
+  "privacy.compliance": { name: "隐私合规", agentId: "privacy_compliance" },
+  "finalize.publish": { name: "发布收尾", agentId: "orchestrator" },
+};
+
+type RunNodeState = "running" | "succeeded" | "failed" | "revising";
 
 const avatarClasses: Record<AuthenticatedUser["avatarKey"], string> = {
   graphite: "bg-zinc-900 text-white", ocean: "bg-sky-600 text-white", violet: "bg-violet-600 text-white",
@@ -81,11 +97,14 @@ export function LearningWorkbench({ apiBase, user, onLogout, onNavigate }: Learn
   const [draft, setDraft] = useState("");
   const [resourceType, setResourceType] = useState<ResourceType>("lecture");
   const [preference, setPreference] = useState<"auto" | "custom">("auto");
-  const [selectedAgents, setSelectedAgents] = useState<AgentId[]>(["learning_planning", "evidence_retrieval", "domain_expert"]);
+  const [selectedAgents, setSelectedAgents] = useState<AgentId[]>(["learning_planning", "evidence_retrieval", "domain_expert", "resource_generation"]);
   const [attachedFile, setAttachedFile] = useState<{ name: string; content: string } | null>(null);
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [studyRunning, setStudyRunning] = useState(false);
+  const [activeRunId, setActiveRunId] = useState<string | null>(null);
+  const [nodeStates, setNodeStates] = useState<Array<{ key: string; state: RunNodeState }>>([]);
+  const [liveSummary, setLiveSummary] = useState("");
   const [notice, setNotice] = useState("");
   const [mentionOpen, setMentionOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
@@ -138,20 +157,67 @@ export function LearningWorkbench({ apiBase, user, onLogout, onNavigate }: Learn
   const refreshMessages = useCallback(async () => {
     try {
       const response = await fetch(`${apiBase}/api/learning/chat?surface=study`, { credentials: "include" });
-      const data = await response.json() as { messages?: StudyMessage[]; studyRunning?: boolean };
+      const data = await response.json() as { messages?: StudyMessage[] };
       if (!response.ok) return;
       setMessages(data.messages ?? []);
-      setStudyRunning(Boolean(data.studyRunning));
-    } catch { /* 轮询失败等下一轮 */ }
+    } catch { /* 刷新失败等下一次 */ }
   }, [apiBase]);
 
-  useEffect(() => { void load().catch((error) => setNotice(error instanceof Error ? error.message : "学习空间读取失败")).finally(() => setLoading(false)); }, [load]);
-  useEffect(() => { feedRef.current?.scrollTo({ top: feedRef.current.scrollHeight, behavior: "smooth" }); }, [messages, sending, studyRunning]);
-  useEffect(() => {
-    if (!studyRunning) return;
-    const timer = setInterval(() => { void refreshMessages(); }, 1200);
-    return () => clearInterval(timer);
-  }, [studyRunning, refreshMessages]);
+  // SSE 事件流：驱动节点状态条与运行终态；断线由 Last-Event-ID 续传（总规 §4.4）
+  const openRunStream = useCallback((runId: string) => {
+    setStudyRunning(true);
+    setActiveRunId(runId);
+    setNodeStates([]);
+    setLiveSummary("已受理，等待节点调度…");
+    const source = new EventSource(`${apiBase}/api/learning/runs/${encodeURIComponent(runId)}/events`, { withCredentials: true });
+    source.onmessage = () => { /* 具名事件为主；默认消息忽略 */ };
+    const handle = (event: MessageEvent<string>) => {
+      try {
+        const data = JSON.parse(event.data) as { nodeKey?: string | null; summary?: string };
+        const summary = typeof data.summary === "string" ? data.summary : "";
+        setLiveSummary(summary);
+        const key = data.nodeKey ?? null;
+        if (event.type === "node.started" && key) {
+          setNodeStates((current) => [...current.filter((item) => item.key !== key), { key, state: "running" }]);
+        } else if (event.type === "node.succeeded" && key) {
+          setNodeStates((current) => [...current.filter((item) => item.key !== key), { key, state: "succeeded" }]);
+        } else if (event.type === "node.failed" && key) {
+          setNodeStates((current) => [...current.filter((item) => item.key !== key), { key, state: "failed" }]);
+        } else if (event.type === "run.revision") {
+          setNodeStates((current) => current.map((item) => item.state === "succeeded" && ["generate.resource", "audit.claims", "debate.challenge", "adjudicate.verdict"].includes(item.key) ? { ...item, state: "revising" as const } : item));
+        }
+      } catch { /* 单条事件异常忽略 */ }
+    };
+    for (const type of ["node.started", "node.succeeded", "node.failed", "run.revision", "run.cancelled", "run.succeeded", "run.failed"]) {
+      source.addEventListener(type, handle as EventListener);
+    }
+    const finish = () => {
+      source.close();
+      void refreshMessages().finally(() => {
+        setStudyRunning(false);
+        setActiveRunId(null);
+        setNodeStates([]);
+        setLiveSummary("");
+      });
+    };
+    source.addEventListener("run.succeeded", finish);
+    source.addEventListener("run.failed", finish);
+    source.addEventListener("run.cancelled", finish);
+    source.onerror = () => {
+      // 连接被永久关闭时兜底：拉一次快照判定终态；否则交给 EventSource 自动重连
+      if (source.readyState !== EventSource.CLOSED) return;
+      void (async () => {
+        try {
+          const response = await fetch(`${apiBase}/api/learning/runs/${encodeURIComponent(runId)}`, { credentials: "include" });
+          const data = await response.json() as { run?: { status?: string } };
+          const status = data.run?.status;
+          if (status === "succeeded" || status === "failed" || status === "cancelled") finish();
+        } catch { /* 下次交互重试 */ }
+      })();
+    };
+  }, [apiBase, refreshMessages]);
+
+  useEffect(() => { feedRef.current?.scrollTo({ top: feedRef.current.scrollHeight, behavior: "smooth" }); }, [messages, sending, studyRunning, nodeStates]);
   useEffect(() => {
     if (!resizing) return;
     const move = (event: MouseEvent) => {
@@ -182,22 +248,29 @@ export function LearningWorkbench({ apiBase, user, onLogout, onNavigate }: Learn
     setNotice("");
   };
 
-  const toggleAgent = (agentId: AgentId) => setSelectedAgents((current) => current.includes(agentId) ? current.filter((item) => item !== agentId) : [...current, agentId]);
+  const toggleAgent = (agentId: AgentId) => setSelectedAgents((current) => {
+    const next = current.includes(agentId) ? current.filter((item) => item !== agentId) : [...current, agentId];
+    return next.length >= 3 ? next : current; // 一次运行至少 3 个业务角色（总规 §5.2）
+  });
 
   const send = async () => {
     const content = draft.trim();
     if (!content || sending) return;
+    if (preference === "custom" && (!selectedAgents.includes("resource_generation") || selectedAgents.length < 3)) {
+      setNotice("指定角色模式下至少选择 3 个业务角色，且必须包含资源生成（门禁不可取消）");
+      return;
+    }
     setSending(true); setNotice(""); setDraft("");
     try {
-      const response = await fetch(`${apiBase}/api/learning/study/chat`, {
+      const response = await fetch(`${apiBase}/api/learning/runs`, {
         method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content, pathNodeId: selectedNodeId, resourceType, collaborationPreference: preference, selectedAgentIds: selectedAgents, temporaryReference: attachedFile }),
+        body: JSON.stringify({ task: content, pathNodeId: selectedNodeId, resourceType, collaborationMode: preference, selectedAgentIds: selectedAgents, temporaryReference: attachedFile }),
       });
-      const data = await response.json() as { success?: boolean; error?: string };
-      if (!response.ok || !data.success) throw new Error(data.error || "学习协同失败");
+      const data = await response.json() as { success?: boolean; error?: string; runId?: string };
+      if (!response.ok || !data.success || !data.runId) throw new Error(data.error || "学习协同失败");
       setAttachedFile(null);
-      setStudyRunning(true);
       await refreshMessages();
+      openRunStream(data.runId);
     } catch (error) {
       setDraft(content);
       setNotice(error instanceof Error ? error.message : "学习协同失败");
@@ -242,6 +315,7 @@ export function LearningWorkbench({ apiBase, user, onLogout, onNavigate }: Learn
         <div ref={feedRef} className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
           <div className="mx-auto max-w-3xl space-y-4">
             {loading ? <div className="flex min-h-[240px] items-center justify-center text-sm text-muted-foreground">正在加载协同记录</div> : messages.length === 0 ? <div className="flex min-h-[240px] flex-col items-center justify-center text-center"><Bot className="mb-3 h-8 w-8 text-muted-foreground/50" /><p className="text-sm font-medium">从一条任务开始群聊协同</p><p className="mt-1 max-w-sm text-xs leading-5 text-muted-foreground">@ 引用路径节点并说明你要的资料。总控会编排学情、双路检索、领域核对、生成与审核，每个智能体的发言都会逐条冒泡。</p></div> : messages.map((message) => <MessageCard key={message.id} message={message} onExport={exportAsset} />)}
+            {(studyRunning || nodeStates.length > 0) && <RunProgressStrip states={nodeStates} summary={liveSummary} />}
             {studyRunning && <div className="flex items-center gap-2 text-xs text-muted-foreground"><span className="h-2 w-2 animate-pulse rounded-full bg-foreground" />多智能体正在协同处理，发言会逐条出现…</div>}
           </div>
         </div>
@@ -279,6 +353,17 @@ export function LearningWorkbench({ apiBase, user, onLogout, onNavigate }: Learn
 
 function Metric({ label, value }: { label: string; value: string | number }) {
   return <div className="rounded-lg bg-muted/60 p-2.5"><div className="text-[10px] text-muted-foreground">{label}</div><div className="mt-1 text-sm font-semibold">{value}</div></div>;
+}
+
+/** SSE 驱动的节点状态条：实时展示 DAG 各节点的执行/门禁状态（总规 §4.4） */
+function RunProgressStrip({ states, summary }: { states: Array<{ key: string; state: RunNodeState }>; summary: string }) {
+  return <section aria-label="协同运行状态" className="rounded-xl border bg-muted/20 px-3.5 py-3">
+    <div className="flex items-center justify-between text-[10px] font-medium uppercase tracking-wide text-muted-foreground"><span>协同运行 · 实时节点状态</span><span>{states.filter((item) => item.state === "succeeded").length} 完成</span></div>
+    <div className="mt-2 flex flex-wrap gap-1.5">
+      {states.map((item) => <span key={item.key} className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] ${item.state === "succeeded" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : item.state === "failed" ? "border-destructive/30 bg-destructive/10 text-destructive" : item.state === "revising" ? "border-amber-200 bg-amber-50 text-amber-700" : "border-border bg-background text-foreground"}`}><span className={`h-1.5 w-1.5 rounded-full ${item.state === "succeeded" ? "bg-emerald-600" : item.state === "failed" ? "bg-destructive" : item.state === "revising" ? "bg-amber-500" : "animate-pulse bg-foreground"}`} />{nodeLabels[item.key]?.name ?? item.key}</span>)}
+    </div>
+    {summary && <p className="mt-2 line-clamp-2 text-[11px] leading-4 text-muted-foreground">{summary}</p>}
+  </section>;
 }
 
 function MessageCard({ message, onExport }: { message: StudyMessage; onExport: (asset: StudyAsset, format: "md" | "txt" | "json") => void }) {

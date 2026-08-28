@@ -1,6 +1,18 @@
 import { randomUUID } from 'node:crypto';
 import { normalizeKnowledgePointId } from './store.js';
 import type { EvidenceItem, EvidencePack, LearningResourceType, QuizQuestion, ResourceBlock, ResourceDocument } from './types.js';
+import type { DifficultyCalibration } from './difficulty.js';
+
+/** 组装选项：难度校准由调用方按学习者状态计算（总规 §7.2），替换历史硬编码 0.42 */
+export interface ResourceBuildOptions {
+  calibration?: DifficultyCalibration;
+}
+
+function applyDifficulty(resource: ResourceDocument, calibration?: DifficultyCalibration): ResourceDocument {
+  resource.difficulty = calibration ? Number(calibration.targetDifficulty.toFixed(3)) : 0.5;
+  if (calibration) resource.difficultyCalibration = calibration;
+  return resource;
+}
 
 function evidenceBlocks(pack: EvidencePack, knowledgePointId: string): ResourceBlock[] {
   return pack.items.slice(0, 6).map((item, index) => ({
@@ -76,6 +88,7 @@ export function buildResourceDraft(
   type: LearningResourceType,
   pack: EvidencePack,
   knowledgePointId = 'compressor-diagnosis-evidence',
+  options: ResourceBuildOptions = {},
 ): ResourceDocument {
   const isLecture = type === 'lecture';
   const title = isLecture
@@ -262,12 +275,12 @@ export function buildResourceDraft(
     ...evidenceBlocks(pack, knowledgePoint),
   ];
 
-  return {
+  return applyDifficulty({
     id: `resource-${randomUUID()}`,
     taskId,
     type,
     title,
-    difficulty: 0.42,
+    difficulty: 0.5,
     learningObjectives: isLecture
       ? ['理解压缩机传感器证据的作用', '建立数据到运维判断的边界']
       : type === 'practice_guide'
@@ -284,7 +297,7 @@ export function buildResourceDraft(
     evidenceIds: pack.items.map((item) => item.id),
     auditStatus: pack.items.length > 0 ? 'passed' : 'revise',
     createdAt: Date.now(),
-  };
+  }, options.calibration);
 }
 
 export interface LlmResourceDraft {
@@ -301,6 +314,7 @@ export function buildLlmResourceDocument(
   pack: EvidencePack,
   knowledgePointId: string | undefined,
   llm: LlmResourceDraft,
+  options: ResourceBuildOptions = {},
 ): ResourceDocument {
   const knowledgePoint = normalizeKnowledgePointId(knowledgePointId ?? '') || 'compressor-diagnosis-evidence';
   const evidenceIdList = pack.items.map((item) => item.id);
@@ -343,19 +357,19 @@ export function buildLlmResourceDocument(
     });
   }
   blocks.push(...evidenceBlocks(pack, knowledgePoint));
-  return {
+  return applyDifficulty({
     id: `resource-${randomUUID()}`,
     taskId,
     type,
     title: llm.title.trim().slice(0, 80) || `${type}：${query}`,
-    difficulty: 0.42,
+    difficulty: 0.5,
     learningObjectives: llm.objectives.map((item) => String(item).trim().slice(0, 60)).filter(Boolean).slice(0, 4),
     knowledgePointIds: [knowledgePoint],
     blocks: blocks.map((block, index) => ({ ...block, position: index })),
     evidenceIds: evidenceIdList,
     auditStatus: pack.items.length > 0 ? 'passed' : 'revise',
     createdAt: Date.now(),
-  };
+  }, options.calibration);
 }
 
 function analysisCodeBlock(knowledgePoint: string): ResourceBlock {

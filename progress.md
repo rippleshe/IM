@@ -1,5 +1,21 @@
 # 阅读进度
 
+# 2026-08-28 BullMQ 动态 DAG 全链路 + 个性化算法层（8/30-9/3 日程主体完成）
+
+- 模型运行时与数据层引导抽为共享模块：server/study-runtime.ts（模型注册/角色路由/发布门禁）、server/study-context.ts（SQLite 打开与存储实例），api 与 worker 进程同源不再复制；index.ts 两段纯搬移并验证启动。
+- runs 模块落地：queue.ts（BullMQ，jobId=runId:nodeKey:attempt 幂等、重试≤2、指数退避）、service.ts（study_runs/nodes/run_events 持久化，jsonb 原子合并 context，单条 SQL 原子分配单调 seq）、executor.ts（十节点执行器：双路检索并行→领域分析→生成→Claim 审核→反方质询→证据裁决→隐私→发布；修订环最多 2 轮；裁决落 audit_decisions，质询落 debate_issues，Claim 落 claims/claim_evidence）、worker.ts（独立进程，并发 4，优雅退出）。
+- SSE 事件流：GET /api/learning/runs/:runId/events 支持 Last-Event-ID 断点续传（PostgreSQL 回放 + Redis 实时分发）；POST /runs 返回 202+plan；快照/取消接口齐备；门禁角色 custom 模式下真实裁剪且不可移除。
+- 前端切换：学习页 submit 改 POST /api/learning/runs，EventSource 驱动实时节点状态条（运行中/成功/失败/修订中），终态拉全量历史替换；旧 study/chat、activeStudyRuns、进程内 executeStudyRun 同批删除；指定角色补"资源生成"并校验 ≥3 业务角色。
+- 个性化算法层（纯函数+测试）：bkt.ts（贝叶斯修正+学习转移+证据量置信度，n=9 过 0.80 门限）、difficulty.ts（成功率模型 p̂=readiness+support·(1-d)−0.2d，目标 72%，区间 65-80%）、diagnostic.ts（12 题五维固定题集+判分+BKT 初始状态）。初稿难度模型在"初学者×高脚手架"方向反了，已重导并按教学原则重定评测区间。
+- 存储层：SQLite 补 BKT 参数列/bkt_updates/诊断表/资产难度列（ensureColumn 迁移兼容）；submitQuizAttempt 的启发式更新替换为 BKT；新增 applySkillObservation/getSkillState(s)/saveDiagnosticSession；saveAsset 落 difficulty+calibration。
+- D2 修复完成：资源构建链接 calibrateDifficulty（executor 按资源类型定脚手架、按路径边算先修就绪度），实测"初学者×习题"校准难度 0（原 0.42 硬编码），rationale 完整落库。
+- 诊断 API：GET /api/learning/diagnostic（不下发答案）、POST /api/learning/diagnostic-attempts（服务端判分→BKT→诊断会话落库→解析回放）。
+- 三账号种子：pnpm demo:seed 幂等创建 learner-foundation/advanced/maintenance，确定性诊断作答（5/12、10/12、8/12）驱动差异化 BKT 初始状态；密码只从 IM_TRAINING_AGENT_DEMO_PASSWORD 注入。
+- 证据包导出：GET /api/learning/runs/:runId/export 单文件 JSON（画像+诊断+DAG 节点+事件+结论+声明图+资源+反馈）。
+- 评测器：pnpm evaluate 离线模式 60 案例（三画像×20，确定性生成）→ 难度适配 100%、核心知识覆盖 100%（教学区间独立设定、覆盖按知识库包含检查）；幻觉率需 --live 模式执行真实运行；结果落 evaluation_cases/results，报告写 data/。阈值不达标退出码 1。
+- 踩坑记录：本机原生 PostgreSQL 占 5432 导致容器连接串认错服务（改 15432/16379）；新旧 worker 进程并存抢任务导致看到旧代码产物（全杀重启后验证通过）；drizzle-kit migrate 静默退出改用编程式 migrator。
+- 验证：typecheck 0 错、115 测试全过、tsup（含 worker 入口）与 Next 构建通过；端到端两次真实运行（讲义 10 节点全过资产入库；习题校准难度落库）；SSE 续传实测 id 21/22 精确回放；服务 3000/3001 已重启。
+
 # 2026-08-28 挑战杯总规落地：平台基础设施与 SQLite→PostgreSQL 迁移（8/28-29 日程提前完成）
 
 - 按 sol 的第一份计划产出唯一技术总规 `docs/挑战杯技术开发总规.md`：现状审计（D1-D7 缺陷含 selectedAgentIds 假交互、difficulty 0.42 硬编码、进程内 Run 无持久化）、目标架构、API 契约、九组领域表、BKT/难度校准/苏格拉底/混合检索算法、迁移流程、任务顺序与量化验收。

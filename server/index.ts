@@ -1,237 +1,29 @@
 import dotenv from 'dotenv';
 dotenv.config();
 
-import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-
-// ---------- 多模型 provider 与模型配置 ----------
 import {
-  ModelRegistry,
-  MultiModelClient,
-  createDefaultModelProvidersConfig,
-  loadModelProvidersConfig,
-} from '../src/models/index.js';
-import type { ModelProvidersConfig, ProviderConfig } from '../src/models/config.js';
+  AUTO_ASSET_TYPES,
+  LEARNING_AGENT_IDS,
+  getAgentExecutionSettings,
+  getRequestedModel,
+  getSettingsPayload,
+  getThinkingSettings,
+  mergeModelConfig,
+  modelRegistry,
+  multiModelClient,
+  parseJson,
+  resolveResourcePublication,
+  runtimeWorkbenchSettings,
+  saveRuntimeModelConfig,
+  saveRuntimeWorkbenchSettings,
+  withTimeout,
+} from './study-runtime.js';
+import type { AutoAssetType, LearningAgentId, ThinkingDepth } from './study-runtime.js';
 
-const runtimeModelSettingsPath = path.resolve(process.cwd(), '.im-training-agent', 'model-settings.json');
-const runtimeWorkbenchSettingsPath = path.resolve(process.cwd(), '.im-training-agent', 'workbench-settings.json');
-const LEARNING_AGENT_IDS = [
-  'learning_planning',
-  'evidence_retrieval',
-  'domain_expert',
-  'resource_generation',
-  'cross_validation',
-  'privacy_compliance',
-] as const;
-type LearningAgentId = typeof LEARNING_AGENT_IDS[number];
-type AgentRouteConfig = { modelId: string; thinkingDepth: 'inherit' | ThinkingDepth };
-const AUTO_ASSET_TYPES = ['lecture', 'tiered_quiz', 'concept_map'] as const;
-type AutoAssetType = typeof AUTO_ASSET_TYPES[number];
-type RuntimeWorkbenchSettings = {
-  agentRouting: Record<LearningAgentId, AgentRouteConfig>;
-  defaultModelId: string;
-  defaultThinkingDepth: ThinkingDepth;
-  autoAssetTypes: AutoAssetType[];
-};
-
-function createDefaultWorkbenchSettings(): RuntimeWorkbenchSettings {
-  return {
-    agentRouting: Object.fromEntries(LEARNING_AGENT_IDS.map((id) => [id, { modelId: '', thinkingDepth: 'inherit' }])) as Record<LearningAgentId, AgentRouteConfig>,
-    defaultModelId: '',
-    defaultThinkingDepth: 'medium',
-    autoAssetTypes: [...AUTO_ASSET_TYPES],
-  };
-}
-
-function loadRuntimeWorkbenchSettings(): RuntimeWorkbenchSettings {
-  const defaults = createDefaultWorkbenchSettings();
-  if (!existsSync(runtimeWorkbenchSettingsPath)) return defaults;
-  try {
-    const parsed = JSON.parse(readFileSync(runtimeWorkbenchSettingsPath, 'utf8')) as Partial<RuntimeWorkbenchSettings>;
-    const source = parsed.agentRouting ?? {};
-    for (const id of LEARNING_AGENT_IDS) {
-      const route = source[id];
-      if (route && typeof route.modelId === 'string' && ['inherit', 'low', 'medium', 'high', 'max'].includes(route.thinkingDepth)) {
-        defaults.agentRouting[id] = { modelId: route.modelId, thinkingDepth: route.thinkingDepth };
-      }
-    }
-    if (typeof parsed.defaultModelId === 'string') defaults.defaultModelId = parsed.defaultModelId;
-    if (['low', 'medium', 'high', 'max'].includes(parsed.defaultThinkingDepth ?? '')) {
-      defaults.defaultThinkingDepth = parsed.defaultThinkingDepth as ThinkingDepth;
-    }
-    if (Array.isArray(parsed.autoAssetTypes)) {
-      const selected = parsed.autoAssetTypes.filter((type): type is AutoAssetType => AUTO_ASSET_TYPES.includes(type as AutoAssetType));
-      if (selected.length > 0) defaults.autoAssetTypes = selected;
-    }
-  } catch {
-    // Fall back to safe local defaults when the optional settings file is malformed.
-  }
-  return defaults;
-}
-
-const runtimeWorkbenchSettings = loadRuntimeWorkbenchSettings();
-
-function saveRuntimeWorkbenchSettings(): void {
-  mkdirSync(path.dirname(runtimeWorkbenchSettingsPath), { recursive: true });
-  writeFileSync(runtimeWorkbenchSettingsPath, JSON.stringify(runtimeWorkbenchSettings, null, 2), 'utf8');
-}
-
-function loadBaseModelConfig(): ModelProvidersConfig {
-  let config: ModelProvidersConfig | undefined;
-  try {
-    config = loadModelProvidersConfig({
-      defaultPaths: [
-        path.resolve(process.cwd(), 'models.config.ts'),
-        path.resolve(process.cwd(), 'models.config.json'),
-        path.resolve(__dirname, 'models.config.ts'),
-      ],
-    });
-  } catch {
-    // Fall back to the built-in configuration when the optional file is unavailable.
-  }
-  return config ?? createDefaultModelProvidersConfig();
-}
-
-function loadRuntimeModelConfig(): ModelProvidersConfig {
-  if (!existsSync(runtimeModelSettingsPath)) return { providers: [], models: [] };
-  try {
-    const parsed = JSON.parse(readFileSync(runtimeModelSettingsPath, 'utf8')) as Partial<ModelProvidersConfig>;
-    return {
-      providers: Array.isArray(parsed.providers) ? parsed.providers : [],
-      models: Array.isArray(parsed.models) ? parsed.models : [],
-    };
-  } catch {
-    return { providers: [], models: [] };
-  }
-}
-
-const baseModelConfig = loadBaseModelConfig();
-const runtimeModelConfig = loadRuntimeModelConfig();
-
-function mergeModelConfig(): ModelProvidersConfig {
-  const providers = new Map(baseModelConfig.providers.map((provider) => [provider.id, provider]));
-  for (const provider of runtimeModelConfig.providers) providers.set(provider.id, provider);
-  const models = new Map(baseModelConfig.models.map((model) => [model.id, model]));
-  for (const model of runtimeModelConfig.models) models.set(model.id, model);
-  return { providers: Array.from(providers.values()), models: Array.from(models.values()) };
-}
-
-function saveRuntimeModelConfig(): void {
-  mkdirSync(path.dirname(runtimeModelSettingsPath), { recursive: true });
-  writeFileSync(runtimeModelSettingsPath, JSON.stringify(runtimeModelConfig, null, 2), 'utf8');
-}
-
-function buildModelRegistry(): ModelRegistry {
-  const registry = new ModelRegistry();
-  const config = mergeModelConfig();
-
-  for (const provider of config.providers) {
-    if (!provider.apiKey) continue;
-    registry.registerProvider(provider);
-  }
-
-  for (const model of config.models) {
-    registry.registerModel(model);
-  }
-
-  return registry;
-}
-
-const modelRegistry = buildModelRegistry();
-const multiModelClient = new MultiModelClient({
-  registry: modelRegistry,
-  defaultStrategy: 'complexity',
-});
-
-function getPrimaryModelRuntime() {
-  const provider = modelRegistry.getDefaultProvider();
-  const model = provider
-    ? modelRegistry.listModels(provider.id)[0]
-    : modelRegistry.listModels()[0];
-
-  return {
-    provider: provider?.id ?? 'dashscope',
-    apiKey: provider?.apiKey ?? process.env.DASHSCOPE_API_KEY ?? '',
-    baseURL: provider?.baseURL ?? process.env.DASHSCOPE_BASE_URL ?? 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-    model: model?.id ?? process.env.QWEN_MODEL ?? 'qwen-plus',
-  };
-}
-
-type ThinkingDepth = 'low' | 'medium' | 'high' | 'max';
-
-function getThinkingSettings(value: unknown): { temperature: number; maxTokens: number } {
-  switch (value) {
-    case 'low': return { temperature: 0.7, maxTokens: 2048 };
-    case 'high': return { temperature: 0.3, maxTokens: 6144 };
-    case 'max': return { temperature: 0.2, maxTokens: 8192 };
-    default: return { temperature: 0.45, maxTokens: 4096 };
-  }
-}
-
-function getRequestedModel(value: unknown): string | undefined {
-  const model = typeof value === 'string' ? value.trim() : '';
-  return model && modelRegistry.hasModel(model) ? model : undefined;
-}
-
-function getAgentExecutionSettings(agentId: string, requestedModel: string | undefined, requestedDepth: unknown) {
-  const route = (LEARNING_AGENT_IDS as readonly string[]).includes(agentId)
-    ? runtimeWorkbenchSettings.agentRouting[agentId as LearningAgentId]
-    : undefined;
-  const defaultModel = getRequestedModel(runtimeWorkbenchSettings.defaultModelId)
-    ?? requestedModel
-    ?? getRequestedModel(getPrimaryModelRuntime().model);
-  const model = getRequestedModel(route?.modelId) ?? defaultModel;
-  const thinkingDepth = route?.thinkingDepth && route.thinkingDepth !== 'inherit'
-    ? route.thinkingDepth
-    : runtimeWorkbenchSettings.defaultThinkingDepth ?? requestedDepth;
-  return { model, thinking: getThinkingSettings(thinkingDepth) };
-}
-
-function getSettingsPayload() {
-  const config = mergeModelConfig();
-  const providerMap = new Map(config.providers.map((provider) => [provider.id, provider]));
-  const primary = getPrimaryModelRuntime();
-  const activeModel = getRequestedModel(runtimeWorkbenchSettings.defaultModelId) ?? primary.model;
-  return {
-    success: true,
-    activeModel,
-    defaultThinkingDepth: runtimeWorkbenchSettings.defaultThinkingDepth,
-    providers: config.providers.map((provider) => ({
-      id: provider.id,
-      displayName: provider.displayName,
-      baseURL: provider.baseURL,
-      isDefault: Boolean(provider.isDefault),
-      apiKeyConfigured: Boolean(provider.apiKey),
-      models: config.models
-        .filter((model) => model.provider === provider.id)
-        .map((model) => ({ id: model.id, displayName: model.displayName })),
-    })),
-    models: config.models
-      .filter((model) => Boolean(providerMap.get(model.provider)?.apiKey))
-      .map((model) => ({
-        id: model.id,
-        displayName: model.displayName,
-        provider: model.provider,
-        providerDisplayName: providerMap.get(model.provider)?.displayName ?? model.provider,
-    })),
-    agentRouting: runtimeWorkbenchSettings.agentRouting,
-    autoAssetTypes: runtimeWorkbenchSettings.autoAssetTypes,
-    privacy: {
-      uploadPolicy: 'session_only' as const,
-      uploadContentRetained: false as const,
-      learnerDataScope: 'local' as const,
-    },
-  };
-}
-
-function resolveResourcePublication(auditStatus: string): { auditStatus: 'passed' | 'manual_review_required'; persist: boolean } {
-  if (auditStatus === 'corroborated') return { auditStatus: 'passed', persist: true };
-  return { auditStatus: 'manual_review_required', persist: false };
-}
 
 import express from 'express';
 import cors from 'cors';
@@ -247,51 +39,13 @@ app.use(cors({
 app.use(express.json({ limit: '50mb' }));
 app.use(express.static(path.join(path.dirname(fileURLToPath(import.meta.url)), 'public')));
 
-import { openSqlite, getDatasetDatabasePath, getLearningDatabasePath, initializeDatasetDatabase, initializeLearningDatabase } from '../src/learning/sqlite.js';
-import { EvidenceService, rebuildDocumentFts, seedMetroCatalog } from '../src/learning/evidence.js';
-import { importKnowledgeCards } from '../src/learning/knowledge-import.js';
-import { importCsvDataset } from '../src/learning/tabular.js';
 import { importMetroPt3Csv } from '../src/learning/metropt3.js';
-import { IdentityStore, type AuthenticatedLearner, type OnboardingInput } from '../src/learning/identity.js';
-import { LearningStore, type LearningPathEdgeView, type LearningPathNodeView, type LearningPathRevisionInput } from '../src/learning/store.js';
+import { evidenceService, learningStore, identityStore, datasetDb } from './study-context.js';
+import type { AuthenticatedLearner, OnboardingInput } from '../src/learning/identity.js';
+import type { LearningPathEdgeView, LearningPathNodeView, LearningPathRevisionInput } from '../src/learning/store.js';
 import { buildLlmResourceDocument, buildResourceDraft } from '../src/learning/resource-builder.js';
 import { auditResource } from '../src/learning/audit.js';
-import type { EvidencePack, LearningResourceType, ResourceDocument } from '../src/learning/types.js';
-
-const learningDb = openSqlite(getLearningDatabasePath());
-const datasetDb = openSqlite(getDatasetDatabasePath());
-initializeLearningDatabase(learningDb);
-initializeDatasetDatabase(datasetDb);
-seedMetroCatalog(datasetDb);
-importCsvDataset(datasetDb, {
-  id: 'ai4i-2020',
-  name: 'AI4I 2020 Predictive Maintenance',
-  csvPath: path.resolve(process.cwd(), 'data', 'datasets', 'ai4i', 'ai4i_2020.csv'),
-  sourcePath: 'IM-Training-Agent-datasets/raw/AI4I_2020.zip::ai4i2020.csv',
-  license: 'UCI AI4I 2020（引用以官方页面为准）',
-  labelFields: ['Machine failure', 'TWF', 'HDF', 'PWF', 'OSF', 'RNF'],
-  fieldMeanings: {
-    'UDI': '样本编号',
-    'Product ID': '产品编号，首字母 L/M/H 对应低/中/高质量等级',
-    'Type': '产品质量等级 L/M/H',
-    'Air temperature [K]': '环境温度',
-    'Process temperature [K]': '工艺温度',
-    'Rotational speed [rpm]': '主轴转速',
-    'Torque [Nm]': '扭矩',
-    'Tool wear [min]': '刀具累计磨损时间',
-    'Machine failure': '机器故障总标签（1 表示本次记录发生故障）',
-    'TWF': '刀具磨损故障',
-    'HDF': '散热故障（温差过小或转速过低）',
-    'PWF': '功率故障（转速与扭矩乘积偏离额定范围）',
-    'OSF': '过应力故障（扭矩与磨损过大）',
-    'RNF': '随机故障',
-  },
-});
-importKnowledgeCards(datasetDb);
-rebuildDocumentFts(datasetDb);
-const evidenceService = new EvidenceService(datasetDb, learningDb);
-const learningStore = new LearningStore(learningDb);
-const identityStore = new IdentityStore(learningDb);
+import type { LearningResourceType, ResourceDocument } from '../src/learning/types.js';
 
 const AUTH_COOKIE_NAME = 'im_training_agent_auth';
 const LEARNING_RESOURCE_TYPES: LearningResourceType[] = ['lecture', 'tiered_quiz', 'practice_guide', 'concept_map', 'review_cards', 'challenge_task'];
@@ -382,28 +136,6 @@ type GeneratedPathGraph = {
   edges: Array<{ fromKnowledgePointId: string; toKnowledgePointId: string; relation: LearningPathEdgeView['relation'] }>;
 };
 
-function parseJson<T>(text: string): T | null {
-  try {
-    return JSON.parse(text) as T;
-  } catch {
-    const objectStart = text.indexOf('{');
-    const arrayStart = text.indexOf('[');
-    const start = objectStart >= 0 && (arrayStart < 0 || objectStart < arrayStart) ? objectStart : arrayStart;
-    const end = Math.max(text.lastIndexOf('}'), text.lastIndexOf(']'));
-    if (start < 0 || end <= start) return null;
-    try { return JSON.parse(text.slice(start, end + 1)) as T; } catch { return null; }
-  }
-}
-
-function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(message)), timeoutMs);
-    promise.then(
-      (value) => { clearTimeout(timer); resolve(value); },
-      (error) => { clearTimeout(timer); reject(error); },
-    );
-  });
-}
 
 function fallbackPath(goal: string): GeneratedPathItem[] {
   const shortGoal = goal.replace(/\s+/g, ' ').trim().slice(0, 48) || '当前学习目标';
@@ -682,7 +414,6 @@ app.get('/api/learning/chat', (req, res) => {
   res.json({
     success: true,
     messages: learningStore.listChatMessages(learner.id, 80, surface),
-    studyRunning: surface === 'study' && activeStudyRuns.has(learner.id),
   });
 });
 
@@ -710,270 +441,65 @@ app.post('/api/learning/chat', async (req, res) => {
   });
 });
 
-// ---------- 学习页多智能体协同 Run：每步真实执行，消息逐条入库，前端轮询呈现群聊 ----------
-const RESOURCE_TYPE_LABELS: Record<LearningResourceType, string> = {
-  lecture: '讲义', tiered_quiz: '分层习题', practice_guide: '实操指南',
-  concept_map: '知识图谱', review_cards: '复习卡片', challenge_task: '挑战任务',
-};
+// ---------- StudyRun：BullMQ 动态 DAG + SSE 事件流（docs/挑战杯技术开发总规.md §4） ----------
+import { createRunsRouter } from "./runs/routes.js";
+app.use("/api/learning/runs", createRunsRouter(requireLearner));
 
-const activeStudyRuns = new Map<string, { runId: string; startedAt: number }>();
+// ---------- 初始诊断（总规 §7.3）：12 题固定题集，作答驱动 BKT 初始状态 ----------
+import { DIAGNOSTIC_QUESTIONS, scoreDiagnostic } from '../src/learning/diagnostic.js';
 
-interface StudyRunInput {
-  content: string;
-  pathNode: LearningPathNodeView | null;
-  resourceType: LearningResourceType;
-  collaborationPreference: 'auto' | 'custom';
-  selectedAgentIds: LearningAgentId[];
-  temporaryReference?: { name: string; content: string };
-}
-
-function saveAgentBubble(learnerId: string, runId: string, agentId: string, name: string, content: string): void {
-  learningStore.saveChatMessage(learnerId, 'assistant', content, {
-    surface: 'study', kind: 'agent', runId, agentId, agentName: name,
-  });
-}
-
-async function callStudyModel(agentId: LearningAgentId, system: string, user: string, maxTokens = 1600): Promise<string> {
-  const route = getAgentExecutionSettings(agentId, undefined, undefined);
-  const response = await withTimeout(
-    multiModelClient.simple({
-      messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
-      model: route.model,
-      temperature: route.thinking.temperature,
-      maxTokens: Math.min(route.thinking.maxTokens, maxTokens),
-    }),
-    30_000,
-    '模型调用超时',
-  );
-  return response.text;
-}
-
-function evidenceDigest(pack: EvidencePack): unknown {
-  return pack.items.slice(0, 10).map((item) => ({
-    title: item.sourceTitle,
-    locator: item.locator,
-    content: item.content.slice(0, 240),
-  }));
-}
-
-async function executeStudyRun(learner: AuthenticatedLearner, input: StudyRunInput, runId: string): Promise<void> {
-  const startedAt = Date.now();
-  const typeLabel = RESOURCE_TYPE_LABELS[input.resourceType];
-  const nodeName = input.pathNode?.title ?? '当前学习目标';
-  try {
-    // 1) 证据检索（结构化 SQL + FTS 文档），后续每个智能体都以它为输入
-    const evidencePack = evidenceService.buildEvidencePack(input.content, {
-      learnerId: learner.id, sessionId: `study-${Date.now()}`, temporaryReference: input.temporaryReference,
-    });
-    const structuredItems = evidencePack.items.filter((item) => item.sourceType === 'dataset');
-    const documentItems = evidencePack.items.filter((item) => item.sourceType === 'document');
-
-    saveAgentBubble(learner.id, runId, 'orchestrator', '协同总控 Agent',
-      `收到任务：为「${nodeName}」生成${typeLabel}。编排：学情定位 → 双路检索（结构化 + 文档）→ 领域核对 → 资源生成 → 审核与发布门禁${input.collaborationPreference === 'custom' ? '（遵循你指定的角色）' : ''}。开始执行。`);
-
-    // 2) 同类智能体多实例：结构化检索与文档检索各一路，真实并行查询
-    const sampleRows = structuredItems.filter((item) => item.metadata?.['queryKind'] === 'recent_rows' || item.metadata?.['queryKind'] === 'dataset_row');
-    saveAgentBubble(learner.id, runId, 'evidence_retrieval', '知识检索 Agent · 结构化',
-      `完成结构化检索：取回 ${structuredItems.length} 条数据证据（含 ${sampleRows.length} 行代表性样本），可回溯定位如：${structuredItems[0]?.locator ?? '无'}。`);
-    saveAgentBubble(learner.id, runId, 'evidence_retrieval', '知识检索 Agent · 文档',
-      documentItems.length > 0
-        ? `完成文档检索：按相关度命中 ${documentItems.length} 份资料，最相关《${documentItems[0]?.sourceTitle ?? ''}》${documentItems[0]?.locator ? `（${documentItems[0].locator}）` : ''}。`
-        : '文档检索未命中可用资料，将提示生成端只依赖结构化数据并保守表达。');
-
-    // 3) 学情与路径智能体（LLM，失败回退确定性文案）
-    const profile = learningStore.getProfile(learner.id);
-    let analysis = '';
-    let requirements: string[] = [];
-    try {
-      const planningRaw = await callStudyModel('learning_planning',
-        '你是学习协同中的“学情与路径智能体”。只输出 JSON：{"analysis":"不超过120字的第一人称分析：你看到了什么学习状态，因此本次资源如何定位","requirements":["3到5条对本次资源的具体设计要求"]}。禁止虚构任何数据或作答记录。',
-        JSON.stringify({
-          node: input.pathNode ? { title: input.pathNode.title, description: input.pathNode.description, recommendation: input.pathNode.recommendation } : null,
-          profile: { accuracy: profile.accuracy, studyMinutes: profile.studyMinutes, assetsCount: profile.assetsCount, skills: profile.skills.slice(0, 6) },
-          task: { resourceType: typeLabel, content: input.content },
-        }));
-      const parsed = parseJson<{ analysis?: unknown; requirements?: unknown }>(planningRaw) ?? {};
-      analysis = typeof parsed.analysis === 'string' ? parsed.analysis.slice(0, 300) : '';
-      requirements = Array.isArray(parsed.requirements) ? parsed.requirements.map((item) => String(item).slice(0, 80)).filter(Boolean).slice(0, 5) : [];
-    } catch { /* 走回退文案 */ }
-    if (!analysis || requirements.length === 0) {
-      analysis = `我先核对了你的学习状态：累计学习 ${profile.studyMinutes} 分钟，正确率 ${profile.accuracy === null || profile.accuracy === undefined ? '暂无' : `${Math.round(profile.accuracy * 100)}%`}。本次${typeLabel}围绕「${nodeName}」展开：先把概念讲准，再配合真实数据摘录。`;
-      requirements = ['从学习者当前水平切入，不跳步', '引用证据中的数据并保留定位', '明确结论边界与不确定处'];
-    }
-    saveAgentBubble(learner.id, runId, 'learning_planning', '学情与路径智能体',
-      `${analysis}\n设计要求：\n${requirements.map((item) => `- ${item}`).join('\n')}`);
-
-    // 4) 领域诊断智能体（LLM，失败回退）
-    let points: string[] = [];
-    let boundaries: string[] = [];
-    try {
-      const domainRaw = await callStudyModel('domain_expert',
-        '你是“领域诊断智能体”，负责设备数据分析领域的专业准确性。只输出 JSON：{"points":["3到5条讲解要点"],"boundaries":["2到3条必须强调的专业边界或不确定性提醒"]}。要点与边界必须能在给定证据中找到依据，禁止编造阈值或数据。',
-        JSON.stringify({ task: input.content, evidence: evidenceDigest(evidencePack) }));
-      const parsed = parseJson<{ points?: unknown; boundaries?: unknown }>(domainRaw) ?? {};
-      points = Array.isArray(parsed.points) ? parsed.points.map((item) => String(item).slice(0, 100)).filter(Boolean).slice(0, 5) : [];
-      boundaries = Array.isArray(parsed.boundaries) ? parsed.boundaries.map((item) => String(item).slice(0, 100)).filter(Boolean).slice(0, 3) : [];
-    } catch { /* 走回退文案 */ }
-    if (points.length === 0) {
-      points = ['先解释关键字段含义与观察方法', '用证据中的数据示例说明判断依据'];
-      boundaries = ['数据异常只支持风险判断，不等于确定故障', '结论需保留现场复核建议'];
-    }
-    saveAgentBubble(learner.id, runId, 'domain_expert', '领域诊断智能体',
-      `讲解要点：\n${points.map((item) => `- ${item}`).join('\n')}\n专业边界：\n${boundaries.map((item) => `- ${item}`).join('\n')}`);
-
-    // 5) 资源生成智能体（讲义/实操走 LLM 正文，其余类型用内置结构模板）
-    const llmEligible = input.resourceType === 'lecture' || input.resourceType === 'practice_guide';
-    let resource: ResourceDocument;
-    let generationNote = '';
-    let llmResource: ResourceDocument | null = null;
-    if (llmEligible) {
-      try {
-        const genRaw = await callStudyModel('resource_generation',
-          `你是“个性化资源生成智能体”，为学习者生成${typeLabel}。只输出 JSON：{"title":"资源标题","objectives":["2到3条学习目标"],"sections":[{"heading":"小节标题","text":"150到260字的正文"}]}，sections 给 2 到 4 个。要求：融合给定证据；引用数字必须与证据一致；面向初学者；禁止编造证据之外的阈值或结论。`,
-          JSON.stringify({ designRequirements: requirements, domainPoints: points, domainBoundaries: boundaries, evidence: evidenceDigest(evidencePack) }), 2400);
-        const parsed = parseJson<{ title?: unknown; objectives?: unknown; sections?: unknown }>(genRaw);
-        const sections = parsed && Array.isArray(parsed.sections) ? parsed.sections.flatMap((item) => {
-          const section = item as { heading?: unknown; text?: unknown };
-          return typeof section.heading === 'string' && typeof section.text === 'string' ? [{ heading: section.heading, text: section.text }] : [];
-        }) : [];
-        if (parsed && typeof parsed.title === 'string' && sections.length >= 2) {
-          llmResource = buildLlmResourceDocument(`study-${Date.now()}`, input.content, input.resourceType, evidencePack, input.pathNode?.knowledgePointId, {
-            title: parsed.title,
-            objectives: Array.isArray(parsed.objectives) ? parsed.objectives.map((item) => String(item)) : [],
-            sections,
-          });
-        }
-      } catch { generationNote = '生成模型输出异常，已切换内置结构模板。'; }
-    }
-    if (llmResource) {
-      resource = llmResource;
-    } else {
-      resource = buildResourceDraft(`study-${Date.now()}`, input.content, input.resourceType, evidencePack, input.pathNode?.knowledgePointId);
-      if (llmEligible && !generationNote) generationNote = '为保证结构化质量，本篇使用内置结构模板生成。';
-    }
-    saveAgentBubble(learner.id, runId, 'resource_generation', '资源生成智能体',
-      `初稿完成：《${resource.title}》，共 ${resource.blocks.length} 个内容块（含代码示例与数据摘录）。${generationNote || '已按设计要求融入证据引用，交由审核。'}`);
-
-    // 6) 审核与发布门禁（确定性逐条 Claim）；未通过时退回生成端修订一轮，仍不过用内置模板兜底
-    const auditOnce = (doc: ResourceDocument) => {
-      const result = auditResource(doc, evidencePack);
-      const publication = resolveResourcePublication(result.summary.status);
-      const audited = { ...doc, evidencePackId: evidencePack.id, auditSummary: result.summary, auditStatus: publication.auditStatus };
-      learningStore.saveResourceAudit(audited.id, result.claims);
-      return { result, publication, audited };
-    };
-    const auditNarrative = (result: ReturnType<typeof auditResource>, round: string) => {
-      const supported = result.claims.filter((claim) => claim.verdict === 'supported').length;
-      const review = result.claims.filter((claim) => claim.verdict === 'review').length;
-      const unsupported = result.claims.filter((claim) => claim.verdict === 'unsupported').length;
-      return `${round}逐条核对 ${result.claims.length} 条内容声明：支持 ${supported}、待复核 ${review}、无证据支持 ${unsupported}。来源交叉验证：${result.summary.status === 'corroborated' ? '结构化数据与领域文档互证通过' : '来源单一，需保守表达'}。`;
-    };
-
-    let outcome = auditOnce(resource);
-    if (!outcome.publication.persist && outcome.result.summary.status === 'needs_review' && llmEligible) {
-      saveAgentBubble(learner.id, runId, 'cross_validation', '交叉验证与审核 Agent',
-        `${auditNarrative(outcome.result, '第一轮：')}未通过发布门禁，退回生成端修订。`);
-      const failedClaims = outcome.result.claims
-        .filter((claim) => claim.verdict !== 'supported')
-        .map((claim) => ({ text: claim.text.slice(0, 160), critique: claim.critique }));
-      saveAgentBubble(learner.id, runId, 'resource_generation', '资源生成智能体',
-        `收到退回：${failedClaims.length} 处内容需要修订。我会把这些数字改为与证据一致，或删除无法核对的表述。`);
-      try {
-        const revisedRaw = await callStudyModel('resource_generation',
-          `你是“个性化资源生成智能体”。审核退回了${typeLabel}初稿中无法与证据核对的内容。只输出修订后的 JSON：{"title":"资源标题","objectives":["2到3条学习目标"],"sections":[{"heading":"小节标题","text":"150到260字的正文"}]}。要求：保持其余内容不变；被退回的表述要么改成与证据一致的数字，要么删除数字改为定性描述；仍禁止编造证据之外的阈值。`,
-          JSON.stringify({ failedClaims, designRequirements: requirements, evidence: evidenceDigest(evidencePack) }), 2400);
-        const parsed = parseJson<{ title?: unknown; objectives?: unknown; sections?: unknown }>(revisedRaw);
-        const sections = parsed && Array.isArray(parsed.sections) ? parsed.sections.flatMap((item) => {
-          const section = item as { heading?: unknown; text?: unknown };
-          return typeof section.heading === 'string' && typeof section.text === 'string' ? [{ heading: section.heading, text: section.text }] : [];
-        }) : [];
-        if (parsed && typeof parsed.title === 'string' && sections.length >= 2) {
-          const revised = buildLlmResourceDocument(`study-${Date.now()}`, input.content, input.resourceType, evidencePack, input.pathNode?.knowledgePointId, {
-            title: parsed.title,
-            objectives: Array.isArray(parsed.objectives) ? parsed.objectives.map((item) => String(item)) : [],
-            sections,
-          });
-          const second = auditOnce(revised);
-          if (second.publication.persist) {
-            outcome = second;
-            saveAgentBubble(learner.id, runId, 'resource_generation', '资源生成智能体', '修订完成：已清除无法核对的数字，重新提交审核。');
-          }
-        }
-      } catch { /* 修订失败则走模板兜底 */ }
-    }
-    if (!outcome.publication.persist && llmEligible && evidencePack.items.length > 0) {
-      saveAgentBubble(learner.id, runId, 'resource_generation', '资源生成智能体', '修订后仍未通过，为保证可追溯性，改用内置结构模板重新生成。');
-      resource = buildResourceDraft(`study-${Date.now()}`, input.content, input.resourceType, evidencePack, input.pathNode?.knowledgePointId);
-      outcome = auditOnce(resource);
-    }
-    const { result: finalAudit, publication: finalPublication, audited: auditedResource } = outcome;
-    if (finalPublication.persist) learningStore.saveAsset(learner.id, undefined, auditedResource);
-    saveAgentBubble(learner.id, runId, 'cross_validation', '交叉验证与审核 Agent',
-      `${auditNarrative(finalAudit, '最终：')}${finalPublication.persist ? '通过发布门禁，资源已入库。' : '仍未通过发布门禁，本资源不作为已审核资产发布。'}`);
-    saveAgentBubble(learner.id, runId, 'privacy_compliance', '合规与隐私 Agent',
-      input.temporaryReference
-        ? `本次使用了上传的临时参考《${input.temporaryReference.name}》：仅用于当前任务，不写入知识库、不进入画像，原文不保存。`
-        : '未检测到上传资料，无隐私边界问题。');
-
-    // 7) 资产卡片与总控收尾
-    learningStore.saveChatMessage(learner.id, 'assistant', finalPublication.persist ? `已生成《${auditedResource.title}》` : `《${auditedResource.title}》待复核，未入库`, {
-      surface: 'study', kind: 'asset', runId,
-      pathNodeId: input.pathNode?.id ?? null, resourceType: input.resourceType,
-      asset: { id: auditedResource.id, title: auditedResource.title, type: auditedResource.type, auditStatus: auditedResource.auditStatus, persisted: finalPublication.persist },
-      evidence: { count: evidencePack.items.length, score: evidencePack.coverageScore, crossValidation: finalAudit.summary.status },
-    });
-    saveAgentBubble(learner.id, runId, 'orchestrator', '协同总控 Agent',
-      finalPublication.persist
-        ? `本次协同完成：证据 ${evidencePack.items.length} 条，审核声明 ${finalAudit.claims.length} 条，用时 ${Math.max(1, Math.round((Date.now() - startedAt) / 1000))} 秒。去「资源」页阅读《${auditedResource.title}》，或继续 @ 节点让我调整。`
-        : `本次协同未产出已审核资产（发布门禁未通过）。建议补充更具体的设备数据关键词（如“压力传感器 异常 现场复核”）再试一次。`);
-    learningStore.recordLearningEvent(learner.id, 'study_run_completed', {
-      runId, pathNodeId: input.pathNode?.id ?? null, resourceType: input.resourceType,
-      persisted: finalPublication.persist, evidenceCount: evidencePack.items.length, claims: finalAudit.claims.length,
-      durationMs: Date.now() - startedAt,
-    });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    saveAgentBubble(learner.id, runId, 'orchestrator', '协同总控 Agent',
-      `协同执行中断：${message.slice(0, 160)}。请重试，或换个更具体的任务描述。`);
-    learningStore.recordLearningEvent(learner.id, 'study_run_failed', { runId, error: message.slice(0, 300), durationMs: Date.now() - startedAt });
-  }
-}
-
-app.post('/api/learning/study/chat', (req, res) => {
+app.get('/api/learning/diagnostic', (req, res) => {
   const learner = requireLearner(req, res);
   if (!learner) return;
-  const content = typeof req.body?.content === 'string' ? req.body.content.trim().slice(0, 12_000) : '';
-  const pathNodeId = typeof req.body?.pathNodeId === 'string' ? req.body.pathNodeId : '';
-  const resourceType: LearningResourceType = isLearningResourceType(req.body?.resourceType) ? req.body.resourceType : 'lecture';
-  const collaborationPreference = req.body?.collaborationPreference === 'custom' ? 'custom' : 'auto';
-  const selectedAgentIds = Array.isArray(req.body?.selectedAgentIds)
-    ? req.body.selectedAgentIds.filter((id: unknown): id is LearningAgentId => typeof id === 'string' && (LEARNING_AGENT_IDS as readonly string[]).includes(id))
-    : [];
-  const temporaryReference = req.body?.temporaryReference && typeof req.body.temporaryReference === 'object'
-    ? {
-        name: typeof req.body.temporaryReference.name === 'string' ? req.body.temporaryReference.name : '临时参考资料',
-        content: typeof req.body.temporaryReference.content === 'string' ? req.body.temporaryReference.content.slice(0, 120_000) : '',
-      }
-    : undefined;
-  if (!content) {
-    res.status(400).json({ success: false, error: '请输入要生成的学习资源或问题' });
-    return;
-  }
-  if (activeStudyRuns.has(learner.id)) {
-    res.status(409).json({ success: false, error: '已有一个协同任务进行中，请等它完成后再发起' });
-    return;
-  }
-  const pathNode = learningStore.getPathGraph(learner.id).nodes.find((node) => node.id === pathNodeId) ?? null;
-  learningStore.saveChatMessage(learner.id, 'user', content, {
-    surface: 'study', pathNodeId: pathNode?.id ?? null, resourceType,
+  // 答案与解析不下发，判分只发生在服务端
+  res.json({
+    success: true,
+    questions: DIAGNOSTIC_QUESTIONS.map((question) => ({
+      id: question.id, code: question.code, dimension: question.dimension,
+      level: question.level, prompt: question.prompt, options: question.options,
+    })),
+    latest: learningStore.getLatestDiagnosticSession(learner.id),
   });
-  const runId = `study-run-${randomUUID()}`;
-  activeStudyRuns.set(learner.id, { runId, startedAt: Date.now() });
-  void executeStudyRun(learner, { content, pathNode, resourceType, collaborationPreference, selectedAgentIds, temporaryReference }, runId)
-    .finally(() => activeStudyRuns.delete(learner.id));
-  res.json({ success: true, runId, running: true });
 });
 
+app.post('/api/learning/diagnostic-attempts', (req, res) => {
+  const learner = requireLearner(req, res);
+  if (!learner) return;
+  const answers = Array.isArray(req.body?.answers) ? req.body.answers : [];
+  if (answers.length === 0) {
+    res.status(400).json({ success: false, error: '请提交诊断作答' });
+    return;
+  }
+  const result = scoreDiagnostic(answers as Array<{ questionId: string; answerId: string; durationMs?: number }>);
+  if (result.total === 0) {
+    res.status(400).json({ success: false, error: '作答未匹配任何诊断题' });
+    return;
+  }
+  for (const observation of result.byKnowledgePoint) {
+    learningStore.applySkillObservation(learner.id, observation.knowledgePointId, observation.correct, 'diagnostic');
+  }
+  const sessionId = learningStore.saveDiagnosticSession(
+    learner.id,
+    result,
+    result.items.map((item) => ({
+      questionId: item.question.id, answerId: item.answerId,
+      correct: item.correct, durationMs: item.durationMs,
+    })),
+  );
+  res.json({
+    success: true,
+    sessionId,
+    total: result.total,
+    correct: result.correct,
+    byDimension: result.byDimension,
+    review: result.items.map((item) => ({
+      questionId: item.question.id, prompt: item.question.prompt,
+      yourAnswer: item.answerId, correctAnswer: item.question.answerId,
+      correct: item.correct, explanation: item.question.explanation,
+    })),
+    profile: learningStore.getProfile(learner.id),
+  });
+});
 app.post('/api/auth/register', (req, res) => {
   try {
     const user = identityStore.register({
