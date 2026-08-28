@@ -12,7 +12,6 @@ import {
   Network,
   Paperclip,
   Send,
-  Settings,
   Sparkles,
   UserRound,
   X,
@@ -220,7 +219,7 @@ export function LearningWorkbench({ apiBase, user, onLogout, onNavigate }: Learn
   return <main className={`flex h-screen min-h-0 flex-col overflow-hidden bg-background ${resizing ? "select-none" : ""}`}>
     <header className="flex h-16 shrink-0 items-center justify-between border-b px-5 sm:px-7">
       <button type="button" onClick={() => setProfileOpen(true)} className="flex min-w-0 items-center gap-2.5 text-left" aria-label="打开学习画像"><span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-semibold ${avatarClasses[user.avatarKey]}`}>{user.displayName.slice(0, 1).toUpperCase()}</span><span className="min-w-0"><span className="block text-sm font-semibold tracking-tight">IM-Training-Agent</span><span className="block text-[11px] text-muted-foreground">{user.displayName} · 学习画像</span></span></button>
-      <nav aria-label="学习空间" className="flex items-center rounded-lg border bg-muted/40 p-1 text-sm"><button type="button" onClick={() => setSettingsOpen(true)} className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-muted-foreground hover:text-foreground"><Settings className="h-3.5 w-3.5" />设置</button><button type="button" onClick={() => onNavigate("path")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">路径</button><button type="button" className="rounded-md bg-background px-4 py-1.5 font-medium shadow-sm">学习</button><button type="button" onClick={() => onNavigate("resources")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">资源</button></nav>
+      <nav aria-label="学习空间" className="flex items-center rounded-lg border bg-muted/40 p-1 text-sm"><button type="button" onClick={() => setSettingsOpen(true)} className="rounded-md px-3 py-1.5 text-muted-foreground hover:text-foreground">设置</button><button type="button" onClick={() => onNavigate("path")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">路径</button><button type="button" className="rounded-md bg-background px-4 py-1.5 font-medium shadow-sm">学习</button><button type="button" onClick={() => onNavigate("resources")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">资源</button></nav>
       <button type="button" onClick={logout} className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-2 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"><LogOut className="h-3.5 w-3.5" />退出</button>
     </header>
 
