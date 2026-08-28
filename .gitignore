@@ -27,6 +27,7 @@ server/public/*.txt
 data/datasets/metropt/MetroPT3(AirCompressor).csv
 data/migration-report-*.json
 data/evaluation-report-*.json
+data/embeddings-cache.json
 
 # IDE
 .vscode/

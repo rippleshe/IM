@@ -120,3 +120,13 @@
 - 资源页反馈区不再止步于三档掌握反馈：新增“按这份讲义/资源的薄弱点生成练习”按钮，一键携带资源标题、掌握反馈与知识点跳转到学习页。
 - 学习页消费预填任务：自动填入任务草稿、切换资源类型为分层习题、按知识点自动关联路径节点，用户确认后即可发起针对性协同。
 - 闭环补全：讲义反馈 → 针对性练习 → 后端判分 → 技能状态 → 路径节点建议，反馈从死胡同变成学习循环的入口。
+
+# 2026-08-28 知识库大规模充实：官方文档抓取管线 + 切块 + 向量回填
+
+- 针对知识库过薄的问题（此前仅 ~37 条手写切片）建立可重复的抓取管线 `scripts/ingest-docs.ts`（pnpm docs:ingest）：抓取权威公开文档 → 主内容抽取（node-html-parser 多选择器 + 去 script/侧栏/¶锚点）→ Markdown 化（node-html-markdown）→ 围栏感知逐行清洗（去图片/链接语法/导航句）→ frontmatter 卡片落盘 data/knowledge/。
+- 数据来源 15 个全部入库：pandas 用户指南 6 篇（10min/索引/分组/缺失数据/时间序列/滑动窗口）、matplotlib 3 篇（pyplot/快速上手/直方图）、Python 官方教程 3 篇（控制流/数据结构/异常）、scikit-learn 离群检测（含孤立森林）、UCI API 2 个数据集（AI4I-2020、MetroPT-3：绕开页面对直接抓取的 403，改用官方 JSON API 拿结构化元数据——简介/字段表/引用论文；MetroPT-3 正确 ID 是 791）。
+- 知识导入器升级（src/learning/knowledge-import.ts）：1 卡 = 1 切片改为按 `##` 章节切块（≤1200 字符装箱、代码围栏不从中截断、<160 字符碎片并入前片、切片标题携带章节锚点），幂等整体重导。
+- TERM_ALIASES 新增 20+ 中文→英文检索别名（直方图/箱线图/滑动窗口/缺失值/分组/重采样/孤立森林/索引等），FTS 'simple' 分词器无法切中文的问题由别名桥接。
+- `scripts/embed-documents.ts`（pnpm docs:embed）：SQLite 受管切片全量同步 PG document_chunks（含 search_text），DashScope text-embedding-v4 1024 维向量回填，按 sha256(正文) 做缓存（data/embeddings-cache.json，已 gitignore）避免重复计费。
+- 结果：SQLite document_chunks 616 条（knowledge-cards 593 + metropt-3 目录 23）；PG 全量同步且 616/616 带向量。中文语义检索冒烟（"缺失值/直方图/滑动窗口/孤立森林"）余弦命中对应官方文档章节 0.63-0.78；FTS+别名路径同样全中。
+- 验证：pnpm evaluate 难度匹配 100%、覆盖 100%（现在建立在真实语料上）；typecheck 0 错、115 测试全过；服务与 worker 已重启加载新语料。

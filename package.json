@@ -67,6 +67,8 @@
     "migrate:sqlite-to-pg": "tsx scripts/migrate-sqlite-to-pg.ts",
     "demo:seed": "tsx scripts/demo-seed.ts",
     "evaluate": "tsx scripts/evaluate.ts",
+    "docs:ingest": "tsx scripts/ingest-docs.ts",
+    "docs:embed": "tsx scripts/embed-documents.ts",
     "worker": "tsx server/worker.ts",
     "start": "node dist/server.js"
   },
@@ -120,6 +122,8 @@
     "drizzle-orm": "^0.45.2",
     "express": "^5.2.1",
     "ioredis": "^6.0.0",
+    "node-html-markdown": "^2.0.0",
+    "node-html-parser": "^9.0.1",
     "openai": "^6.39.1",
     "pg": "^8.23.0",
     "pg-copy-streams": "^7.0.0"
