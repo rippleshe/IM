@@ -311,6 +311,12 @@ export function initializeDatasetDatabase(db: SqliteDatabase): void {
       end_at TEXT NOT NULL,
       source_locator TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS dataset_rows (
+      dataset_id TEXT NOT NULL,
+      row_id INTEGER NOT NULL,
+      data_json TEXT NOT NULL,
+      PRIMARY KEY (dataset_id, row_id)
+    );
     CREATE TABLE IF NOT EXISTS document_chunks (
       id TEXT PRIMARY KEY,
       source_id TEXT NOT NULL,
@@ -322,6 +328,7 @@ export function initializeDatasetDatabase(db: SqliteDatabase): void {
     );
     CREATE INDEX IF NOT EXISTS idx_metro_timestamp ON metro_readings(timestamp);
     CREATE INDEX IF NOT EXISTS idx_document_source ON document_chunks(source_id);
+    CREATE INDEX IF NOT EXISTS idx_dataset_rows ON dataset_rows(dataset_id, row_id);
   `);
 
   try {

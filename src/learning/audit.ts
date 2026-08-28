@@ -34,6 +34,8 @@ function hasNumericSupport(text: string, evidenceText: string): boolean {
 export function auditResource(resource: ResourceDocument, pack: EvidencePack): ResourceAuditResult {
   const claims: ClaimAuditRecord[] = [];
   resource.blocks.forEach((block) => {
+    // 代码示例是操作说明，数据表格是证据摘录；两者都不是需要逐条核对的事实声明。
+    if (block.type === 'code' || block.type === 'table') return;
     claimText(block.content).forEach((text) => {
       const evidenceIds = block.evidenceIds.filter((id) => pack.items.some((item) => item.id === id));
       const evidenceText = evidenceIds

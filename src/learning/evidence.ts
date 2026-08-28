@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { SqliteDatabase } from './sqlite.js';
 import { getMetroSummary, queryMetroReadings } from './metropt3.js';
+import { getDatasetRowCount, sampleDatasetRows } from './tabular.js';
 import type {
   CrossValidationResult,
   DatasetSummary,
@@ -24,6 +25,14 @@ const TERM_ALIASES: Record<string, string[]> = {
   '维护': ['maintenance', 'predictive maintenance'],
   '预测': ['prediction', 'predictive maintenance'],
   '数据': ['dataset', 'data'],
+  '编程': ['python', 'code'],
+  '代码': ['python', 'code'],
+  '清洗': ['data cleaning', 'pandas'],
+  '分析': ['pandas', 'analysis'],
+  '统计': ['statistics', 'describe'],
+  '可视化': ['matplotlib', 'visualization'],
+  '扭矩': ['torque'],
+  '转速': ['rotational speed'],
 };
 
 interface TemporaryReference {
@@ -75,10 +84,13 @@ function documentRows(datasetDb: SqliteDatabase, terms: string[]): Array<{ id: s
   const likeParams = terms.flatMap((term) => [`%${term}%`, `%${term}%`]);
   try {
     const query = terms.map((term) => `"${term.replaceAll('"', '')}"`).join(' OR ');
+    // FTS 虚表只有索引列，业务列需要回联 document_chunks；bm25 分数越低相关度越高。
     const rows = datasetDb.prepare(`
-      SELECT id, source_id AS sourceId, source_path AS sourcePath, locator, title, content
-      FROM document_chunks_fts
+      SELECT c.id, c.source_id AS sourceId, c.source_path AS sourcePath, c.locator, c.title, c.content
+      FROM document_chunks_fts f
+      JOIN document_chunks c ON c.id = f.id
       WHERE document_chunks_fts MATCH ?
+      ORDER BY bm25(document_chunks_fts)
       LIMIT 8
     `).all(query) as Array<{ id: string; sourceId: string; sourcePath: string; locator: string; title: string; content: string }>;
     if (rows.length > 0) return rows;
@@ -107,6 +119,48 @@ function searchDocuments(datasetDb: SqliteDatabase, terms: string[]): EvidenceIt
     scope: 'system' as EvidenceScope,
     metadata: { title: row.title, termsMatched: terms.length },
   }));
+}
+
+function genericDatasetEvidence(datasetDb: SqliteDatabase): EvidenceItem[] {
+  const datasets = datasetDb.prepare(`
+    SELECT d.id, d.name, d.source_path AS sourcePath
+    FROM datasets d JOIN dataset_rows r ON r.dataset_id = d.id
+    GROUP BY d.id ORDER BY d.id
+  `).all() as Array<{ id: string; name: string; sourcePath: string }>;
+  const items: EvidenceItem[] = [];
+  for (const dataset of datasets) {
+    const rowCount = getDatasetRowCount(datasetDb, dataset.id);
+    if (rowCount === 0) continue;
+    items.push({
+      id: `evidence-${randomUUID()}`,
+      sourceType: 'dataset',
+      sourceId: dataset.id,
+      sourceTitle: `${dataset.name} 数据集`,
+      locator: `datasets.sqlite:datasets.id=${dataset.id}`,
+      content: JSON.stringify({ dataset: dataset.name, rowCount, retrieval: '按标签抽样故障样本与正常样本' }),
+      retrievalMethod: 'sql',
+      relevanceScore: 0.9,
+      trustLevel: 'high',
+      scope: 'system',
+      metadata: { queryKind: 'dataset_summary', rowCount },
+    });
+    sampleDatasetRows(datasetDb, dataset.id, 3).forEach((row, index) => {
+      items.push({
+        id: `evidence-${randomUUID()}`,
+        sourceType: 'dataset',
+        sourceId: dataset.id,
+        sourceTitle: `${dataset.name} 代表性数据行`,
+        locator: `datasets.sqlite:dataset_rows.dataset_id=${dataset.id}&row_id=${row.rowId}`,
+        content: JSON.stringify(row.fields),
+        retrievalMethod: 'sql',
+        relevanceScore: Math.max(0.6, 0.84 - index * 0.04),
+        trustLevel: 'high',
+        scope: 'system',
+        metadata: { queryKind: 'dataset_row', rowId: row.rowId },
+      });
+    });
+  }
+  return items;
 }
 
 function structuredEvidence(datasetDb: SqliteDatabase): EvidenceItem[] {
@@ -144,7 +198,7 @@ function structuredEvidence(datasetDb: SqliteDatabase): EvidenceItem[] {
     scope: 'system' as EvidenceScope,
     metadata: { queryKind: 'recent_rows', rowId: row.rowId, timestamp: row.timestamp },
   }));
-  return [summaryItem, ...rowItems];
+  return [summaryItem, ...rowItems, ...genericDatasetEvidence(datasetDb)];
 }
 
 function crossValidate(items: EvidenceItem[]): CrossValidationResult {
@@ -361,6 +415,10 @@ export function seedMetroCatalog(datasetDb: SqliteDatabase): void {
   failureWindows.forEach(([id, title, content, locator]) => {
     insertChunk.run(id, 'metropt-3', 'raw/MetroPT-3.zip::Data Description_Metro.pdf', title, content, locator, 'high');
   });
+}
+
+// FTS 全量重建放在所有文档来源（MetroPT-3 目录、知识卡）入库之后调用。
+export function rebuildDocumentFts(datasetDb: SqliteDatabase): void {
   try {
     datasetDb.exec('DELETE FROM document_chunks_fts');
     datasetDb.exec(`

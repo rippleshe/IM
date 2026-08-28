@@ -60,7 +60,7 @@ export interface EvidencePack {
 
 export interface ResourceBlock {
   id: string;
-  type: 'heading' | 'paragraph' | 'list' | 'table' | 'callout' | 'question' | 'checklist' | 'evidence';
+  type: 'heading' | 'paragraph' | 'list' | 'table' | 'code' | 'callout' | 'question' | 'checklist' | 'evidence';
   position: number;
   content: unknown;
   knowledgePointIds: string[];

@@ -303,7 +303,9 @@ import {
   type PersistedWorkflowResult,
 } from './session-store.js';
 import { openSqlite, getDatasetDatabasePath, getLearningDatabasePath, initializeDatasetDatabase, initializeLearningDatabase } from '../src/learning/sqlite.js';
-import { EvidenceService, seedMetroCatalog } from '../src/learning/evidence.js';
+import { EvidenceService, rebuildDocumentFts, seedMetroCatalog } from '../src/learning/evidence.js';
+import { importKnowledgeCards } from '../src/learning/knowledge-import.js';
+import { importCsvDataset } from '../src/learning/tabular.js';
 import { IdentityStore, type AuthenticatedLearner, type OnboardingInput } from '../src/learning/identity.js';
 import { LearningStore, type LearningPathEdgeView, type LearningPathRevisionInput } from '../src/learning/store.js';
 import { buildResourceDraft } from '../src/learning/resource-builder.js';
@@ -343,6 +345,32 @@ const datasetDb = openSqlite(getDatasetDatabasePath());
 initializeLearningDatabase(learningDb);
 initializeDatasetDatabase(datasetDb);
 seedMetroCatalog(datasetDb);
+importCsvDataset(datasetDb, {
+  id: 'ai4i-2020',
+  name: 'AI4I 2020 Predictive Maintenance',
+  csvPath: path.resolve(process.cwd(), 'data', 'datasets', 'ai4i', 'ai4i_2020.csv'),
+  sourcePath: 'IM-Training-Agent-datasets/raw/AI4I_2020.zip::ai4i2020.csv',
+  license: 'UCI AI4I 2020（引用以官方页面为准）',
+  labelFields: ['Machine failure', 'TWF', 'HDF', 'PWF', 'OSF', 'RNF'],
+  fieldMeanings: {
+    'UDI': '样本编号',
+    'Product ID': '产品编号，首字母 L/M/H 对应低/中/高质量等级',
+    'Type': '产品质量等级 L/M/H',
+    'Air temperature [K]': '环境温度',
+    'Process temperature [K]': '工艺温度',
+    'Rotational speed [rpm]': '主轴转速',
+    'Torque [Nm]': '扭矩',
+    'Tool wear [min]': '刀具累计磨损时间',
+    'Machine failure': '机器故障总标签（1 表示本次记录发生故障）',
+    'TWF': '刀具磨损故障',
+    'HDF': '散热故障（温差过小或转速过低）',
+    'PWF': '功率故障（转速与扭矩乘积偏离额定范围）',
+    'OSF': '过应力故障（扭矩与磨损过大）',
+    'RNF': '随机故障',
+  },
+});
+importKnowledgeCards(datasetDb);
+rebuildDocumentFts(datasetDb);
 const evidenceService = new EvidenceService(datasetDb, learningDb);
 const learningStore = new LearningStore(learningDb);
 const identityStore = new IdentityStore(learningDb);
@@ -364,6 +392,18 @@ function resourceToMarkdown(resource: ResourceDocument): string {
     } else if (block.type === 'evidence') {
       const content = block.content as { label?: string; locator?: string; summary?: string };
       lines.push(`> ${content.label ?? '证据'}：${content.locator ?? ''}`, '', String(content.summary ?? ''), '');
+    } else if (block.type === 'code') {
+      const content = block.content as { language?: string; caption?: string; code?: string };
+      lines.push(content.caption ? `**${content.caption}**` : '', `\`\`\`${content.language ?? ''}`, String(content.code ?? ''), '```', '');
+    } else if (block.type === 'table') {
+      const content = block.content as { caption?: string; columns?: string[]; rows?: Array<Array<string | number | null>>; sources?: string[] };
+      if (Array.isArray(content.columns) && Array.isArray(content.rows)) {
+        if (content.caption) lines.push(`**${content.caption}**`, '');
+        lines.push(`| ${content.columns.join(' | ')} |`, `| ${content.columns.map(() => '---').join(' | ')} |`);
+        content.rows.forEach((row) => lines.push(`| ${row.map((cell) => (cell === null ? '—' : String(cell))).join(' | ')} |`));
+        if (content.sources?.length) lines.push('', `> 来源：${content.sources.join('；')}`);
+        lines.push('');
+      }
     } else {
       lines.push(typeof block.content === 'string' ? block.content : `\`\`\`json\n${JSON.stringify(block.content, null, 2)}\n\`\`\``, '');
     }

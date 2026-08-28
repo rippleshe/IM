@@ -68,7 +68,13 @@ function renderBlockContent(block: ResourceBlock) {
   if (typeof block.content === "string") return <p className="whitespace-pre-wrap text-sm leading-7 text-muted-foreground">{block.content}</p>;
   if (Array.isArray(block.content)) return <ul className="space-y-2 pl-1 text-sm leading-6 text-muted-foreground">{block.content.map((item, index) => <li key={index} className="flex gap-2"><span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-foreground/45" />{String(item)}</li>)}</ul>;
   if (block.content && typeof block.content === "object") {
-    const data = block.content as { label?: string; locator?: string; summary?: string };
+    const data = block.content as { label?: string; locator?: string; summary?: string; language?: string; caption?: string; code?: string; columns?: unknown; rows?: unknown; sources?: string[] };
+    if (Array.isArray(data.columns) && Array.isArray(data.rows)) {
+      return <div className="overflow-hidden rounded-xl border"><div className="border-b bg-muted/30 px-4 py-2.5 text-xs font-medium">{data.caption ?? "数据摘录"}</div><div className="overflow-x-auto"><table className="w-full text-left text-xs"><thead><tr className="border-b bg-muted/15 text-muted-foreground">{(data.columns as string[]).map((column) => <th key={column} className="whitespace-nowrap px-3 py-2 font-medium">{column}</th>)}</tr></thead><tbody>{(data.rows as Array<Array<string | number | null>>).map((row, rowIndex) => <tr key={rowIndex} className="border-b last:border-b-0">{row.map((cell, cellIndex) => <td key={cellIndex} className="whitespace-nowrap px-3 py-2 font-mono text-[11px] text-muted-foreground">{cell === null ? "—" : String(cell)}</td>)}</tr>)}</tbody></table></div>{data.sources?.length ? <div className="border-t bg-muted/15 px-4 py-2 font-mono text-[10px] text-muted-foreground">{data.sources[0]}</div> : null}</div>;
+    }
+    if (typeof data.code === "string") {
+      return <figure className="overflow-hidden rounded-xl border bg-zinc-950"><figcaption className="flex items-center justify-between border-b border-zinc-800 px-4 py-2.5 text-xs text-zinc-300"><span className="font-medium">{data.caption ?? "代码示例"}</span><span className="font-mono text-[10px] text-zinc-500">{data.language ?? "python"}</span></figcaption><pre className="overflow-x-auto px-4 py-4 text-xs leading-6 text-zinc-100"><code>{data.code}</code></pre></figure>;
+    }
     if (data.summary || data.locator) return <div className="rounded-xl border bg-muted/30 p-4"><div className="text-xs font-medium">{data.label ?? "证据"}</div><p className="mt-2 text-sm leading-6 text-muted-foreground">{data.summary}</p>{data.locator ? <div className="mt-3 font-mono text-[11px] text-muted-foreground">{data.locator}</div> : null}</div>;
   }
   return <p className="text-sm text-muted-foreground">该部分暂时没有可显示内容。</p>;
@@ -90,7 +96,7 @@ function buildLecturePages(asset: ResourceAsset): LecturePage[] {
   const pages: LecturePage[] = [{ key: "overview", title: "学习概览", blocks: opening }];
   remaining.forEach((block, index) => pages.push({
     key: `block-${block.id}`,
-    title: block.type === "evidence" ? `证据参考 ${index}` : block.type === "question" ? "思考与练习" : `学习内容 ${index}`,
+    title: block.type === "evidence" ? `证据参考 ${index}` : block.type === "question" ? "思考与练习" : block.type === "code" ? "代码示例" : block.type === "table" ? "数据摘录" : `学习内容 ${index}`,
     blocks: [block],
   }));
   return pages.filter((page) => page.blocks.length > 0);
@@ -179,14 +185,14 @@ export function ResourceWorkbench({ apiBase, user, onLogout, onNavigate }: Resou
       <button type="button" onClick={logout} className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-2 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"><LogOut className="h-3.5 w-3.5" />退出</button>
     </header>
 
-    <div className="flex min-h-0 min-w-[1040px] flex-1 overflow-hidden">
-      <aside className={`flex shrink-0 overflow-hidden border-r bg-card transition-[width] duration-200 ${catalogOpen ? "w-[316px]" : "w-11"}`} aria-label="学习资产目录">
-        <div className="flex w-11 shrink-0 flex-col items-center border-r bg-muted/20 py-3">
-          <button type="button" onClick={() => setCatalogOpen((open) => !open)} className="mb-4 flex h-8 w-8 items-center justify-center rounded-lg hover:bg-muted" aria-label={catalogOpen ? "收起资源目录" : "展开资源目录"}>{catalogOpen ? <PanelLeftClose className="h-4 w-4" /> : <PanelLeftOpen className="h-4 w-4" />}</button>
+    <div className="relative flex min-h-0 min-w-[1040px] flex-1 overflow-hidden">
+      <aside className={`absolute inset-y-0 left-0 z-30 flex w-[316px] overflow-hidden border-r bg-card shadow-xl transition-transform duration-200 ${catalogOpen ? "translate-x-0" : "-translate-x-[316px]"}`} aria-label="学习资产目录">
+        <div className="flex w-11 shrink-0 flex-col items-center border-r bg-muted/20 pt-3">
           <div className="space-y-2">{typeItems.map((item) => { const Icon = item.icon; const active = activeType === item.type; return <button key={item.type} type="button" onClick={() => { setCatalogOpen(true); selectType(item.type); }} title={item.label} className={`flex h-9 w-9 items-center justify-center rounded-lg transition-colors ${active ? "bg-foreground text-background" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}><Icon className="h-4 w-4" /></button>; })}</div>
         </div>
         {catalogOpen ? <div className="flex min-w-0 flex-1 flex-col"><div className="flex h-14 shrink-0 items-center justify-between border-b px-4"><div><div className="text-sm font-semibold">{typeLabel(activeType)}</div><div className="mt-0.5 text-[11px] text-muted-foreground">{activeAssets.length} 份</div></div></div><div className="min-h-0 flex-1 overflow-y-auto p-3">{loading ? <div className="px-2 py-4 text-xs text-muted-foreground">正在读取资源</div> : activeAssets.length === 0 ? <div className="rounded-xl border border-dashed px-3 py-8 text-center text-xs leading-5 text-muted-foreground">还没有{typeLabel(activeType)}。<br />从学习页生成后会自动入库。</div> : <div className="space-y-2">{activeAssets.map((asset) => <article key={asset.id} className={`group rounded-xl border p-3 transition-colors ${selectedId === asset.id ? "border-foreground/35 bg-muted/50" : "hover:border-foreground/25"}`}><button type="button" onClick={() => setSelectedId(asset.id)} className="block w-full text-left"><div className="line-clamp-2 text-xs font-semibold leading-5">{asset.title}</div><div className="mt-2 text-[10px] text-muted-foreground">{new Intl.DateTimeFormat("zh-CN", { month: "numeric", day: "numeric" }).format(asset.createdAt)}</div></button><button type="button" onClick={() => void deleteAsset(asset)} className="mt-2 inline-flex items-center gap-1 text-[10px] text-muted-foreground opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100"><Trash2 className="h-3 w-3" />删除</button></article>)}</div>}</div></div> : null}
       </aside>
+      <button type="button" onClick={() => setCatalogOpen((open) => !open)} style={{ transform: `translateX(${catalogOpen ? 316 : 0}px)` }} className="absolute left-0 top-3 z-40 flex h-9 w-9 items-center justify-center rounded-r-lg border border-l-0 bg-card shadow-sm transition-transform duration-200 hover:bg-muted" aria-label={catalogOpen ? "隐藏资源导航" : "显示资源导航"}>{catalogOpen ? <PanelLeftClose className="h-4 w-4" /> : <PanelLeftOpen className="h-4 w-4" />}</button>
 
       <section className="flex min-w-[460px] flex-1 flex-col overflow-hidden bg-card" aria-label="资源阅读与作答">
         {notice ? <div className="shrink-0 border-b border-destructive/20 bg-destructive/5 px-5 py-2 text-xs text-destructive">{notice}</div> : null}

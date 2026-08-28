@@ -1,12 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { normalizeKnowledgePointId } from './store.js';
-import type { EvidencePack, LearningResourceType, QuizQuestion, ResourceBlock, ResourceDocument } from './types.js';
+import type { EvidenceItem, EvidencePack, LearningResourceType, QuizQuestion, ResourceBlock, ResourceDocument } from './types.js';
 
-function evidenceBlocks(pack: EvidencePack, knowledgePointId: string, positionOffset = 2): ResourceBlock[] {
+function evidenceBlocks(pack: EvidencePack, knowledgePointId: string): ResourceBlock[] {
   return pack.items.slice(0, 6).map((item, index) => ({
     id: `resource-block-${randomUUID()}`,
-    type: 'evidence',
-    position: index + positionOffset,
+    type: 'evidence' as const,
+    position: index + 2,
     content: {
       label: item.sourceType === 'dataset' ? '数据样本' : '领域说明',
       locator: item.locator,
@@ -15,6 +15,59 @@ function evidenceBlocks(pack: EvidencePack, knowledgePointId: string, positionOf
     knowledgePointIds: [knowledgePointId],
     evidenceIds: [item.id],
   }));
+}
+
+const isRowEvidence = (item: EvidenceItem): boolean => item.sourceType === 'dataset'
+  && (item.metadata?.['queryKind'] === 'recent_rows' || item.metadata?.['queryKind'] === 'dataset_row');
+
+// 按查询主题优先选择对应数据集，让讲义里的代码示例与数据摘录保持一致。
+const DATASET_HINTS: Array<[string, RegExp]> = [
+  ['ai4i-2020', /pandas|python|csv|代码|编程|预测性维护|扭矩|转速|刀具|质量等级|machine\s*failure/i],
+  ['metropt-3', /压缩机|compressor|泄漏|leak|压力|pressure|油温|oil|时序|传感器|干燥塔/i],
+];
+
+// 从结构化证据里挑代表性数据行，生成讲义中的“数据摘录”表格：主标签列在前，其次时间列，再是普通字段。
+function representativeTable(pack: EvidencePack): { caption: string; columns: string[]; rows: Array<Array<string | number | null>>; sources: string[]; evidenceIds: string[] } | null {
+  const allRowItems = pack.items.filter(isRowEvidence);
+  let rowItems = allRowItems.slice(0, 3);
+  for (const [datasetId, hint] of DATASET_HINTS) {
+    if (!hint.test(pack.query)) continue;
+    const preferred = allRowItems.filter((item) => item.sourceId === datasetId);
+    if (preferred.length > 0) rowItems = preferred.slice(0, 3);
+    break;
+  }
+  const evidenceIds = rowItems.map((item) => item.id);
+  const parsed = rowItems.flatMap((item) => {
+    try { return [JSON.parse(item.content) as Record<string, unknown>]; } catch { return []; }
+  });
+  if (parsed.length === 0) return null;
+  const firstRecord = parsed[0];
+  if (!firstRecord) return null;
+  const keys = Object.keys(firstRecord);
+  const labelKeys = keys.filter((key) => /failure|fault|异常|故障/i.test(key));
+  const isTime = (key: string) => /timestamp|time|时间/i.test(key);
+  const isIdLike = (key: string) => /^(udi|rowid|id|product id)$/i.test(key);
+  const isLabel = (key: string) => labelKeys.includes(key);
+  const ordered = [
+    ...keys.filter((key) => isLabel(key) && key === labelKeys[0]),
+    ...keys.filter(isTime),
+    ...keys.filter((key) => !isLabel(key) && !isTime(key) && !isIdLike(key)),
+    ...keys.filter(isIdLike),
+    ...keys.filter((key) => isLabel(key) && key !== labelKeys[0]),
+  ];
+  const columns = Array.from(new Set(ordered)).slice(0, 7);
+  const rows = parsed.map((record) => columns.map((column) => {
+    const value = record[column];
+    if (typeof value === 'string' && value.length > 22) return `${value.slice(0, 21)}…`;
+    return (value ?? null) as string | number | null;
+  }));
+  return {
+    caption: '代表性数据摘录：来自结构化数据集查询，可回溯到具体行',
+    columns,
+    rows,
+    sources: Array.from(new Set(rowItems.map((item) => item.locator))),
+    evidenceIds,
+  };
 }
 
 export function buildResourceDraft(
@@ -169,6 +222,46 @@ export function buildResourceDraft(
     });
   }
 
+  const analysisCodeBlock: ResourceBlock = {
+    id: `resource-block-${randomUUID()}`,
+    type: 'code',
+    position: 0,
+    content: {
+      language: 'python',
+      caption: '分析入门：用 pandas 观察设备数据',
+      code: [
+        'import pandas as pd',
+        '',
+        'df = pd.read_csv("ai4i_2020.csv")',
+        'print(df.shape)                              # 行数与列数',
+        'print(df.head())                             # 先看几行长什么样',
+        'print(df["Machine failure"].value_counts())  # 故障样本有多少',
+        '',
+        'failed = df[df["Machine failure"] == 1]',
+        'print(failed[["Air temperature [K]", "Torque [Nm]", "Tool wear [min]"]].describe())',
+      ].join('\n'),
+    },
+    knowledgePointIds: [knowledgePoint],
+    evidenceIds: [],
+  };
+  const table = representativeTable(pack);
+  const tableBlock: ResourceBlock | null = table ? {
+    id: `resource-block-${randomUUID()}`,
+    type: 'table',
+    position: 0,
+    content: table,
+    knowledgePointIds: [knowledgePoint],
+    evidenceIds: table.evidenceIds,
+  } : null;
+  const blocks = [
+    opening,
+    taskBlock,
+    ...extraBlocks,
+    ...(isLecture || type === 'practice_guide' ? [analysisCodeBlock] : []),
+    ...(tableBlock ? [tableBlock] : []),
+    ...evidenceBlocks(pack, knowledgePoint),
+  ];
+
   return {
     id: `resource-${randomUUID()}`,
     taskId,
@@ -187,7 +280,7 @@ export function buildResourceDraft(
       ? ['完成一次可追溯的小型诊断任务', '提交有边界的风险结论']
       : ['建立从数据证据到诊断行动的知识关系'],
     knowledgePointIds: [knowledgePoint],
-    blocks: [opening, taskBlock, ...extraBlocks, ...evidenceBlocks(pack, knowledgePoint, extraBlocks.length + 2)],
+    blocks: blocks.map((block, index) => ({ ...block, position: index })),
     evidenceIds: pack.items.map((item) => item.id),
     auditStatus: pack.items.length > 0 ? 'passed' : 'revise',
     createdAt: Date.now(),
