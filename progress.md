@@ -130,3 +130,13 @@
 - `scripts/embed-documents.ts`（pnpm docs:embed）：SQLite 受管切片全量同步 PG document_chunks（含 search_text），DashScope text-embedding-v4 1024 维向量回填，按 sha256(正文) 做缓存（data/embeddings-cache.json，已 gitignore）避免重复计费。
 - 结果：SQLite document_chunks 616 条（knowledge-cards 593 + metropt-3 目录 23）；PG 全量同步且 616/616 带向量。中文语义检索冒烟（"缺失值/直方图/滑动窗口/孤立森林"）余弦命中对应官方文档章节 0.63-0.78；FTS+别名路径同样全中。
 - 验证：pnpm evaluate 难度匹配 100%、覆盖 100%（现在建立在真实语料上）；typecheck 0 错、115 测试全过；服务与 worker 已重启加载新语料。
+
+# 2026-08-28 浏览器实测三演示账号 + 演示链路打磨
+
+- 用浏览器内测工具全程 UI 实测：登录 → 建档 → 路径 → 学习页，三个演示账号全部通过。
+- 修复一：demo:seed 对已存在账号原来只复用不更新密码，换环境后旧密码失效；新增 IdentityStore.resetPassword，种子时把密码幂等同步为当前 IM_TRAINING_AGENT_DEMO_PASSWORD。
+- 修复二（演示主缺陷）：saveOnboarding 会把建档标志置 1，而种子不生成路径 → 账号登录后是"已建档但无路径"的死胡同。把首次路径生成逻辑（generateInitialPathGraph/fallbackPathGraph/normalizePathGraph）从 server/index.ts 抽为 server/initial-path.ts 共享模块，demo:seed 现在以 90 秒预算为每个账号预生成 LLM 个性化路径（超时回退内置 15 节点树）。
+- 实测差异化（LLM 定制路径，非回退树）：foundation 13 节点从"Python 变量入门"起步；advanced 12 节点直上 FFT/tsfresh/孤立森林/LSTM 自编码器/多算法比较；maintenance 14 节点走 SQL 日志/诊断决策树/结构化报告模板。
+- 浏览器实测注册流：注册 → 建档向导 → 工作台 15 节点路径，全链路通（建档端点 12 秒预算内 LLM 不及则回退内置树，现场演示即时可用；已留 live-demo 账号作为新用户全流程演示）。
+- 环境注意：.env 中含 # 的值必须加引号（dotenv 把 # 当行内注释），演示密码已改为带引号的 Zbt2026-Demo-Learner。
+- 验证：typecheck 0 错、115 测试全过、服务/worker 重启后登录正常。

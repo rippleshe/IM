@@ -8,6 +8,8 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { DIAGNOSTIC_QUESTIONS, scoreDiagnostic } from '../src/learning/diagnostic.js';
 import { identityStore, learningStore } from '../server/study-context.js';
+import { getAgentExecutionSettings, withTimeout } from '../server/study-runtime.js';
+import { fallbackPathGraph, generateInitialPathGraph, type GeneratedPathGraph } from '../server/initial-path.js';
 
 interface PersonaSeed {
   loginName: 'learner-foundation' | 'learner-advanced' | 'learner-maintenance';
@@ -89,7 +91,8 @@ async function main(): Promise<void> {
     const existing = lookupByLoginName(persona.loginName);
     if (existing) {
       learnerId = existing;
-      console.log(`[demo:seed] = ${persona.loginName} 已存在，复用（幂等）`);
+      identityStore.resetPassword(learnerId, password);
+      console.log(`[demo:seed] = ${persona.loginName} 已存在，密码已同步为当前 IM_TRAINING_AGENT_DEMO_PASSWORD（幂等）`);
     } else {
       const user = identityStore.register({ loginName: persona.loginName, displayName: persona.displayName, password });
       learnerId = user.id;
@@ -107,8 +110,24 @@ async function main(): Promise<void> {
       result.items.map((item) => ({ questionId: item.question.id, answerId: item.answerId, correct: item.correct, durationMs: item.durationMs })),
     );
     console.log(`[demo:seed]   诊断 ${result.correct}/${result.total} 正确，BKT 初始状态与路径先验已写入`);
+
+    // 种子阶段直接生成差异化路径：评委登录即见完整知识树，不必现场等待建档
+    const defaultRoute = getAgentExecutionSettings('learning_planning', undefined, undefined);
+    let pathGraph: GeneratedPathGraph;
+    try {
+      pathGraph = await withTimeout(
+        generateInitialPathGraph(persona.onboarding, defaultRoute.model, defaultRoute.thinking),
+        90_000,
+        '种子路径生成超时',
+      );
+    } catch (error) {
+      console.warn(`[demo:seed]   路径 LLM 生成回退为内置知识树（${error instanceof Error ? error.message : String(error)}）`);
+      pathGraph = fallbackPathGraph(persona.onboarding.goal);
+    }
+    learningStore.replacePathGraph(learnerId, pathGraph.nodes, pathGraph.edges);
+    console.log(`[demo:seed]   路径已生成：${pathGraph.nodes.length} 节点 / ${pathGraph.edges.length} 边`);
   }
-  console.log('[demo:seed] ✔ 三个差异化账号就绪：首次登录建档后将生成差异化路径');
+  console.log('[demo:seed] ✔ 三个差异化账号就绪：路径已预生成，评委登录即见差异化知识树');
   process.exit(0);
 }
 

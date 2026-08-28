@@ -103,6 +103,14 @@ export class IdentityStore {
     this.db.prepare('DELETE FROM auth_sessions WHERE token_hash = ?').run(hashToken(token));
   }
 
+  /** 演示种子幂等重置密码：已有演示账号一律以当前 IM_TRAINING_AGENT_DEMO_PASSWORD 为准。 */
+  resetPassword(learnerId: string, password: string): void {
+    const salt = randomBytes(16).toString('base64url');
+    const passwordHash = hashPassword(password, salt);
+    this.db.prepare('UPDATE users SET password_hash = ?, password_salt = ?, updated_at = ? WHERE id = ?')
+      .run(passwordHash, salt, Date.now(), learnerId);
+  }
+
   updateAvatar(learnerId: string, avatarKey: string): AuthenticatedLearner | null {
     const nextAvatar = normalizeAvatarKey(avatarKey);
     const now = Date.now();
