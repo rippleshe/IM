@@ -287,7 +287,7 @@ export function LearningPathWorkbench({ apiBase, user, onLogout, onNavigate }: L
   useEffect(() => { feedRef.current?.scrollTo({ top: feedRef.current.scrollHeight, behavior: "smooth" }); }, [messages, sending]);
 
   useEffect(() => {
-    fetch(`${apiBase}/api/settings`).then((response) => setServiceReady(response.ok)).catch(() => setServiceReady(false));
+    fetch(`${apiBase}/api/settings`, { credentials: "include" }).then((response) => setServiceReady(response.ok)).catch(() => setServiceReady(false));
   }, [apiBase]);
 
   const selectedNode = path.nodes.find((node) => node.id === selectedNodeId) ?? null;

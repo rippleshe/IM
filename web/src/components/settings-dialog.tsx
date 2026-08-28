@@ -81,7 +81,7 @@ export function SettingsDialog({ apiBase, onClose }: { apiBase: string; onClose:
 
   const loadSettings = useCallback(async () => {
     try {
-      const response = await fetch(`${apiBase}/api/settings`);
+      const response = await fetch(`${apiBase}/api/settings`, { credentials: "include" });
       const data = await response.json() as RuntimeSettings & { success?: boolean };
       if (!response.ok || !data.success) throw new Error("设置读取失败");
       setSettings(data);
@@ -99,7 +99,7 @@ export function SettingsDialog({ apiBase, onClose }: { apiBase: string; onClose:
     setSaving(true);
     setError("");
     try {
-      const response = await fetch(`${apiBase}/api/settings/default-execution`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ modelId: next.activeModel, thinkingDepth: next.defaultThinkingDepth }) });
+      const response = await fetch(`${apiBase}/api/settings/default-execution`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ modelId: next.activeModel, thinkingDepth: next.defaultThinkingDepth }) });
       const data = await response.json() as RuntimeSettings & { success?: boolean; error?: string };
       if (!response.ok || !data.success) throw new Error(data.error || "默认设置保存失败");
       setSettings(data);
@@ -113,7 +113,7 @@ export function SettingsDialog({ apiBase, onClose }: { apiBase: string; onClose:
     setSaving(true);
     setError("");
     try {
-      const response = await fetch(`${apiBase}/api/settings/providers`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(providerForm) });
+      const response = await fetch(`${apiBase}/api/settings/providers`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(providerForm) });
       const data = await response.json() as RuntimeSettings & { success?: boolean; error?: string };
       if (!response.ok || !data.success) throw new Error(data.error || "模型服务保存失败");
       setSettings(data);
@@ -129,7 +129,7 @@ export function SettingsDialog({ apiBase, onClose }: { apiBase: string; onClose:
     setSaving(true);
     setError("");
     try {
-      const response = await fetch(`${apiBase}/api/settings/agent-routing`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ agentRouting }) });
+      const response = await fetch(`${apiBase}/api/settings/agent-routing`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ agentRouting }) });
       const data = await response.json() as RuntimeSettings & { success?: boolean; error?: string };
       if (!response.ok || !data.success) throw new Error(data.error || "协同设置保存失败");
       setSettings(data);
@@ -143,7 +143,7 @@ export function SettingsDialog({ apiBase, onClose }: { apiBase: string; onClose:
     if (next.length === 0) return;
     setSaving(true);
     try {
-      const response = await fetch(`${apiBase}/api/settings/asset-policy`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ autoAssetTypes: next }) });
+      const response = await fetch(`${apiBase}/api/settings/asset-policy`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ autoAssetTypes: next }) });
       const data = await response.json() as RuntimeSettings & { success?: boolean; error?: string };
       if (!response.ok || !data.success) throw new Error(data.error || "资产设置保存失败");
       setSettings(data);

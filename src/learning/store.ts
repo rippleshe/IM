@@ -780,7 +780,7 @@ export class LearningStore {
     return Number(result.changes ?? 0);
   }
 
-  listEvidence(limit = 20): Array<{
+  listEvidence(learnerId: string, limit = 20): Array<{
     id: string;
     packId: string | null;
     packQuery: string | null;
@@ -807,10 +807,11 @@ export class LearningStore {
         e.retrieval_method AS retrievalMethod, e.relevance_score AS relevanceScore,
         e.trust_level AS trustLevel, e.metadata_json AS metadataJson
       FROM evidence_items e
-      LEFT JOIN evidence_pack_items pi ON pi.evidence_id = e.id
-      LEFT JOIN evidence_packs p ON p.id = pi.pack_id
+      INNER JOIN evidence_pack_items pi ON pi.evidence_id = e.id
+      INNER JOIN evidence_packs p ON p.id = pi.pack_id
+      WHERE p.learner_id = ?
       ORDER BY e.created_at DESC LIMIT ?
-    `).all(boundedLimit) as Array<{
+    `).all(learnerId, boundedLimit) as Array<{
       id: string;
       packId: string | null;
       packQuery: string | null;

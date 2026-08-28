@@ -1,5 +1,14 @@
 # 阅读进度
 
+# 2026-08-28 产品边界与旧包袱收口完成
+
+- 前端入口从 3745 行旧通用工作台收敛为精简产品壳，只保留登录、路径、协同学习和资源学习；移除不可达代码与 `@ts-nocheck`。
+- 服务端移除旧 `/api/sessions/*`、通用聊天/澄清、WebSocket、会话文件存储及对应测试；通用多智能体模块继续作为内部库保留，不再暴露未鉴权产品入口。
+- `/api/learning/*` 与 `/api/settings/*` 统一要求 Cookie 登录；证据列表按 learnerId 经 EvidencePack 关系过滤，并新增隔离测试。
+- pnpm workspace 正式纳入根项目与 `web`，删除两份 npm lockfile；补齐 `tsx`、esbuild 与 sharp 的 pnpm 构建声明。
+- 增加 `pnpm data:metropt`：从 UCI 官方源下载并校验 MetroPT-3，仅解出被 Git 忽略的 CSV；后端发现 CSV 后自动导入 SQLite。没有完整数据时保留 AI4I 与 MetroPT-3 文档证据运行能力。
+- 验证：根/前端 TypeScript 检查通过，95 个测试通过，后端 tsup 与前端 Next 生产构建通过；3000/3001 服务已重启。匿名访问学习/设置接口返回 401，旧 sessions 接口返回 404。
+
 - 已完成：项目文件初步盘点；确认前端入口、工作流、编排、记忆、会话存储和测试目录。
 - 已完成：阅读项目说明、`CLAUDE.md`、前端入口、服务端路由、会话存储、深度规划、Agent 集群、评估器、记忆和工具层。
 - 已完成：确认当前系统的真实能力边界与学习产品缺口。

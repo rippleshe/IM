@@ -17,7 +17,8 @@
 - **知识点贯通**：资源绑定当前路径节点的 `knowledgePointId`（`buildResourceDraft` 第 5 参），作答技能状态因此能对应到节点。
 - **账号隔离**：learnerId 一律来自 Cookie 会话；按账号隔离路径/资产/作答/笔记。
 - **证据规则**：结构化查询（SQL 抽样代表性数据行）+ 文档检索（FTS5，bm25 排序）合并为 EvidencePack；用户上传文件仅作会话级临时参考，不写库、不改画像。
-- **已知边界**：`/api/learning/evidence` 未按 learner 过滤；`/api/sessions/*` 与 WS 无认证——评审前收口。
+- **服务边界**：学习产品与设置 API 统一使用 Cookie 登录；证据列表按 learnerId 隔离。旧通用 `/api/sessions/*`、通用聊天、任务澄清和 WebSocket 服务已移除，通用多智能体能力只作为内部库保留。
+- **MetroPT-3 数据准备**：仓库不提交 208 MB 原始 CSV；`pnpm data:metropt` 从 UCI 官方地址下载并校验，后端发现 CSV 后自动导入 `metro_readings`。未安装完整数据时仍可使用 AI4I、MetroPT-3 字段说明和故障窗口文档。
 
 ## 3. 数据层范式（2026-08-28 定）
 

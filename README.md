@@ -106,28 +106,24 @@ DeepEvaluator
 
 支持自动生成并运行多阶段协作流程，包括流水线、并行处理、预算控制和结构化结果。
 
-### 服务端与实时通信
+### 学习产品服务端
 
 `server/`
 
 - Express API；
-- WebSocket 实时事件；
-- 会话持久化；
-- 规划、执行、协作和工作流接口。
+- Cookie 登录与学习者数据隔离；
+- 学习路径、证据、资源、笔记与作答持久化；
+- 多智能体学习任务执行与消息轮询。
 
 ### 前端
 
 `web/`
 
-当前是 Next.js 前端，可展示：
+当前是 Next.js 前端，产品入口只保留三个工作台：
 
-- 历史会话；
-- 智能体协作状态；
-- 任务计划与子任务；
-- 工作流阶段；
-- 工具调用；
-- 质量评估；
-- 最终报告和执行统计。
+- 学习路径：查看知识树、画像和证据驱动的学习建议；
+- 协同学习：引用路径节点，观察检索、生成、审核与发布过程；
+- 学习资源：阅读讲义、做分层习题、记笔记并回传反馈。
 
 ## 3. 当前阶段必须认清的边界
 
@@ -167,11 +163,10 @@ im-training-agent
 新的运行环境变量优先使用：
 
 ```text
-IM_TRAINING_AGENT_DATA_DIR
-IM_TRAINING_AGENT_RUNNING_SESSION_TIMEOUT_MS
+IM_TRAINING_AGENT_LEARNING_DB
+IM_TRAINING_AGENT_DATASET_DB
+IM_TRAINING_AGENT_METROPT_CSV
 ```
-
-为避免已有开发环境突然失效，服务端暂时兼容旧的 `PI_MULTI_AGENT_*` 环境变量作为回退。兼容字段只属于迁移层，不再作为产品品牌对外展示。
 
 ## 5. 本地运行
 
@@ -183,9 +178,7 @@ IM_TRAINING_AGENT_RUNNING_SESSION_TIMEOUT_MS
 ### 安装依赖
 
 ```bash
-npm install
-cd web
-npm install
+pnpm install
 ```
 
 ### 模型配置
@@ -203,7 +196,7 @@ QWEN_MODEL=qwen-plus
 ### 启动后端
 
 ```bash
-npm run server
+pnpm server
 ```
 
 默认地址：`http://localhost:3001`
@@ -213,8 +206,7 @@ npm run server
 另开终端：
 
 ```bash
-cd web
-npm run dev
+pnpm --dir web dev
 ```
 
 默认地址：`http://localhost:3000`
@@ -222,8 +214,18 @@ npm run dev
 ### 同时启动
 
 ```bash
-npm run dev:full
+pnpm dev:full
 ```
+
+### 准备完整 MetroPT-3 数据（可选）
+
+仓库默认包含 AI4I CSV、MetroPT-3 字段/故障窗口说明和知识卡，因此不下载大文件也能运行。需要完整的 151 万行 MetroPT-3 时序训练时，在 Windows 执行：
+
+```bash
+pnpm data:metropt
+```
+
+脚本从 UCI 官方地址下载约 208 MB 的 CC BY 4.0 数据包、校验 SHA256，并只解出 CSV。CSV 被 Git 忽略；后端下次启动时会自动导入 SQLite。也可以通过 `IM_TRAINING_AGENT_METROPT_CSV` 指向已有文件。
 
 ## 6. 目录结构
 
@@ -238,7 +240,7 @@ IM-Training-Agent/
 │  ├─ memory/            # 共享记忆
 │  ├─ tools/             # 工具系统
 │  └─ workflow/          # 动态工作流
-├─ server/               # Express + WebSocket 服务
+├─ server/               # Express 学习产品服务
 ├─ web/                  # Next.js 前端
 ├─ models.config.ts      # 模型配置
 └─ 挑战杯.md             # 官方赛题与评分要求

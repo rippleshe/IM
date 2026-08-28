@@ -58,9 +58,10 @@
     "lint": "eslint src --ext .ts",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist",
-    "server": "npx tsx server/index.ts",
-    "dev:web": "cd web && npm run dev",
-    "dev:full": "concurrently \"npm run server\" \"npm run dev:web\"",
+    "server": "pnpm exec tsx server/index.ts",
+    "dev:web": "pnpm --dir web dev",
+    "dev:full": "concurrently \"pnpm server\" \"pnpm dev:web\"",
+    "data:metropt": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/setup-metropt.ps1",
     "start": "node dist/server.js"
   },
   "keywords": [
@@ -83,21 +84,20 @@
     "expert-team",
     "critic-reviewer",
     "hierarchical",
-    "websocket",
-    "real-time"
+    "learning",
+    "evidence-grounded"
   ],
   "license": "MIT",
   "devDependencies": {
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/node": "^20.11.0",
-    "@types/uuid": "^10.0.0",
-    "@types/ws": "^8.18.1",
     "@typescript-eslint/eslint-plugin": "^7.18.0",
     "@typescript-eslint/parser": "^7.18.0",
     "concurrently": "^10.0.3",
     "eslint": "^8.56.0",
     "tsup": "^8.0.1",
+    "tsx": "^4.20.6",
     "typescript": "^5.3.3",
     "vitest": "^1.2.0"
   },
@@ -108,8 +108,6 @@
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
-    "openai": "^6.39.1",
-    "uuid": "^14.0.0",
-    "ws": "^8.21.0"
+    "openai": "^6.39.1"
   }
 }
