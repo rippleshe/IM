@@ -287,6 +287,102 @@ export function buildResourceDraft(
   };
 }
 
+export interface LlmResourceDraft {
+  title: string;
+  objectives: string[];
+  sections: Array<{ heading: string; text: string }>;
+}
+
+// LLM 生成正文，结构与证据块（代码示例、数据摘录、证据卡）仍由确定性构建器组装。
+export function buildLlmResourceDocument(
+  taskId: string,
+  query: string,
+  type: LearningResourceType,
+  pack: EvidencePack,
+  knowledgePointId: string | undefined,
+  llm: LlmResourceDraft,
+): ResourceDocument {
+  const knowledgePoint = normalizeKnowledgePointId(knowledgePointId ?? '') || 'compressor-diagnosis-evidence';
+  const evidenceIdList = pack.items.map((item) => item.id);
+  const blocks: ResourceBlock[] = [{
+    id: `resource-block-${randomUUID()}`,
+    type: 'paragraph',
+    position: 0,
+    content: `本资源由多智能体依据当前证据包协同生成：学情定位 → 双路检索 → 领域核对 → 逐条 Claim 审核。涉及数据均来自可回溯的证据，未在证据中的数字一律不采用。`,
+    knowledgePointIds: [knowledgePoint],
+    evidenceIds: evidenceIdList,
+  }];
+  for (const section of llm.sections.slice(0, 5)) {
+    blocks.push({
+      id: `resource-block-${randomUUID()}`,
+      type: 'heading',
+      position: 0,
+      content: section.heading.trim().slice(0, 60),
+      knowledgePointIds: [knowledgePoint],
+      evidenceIds: evidenceIdList,
+    });
+    blocks.push({
+      id: `resource-block-${randomUUID()}`,
+      type: 'paragraph',
+      position: 0,
+      content: section.text.trim().slice(0, 4_000),
+      knowledgePointIds: [knowledgePoint],
+      evidenceIds: evidenceIdList,
+    });
+  }
+  if (type === 'lecture' || type === 'practice_guide') blocks.push(analysisCodeBlock(knowledgePoint));
+  const table = representativeTable(pack);
+  if (table) {
+    blocks.push({
+      id: `resource-block-${randomUUID()}`,
+      type: 'table',
+      position: 0,
+      content: table,
+      knowledgePointIds: [knowledgePoint],
+      evidenceIds: table.evidenceIds,
+    });
+  }
+  blocks.push(...evidenceBlocks(pack, knowledgePoint));
+  return {
+    id: `resource-${randomUUID()}`,
+    taskId,
+    type,
+    title: llm.title.trim().slice(0, 80) || `${type}：${query}`,
+    difficulty: 0.42,
+    learningObjectives: llm.objectives.map((item) => String(item).trim().slice(0, 60)).filter(Boolean).slice(0, 4),
+    knowledgePointIds: [knowledgePoint],
+    blocks: blocks.map((block, index) => ({ ...block, position: index })),
+    evidenceIds: evidenceIdList,
+    auditStatus: pack.items.length > 0 ? 'passed' : 'revise',
+    createdAt: Date.now(),
+  };
+}
+
+function analysisCodeBlock(knowledgePoint: string): ResourceBlock {
+  return {
+    id: `resource-block-${randomUUID()}`,
+    type: 'code',
+    position: 0,
+    content: {
+      language: 'python',
+      caption: '分析入门：用 pandas 观察设备数据',
+      code: [
+        'import pandas as pd',
+        '',
+        'df = pd.read_csv("ai4i_2020.csv")',
+        'print(df.shape)                              # 行数与列数',
+        'print(df.head())                             # 先看几行长什么样',
+        'print(df["Machine failure"].value_counts())  # 故障样本有多少',
+        '',
+        'failed = df[df["Machine failure"] == 1]',
+        'print(failed[["Air temperature [K]", "Torque [Nm]", "Tool wear [min]"]].describe())',
+      ].join('\n'),
+    },
+    knowledgePointIds: [knowledgePoint],
+    evidenceIds: [],
+  };
+}
+
 function escapeMermaid(value: string): string {
   return value.replace(/[\[\]{}()<>|]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80) || '当前学习目标';
 }

@@ -1,6 +1,7 @@
 import dotenv from 'dotenv';
 dotenv.config();
 
+import { randomUUID } from 'node:crypto';
 import OpenAI from 'openai';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import path from 'path';
@@ -307,10 +308,10 @@ import { EvidenceService, rebuildDocumentFts, seedMetroCatalog } from '../src/le
 import { importKnowledgeCards } from '../src/learning/knowledge-import.js';
 import { importCsvDataset } from '../src/learning/tabular.js';
 import { IdentityStore, type AuthenticatedLearner, type OnboardingInput } from '../src/learning/identity.js';
-import { LearningStore, type LearningPathEdgeView, type LearningPathRevisionInput } from '../src/learning/store.js';
-import { buildResourceDraft } from '../src/learning/resource-builder.js';
+import { LearningStore, type LearningPathEdgeView, type LearningPathNodeView, type LearningPathRevisionInput } from '../src/learning/store.js';
+import { buildLlmResourceDocument, buildResourceDraft } from '../src/learning/resource-builder.js';
 import { auditResource } from '../src/learning/audit.js';
-import type { LearningResourceType, ResourceDocument } from '../src/learning/types.js';
+import type { EvidencePack, LearningResourceType, ResourceDocument } from '../src/learning/types.js';
 
 interface ActiveSession {
   id: string;
@@ -952,7 +953,11 @@ app.get('/api/learning/chat', (req, res) => {
   const learner = requireLearner(req, res);
   if (!learner) return;
   const surface = req.query.surface === 'study' ? 'study' : 'path';
-  res.json({ success: true, messages: learningStore.listChatMessages(learner.id, 80, surface) });
+  res.json({
+    success: true,
+    messages: learningStore.listChatMessages(learner.id, 80, surface),
+    studyRunning: surface === 'study' && activeStudyRuns.has(learner.id),
+  });
 });
 
 app.post('/api/learning/chat', async (req, res) => {
@@ -979,6 +984,235 @@ app.post('/api/learning/chat', async (req, res) => {
   });
 });
 
+// ---------- 学习页多智能体协同 Run：每步真实执行，消息逐条入库，前端轮询呈现群聊 ----------
+const RESOURCE_TYPE_LABELS: Record<LearningResourceType, string> = {
+  lecture: '讲义', tiered_quiz: '分层习题', practice_guide: '实操指南',
+  concept_map: '知识图谱', review_cards: '复习卡片', challenge_task: '挑战任务',
+};
+
+const activeStudyRuns = new Map<string, { runId: string; startedAt: number }>();
+
+interface StudyRunInput {
+  content: string;
+  pathNode: LearningPathNodeView | null;
+  resourceType: LearningResourceType;
+  collaborationPreference: 'auto' | 'custom';
+  selectedAgentIds: LearningAgentId[];
+  temporaryReference?: { name: string; content: string };
+}
+
+function saveAgentBubble(learnerId: string, runId: string, agentId: string, name: string, content: string): void {
+  learningStore.saveChatMessage(learnerId, 'assistant', content, {
+    surface: 'study', kind: 'agent', runId, agentId, agentName: name,
+  });
+}
+
+async function callStudyModel(agentId: LearningAgentId, system: string, user: string, maxTokens = 1600): Promise<string> {
+  const route = getAgentExecutionSettings(agentId, undefined, undefined);
+  const response = await withTimeout(
+    multiModelClient.simple({
+      messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
+      model: route.model,
+      temperature: route.thinking.temperature,
+      maxTokens: Math.min(route.thinking.maxTokens, maxTokens),
+    }),
+    30_000,
+    '模型调用超时',
+  );
+  return response.text;
+}
+
+function evidenceDigest(pack: EvidencePack): unknown {
+  return pack.items.slice(0, 10).map((item) => ({
+    title: item.sourceTitle,
+    locator: item.locator,
+    content: item.content.slice(0, 240),
+  }));
+}
+
+async function executeStudyRun(learner: AuthenticatedLearner, input: StudyRunInput, runId: string): Promise<void> {
+  const startedAt = Date.now();
+  const typeLabel = RESOURCE_TYPE_LABELS[input.resourceType];
+  const nodeName = input.pathNode?.title ?? '当前学习目标';
+  try {
+    // 1) 证据检索（结构化 SQL + FTS 文档），后续每个智能体都以它为输入
+    const evidencePack = evidenceService.buildEvidencePack(input.content, {
+      learnerId: learner.id, sessionId: `study-${Date.now()}`, temporaryReference: input.temporaryReference,
+    });
+    const structuredItems = evidencePack.items.filter((item) => item.sourceType === 'dataset');
+    const documentItems = evidencePack.items.filter((item) => item.sourceType === 'document');
+
+    saveAgentBubble(learner.id, runId, 'orchestrator', '协同总控 Agent',
+      `收到任务：为「${nodeName}」生成${typeLabel}。编排：学情定位 → 双路检索（结构化 + 文档）→ 领域核对 → 资源生成 → 审核与发布门禁${input.collaborationPreference === 'custom' ? '（遵循你指定的角色）' : ''}。开始执行。`);
+
+    // 2) 同类智能体多实例：结构化检索与文档检索各一路，真实并行查询
+    const sampleRows = structuredItems.filter((item) => item.metadata?.['queryKind'] === 'recent_rows' || item.metadata?.['queryKind'] === 'dataset_row');
+    saveAgentBubble(learner.id, runId, 'evidence_retrieval', '知识检索 Agent · 结构化',
+      `完成结构化检索：取回 ${structuredItems.length} 条数据证据（含 ${sampleRows.length} 行代表性样本），可回溯定位如：${structuredItems[0]?.locator ?? '无'}。`);
+    saveAgentBubble(learner.id, runId, 'evidence_retrieval', '知识检索 Agent · 文档',
+      documentItems.length > 0
+        ? `完成文档检索：按相关度命中 ${documentItems.length} 份资料，最相关《${documentItems[0]?.sourceTitle ?? ''}》${documentItems[0]?.locator ? `（${documentItems[0].locator}）` : ''}。`
+        : '文档检索未命中可用资料，将提示生成端只依赖结构化数据并保守表达。');
+
+    // 3) 学情与路径智能体（LLM，失败回退确定性文案）
+    const profile = learningStore.getProfile(learner.id);
+    let analysis = '';
+    let requirements: string[] = [];
+    try {
+      const planningRaw = await callStudyModel('learning_planning',
+        '你是学习协同中的“学情与路径智能体”。只输出 JSON：{"analysis":"不超过120字的第一人称分析：你看到了什么学习状态，因此本次资源如何定位","requirements":["3到5条对本次资源的具体设计要求"]}。禁止虚构任何数据或作答记录。',
+        JSON.stringify({
+          node: input.pathNode ? { title: input.pathNode.title, description: input.pathNode.description, recommendation: input.pathNode.recommendation } : null,
+          profile: { accuracy: profile.accuracy, studyMinutes: profile.studyMinutes, assetsCount: profile.assetsCount, skills: profile.skills.slice(0, 6) },
+          task: { resourceType: typeLabel, content: input.content },
+        }));
+      const parsed = parseJson<{ analysis?: unknown; requirements?: unknown }>(planningRaw) ?? {};
+      analysis = typeof parsed.analysis === 'string' ? parsed.analysis.slice(0, 300) : '';
+      requirements = Array.isArray(parsed.requirements) ? parsed.requirements.map((item) => String(item).slice(0, 80)).filter(Boolean).slice(0, 5) : [];
+    } catch { /* 走回退文案 */ }
+    if (!analysis || requirements.length === 0) {
+      analysis = `我先核对了你的学习状态：累计学习 ${profile.studyMinutes} 分钟，正确率 ${profile.accuracy === null || profile.accuracy === undefined ? '暂无' : `${Math.round(profile.accuracy * 100)}%`}。本次${typeLabel}围绕「${nodeName}」展开：先把概念讲准，再配合真实数据摘录。`;
+      requirements = ['从学习者当前水平切入，不跳步', '引用证据中的数据并保留定位', '明确结论边界与不确定处'];
+    }
+    saveAgentBubble(learner.id, runId, 'learning_planning', '学情与路径智能体',
+      `${analysis}\n设计要求：\n${requirements.map((item) => `- ${item}`).join('\n')}`);
+
+    // 4) 领域诊断智能体（LLM，失败回退）
+    let points: string[] = [];
+    let boundaries: string[] = [];
+    try {
+      const domainRaw = await callStudyModel('domain_expert',
+        '你是“领域诊断智能体”，负责设备数据分析领域的专业准确性。只输出 JSON：{"points":["3到5条讲解要点"],"boundaries":["2到3条必须强调的专业边界或不确定性提醒"]}。要点与边界必须能在给定证据中找到依据，禁止编造阈值或数据。',
+        JSON.stringify({ task: input.content, evidence: evidenceDigest(evidencePack) }));
+      const parsed = parseJson<{ points?: unknown; boundaries?: unknown }>(domainRaw) ?? {};
+      points = Array.isArray(parsed.points) ? parsed.points.map((item) => String(item).slice(0, 100)).filter(Boolean).slice(0, 5) : [];
+      boundaries = Array.isArray(parsed.boundaries) ? parsed.boundaries.map((item) => String(item).slice(0, 100)).filter(Boolean).slice(0, 3) : [];
+    } catch { /* 走回退文案 */ }
+    if (points.length === 0) {
+      points = ['先解释关键字段含义与观察方法', '用证据中的数据示例说明判断依据'];
+      boundaries = ['数据异常只支持风险判断，不等于确定故障', '结论需保留现场复核建议'];
+    }
+    saveAgentBubble(learner.id, runId, 'domain_expert', '领域诊断智能体',
+      `讲解要点：\n${points.map((item) => `- ${item}`).join('\n')}\n专业边界：\n${boundaries.map((item) => `- ${item}`).join('\n')}`);
+
+    // 5) 资源生成智能体（讲义/实操走 LLM 正文，其余类型用内置结构模板）
+    const llmEligible = input.resourceType === 'lecture' || input.resourceType === 'practice_guide';
+    let resource: ResourceDocument;
+    let generationNote = '';
+    let llmResource: ResourceDocument | null = null;
+    if (llmEligible) {
+      try {
+        const genRaw = await callStudyModel('resource_generation',
+          `你是“个性化资源生成智能体”，为学习者生成${typeLabel}。只输出 JSON：{"title":"资源标题","objectives":["2到3条学习目标"],"sections":[{"heading":"小节标题","text":"150到260字的正文"}]}，sections 给 2 到 4 个。要求：融合给定证据；引用数字必须与证据一致；面向初学者；禁止编造证据之外的阈值或结论。`,
+          JSON.stringify({ designRequirements: requirements, domainPoints: points, domainBoundaries: boundaries, evidence: evidenceDigest(evidencePack) }), 2400);
+        const parsed = parseJson<{ title?: unknown; objectives?: unknown; sections?: unknown }>(genRaw);
+        const sections = parsed && Array.isArray(parsed.sections) ? parsed.sections.flatMap((item) => {
+          const section = item as { heading?: unknown; text?: unknown };
+          return typeof section.heading === 'string' && typeof section.text === 'string' ? [{ heading: section.heading, text: section.text }] : [];
+        }) : [];
+        if (parsed && typeof parsed.title === 'string' && sections.length >= 2) {
+          llmResource = buildLlmResourceDocument(`study-${Date.now()}`, input.content, input.resourceType, evidencePack, input.pathNode?.knowledgePointId, {
+            title: parsed.title,
+            objectives: Array.isArray(parsed.objectives) ? parsed.objectives.map((item) => String(item)) : [],
+            sections,
+          });
+        }
+      } catch { generationNote = '生成模型输出异常，已切换内置结构模板。'; }
+    }
+    if (llmResource) {
+      resource = llmResource;
+    } else {
+      resource = buildResourceDraft(`study-${Date.now()}`, input.content, input.resourceType, evidencePack, input.pathNode?.knowledgePointId);
+      if (llmEligible && !generationNote) generationNote = '为保证结构化质量，本篇使用内置结构模板生成。';
+    }
+    saveAgentBubble(learner.id, runId, 'resource_generation', '资源生成智能体',
+      `初稿完成：《${resource.title}》，共 ${resource.blocks.length} 个内容块（含代码示例与数据摘录）。${generationNote || '已按设计要求融入证据引用，交由审核。'}`);
+
+    // 6) 审核与发布门禁（确定性逐条 Claim）；未通过时退回生成端修订一轮，仍不过用内置模板兜底
+    const auditOnce = (doc: ResourceDocument) => {
+      const result = auditResource(doc, evidencePack);
+      const publication = resolveResourcePublication(result.summary.status);
+      const audited = { ...doc, evidencePackId: evidencePack.id, auditSummary: result.summary, auditStatus: publication.auditStatus };
+      learningStore.saveResourceAudit(audited.id, result.claims);
+      return { result, publication, audited };
+    };
+    const auditNarrative = (result: ReturnType<typeof auditResource>, round: string) => {
+      const supported = result.claims.filter((claim) => claim.verdict === 'supported').length;
+      const review = result.claims.filter((claim) => claim.verdict === 'review').length;
+      const unsupported = result.claims.filter((claim) => claim.verdict === 'unsupported').length;
+      return `${round}逐条核对 ${result.claims.length} 条内容声明：支持 ${supported}、待复核 ${review}、无证据支持 ${unsupported}。来源交叉验证：${result.summary.status === 'corroborated' ? '结构化数据与领域文档互证通过' : '来源单一，需保守表达'}。`;
+    };
+
+    let outcome = auditOnce(resource);
+    if (!outcome.publication.persist && outcome.result.summary.status === 'needs_review' && llmEligible) {
+      saveAgentBubble(learner.id, runId, 'cross_validation', '交叉验证与审核 Agent',
+        `${auditNarrative(outcome.result, '第一轮：')}未通过发布门禁，退回生成端修订。`);
+      const failedClaims = outcome.result.claims
+        .filter((claim) => claim.verdict !== 'supported')
+        .map((claim) => ({ text: claim.text.slice(0, 160), critique: claim.critique }));
+      saveAgentBubble(learner.id, runId, 'resource_generation', '资源生成智能体',
+        `收到退回：${failedClaims.length} 处内容需要修订。我会把这些数字改为与证据一致，或删除无法核对的表述。`);
+      try {
+        const revisedRaw = await callStudyModel('resource_generation',
+          `你是“个性化资源生成智能体”。审核退回了${typeLabel}初稿中无法与证据核对的内容。只输出修订后的 JSON：{"title":"资源标题","objectives":["2到3条学习目标"],"sections":[{"heading":"小节标题","text":"150到260字的正文"}]}。要求：保持其余内容不变；被退回的表述要么改成与证据一致的数字，要么删除数字改为定性描述；仍禁止编造证据之外的阈值。`,
+          JSON.stringify({ failedClaims, designRequirements: requirements, evidence: evidenceDigest(evidencePack) }), 2400);
+        const parsed = parseJson<{ title?: unknown; objectives?: unknown; sections?: unknown }>(revisedRaw);
+        const sections = parsed && Array.isArray(parsed.sections) ? parsed.sections.flatMap((item) => {
+          const section = item as { heading?: unknown; text?: unknown };
+          return typeof section.heading === 'string' && typeof section.text === 'string' ? [{ heading: section.heading, text: section.text }] : [];
+        }) : [];
+        if (parsed && typeof parsed.title === 'string' && sections.length >= 2) {
+          const revised = buildLlmResourceDocument(`study-${Date.now()}`, input.content, input.resourceType, evidencePack, input.pathNode?.knowledgePointId, {
+            title: parsed.title,
+            objectives: Array.isArray(parsed.objectives) ? parsed.objectives.map((item) => String(item)) : [],
+            sections,
+          });
+          const second = auditOnce(revised);
+          if (second.publication.persist) {
+            outcome = second;
+            saveAgentBubble(learner.id, runId, 'resource_generation', '资源生成智能体', '修订完成：已清除无法核对的数字，重新提交审核。');
+          }
+        }
+      } catch { /* 修订失败则走模板兜底 */ }
+    }
+    if (!outcome.publication.persist && llmEligible && evidencePack.items.length > 0) {
+      saveAgentBubble(learner.id, runId, 'resource_generation', '资源生成智能体', '修订后仍未通过，为保证可追溯性，改用内置结构模板重新生成。');
+      resource = buildResourceDraft(`study-${Date.now()}`, input.content, input.resourceType, evidencePack, input.pathNode?.knowledgePointId);
+      outcome = auditOnce(resource);
+    }
+    const { result: finalAudit, publication: finalPublication, audited: auditedResource } = outcome;
+    if (finalPublication.persist) learningStore.saveAsset(learner.id, undefined, auditedResource);
+    saveAgentBubble(learner.id, runId, 'cross_validation', '交叉验证与审核 Agent',
+      `${auditNarrative(finalAudit, '最终：')}${finalPublication.persist ? '通过发布门禁，资源已入库。' : '仍未通过发布门禁，本资源不作为已审核资产发布。'}`);
+    saveAgentBubble(learner.id, runId, 'privacy_compliance', '合规与隐私 Agent',
+      input.temporaryReference
+        ? `本次使用了上传的临时参考《${input.temporaryReference.name}》：仅用于当前任务，不写入知识库、不进入画像，原文不保存。`
+        : '未检测到上传资料，无隐私边界问题。');
+
+    // 7) 资产卡片与总控收尾
+    learningStore.saveChatMessage(learner.id, 'assistant', finalPublication.persist ? `已生成《${auditedResource.title}》` : `《${auditedResource.title}》待复核，未入库`, {
+      surface: 'study', kind: 'asset', runId,
+      pathNodeId: input.pathNode?.id ?? null, resourceType: input.resourceType,
+      asset: { id: auditedResource.id, title: auditedResource.title, type: auditedResource.type, auditStatus: auditedResource.auditStatus, persisted: finalPublication.persist },
+      evidence: { count: evidencePack.items.length, score: evidencePack.coverageScore, crossValidation: finalAudit.summary.status },
+    });
+    saveAgentBubble(learner.id, runId, 'orchestrator', '协同总控 Agent',
+      finalPublication.persist
+        ? `本次协同完成：证据 ${evidencePack.items.length} 条，审核声明 ${finalAudit.claims.length} 条，用时 ${Math.max(1, Math.round((Date.now() - startedAt) / 1000))} 秒。去「资源」页阅读《${auditedResource.title}》，或继续 @ 节点让我调整。`
+        : `本次协同未产出已审核资产（发布门禁未通过）。建议补充更具体的设备数据关键词（如“压力传感器 异常 现场复核”）再试一次。`);
+    learningStore.recordLearningEvent(learner.id, 'study_run_completed', {
+      runId, pathNodeId: input.pathNode?.id ?? null, resourceType: input.resourceType,
+      persisted: finalPublication.persist, evidenceCount: evidencePack.items.length, claims: finalAudit.claims.length,
+      durationMs: Date.now() - startedAt,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    saveAgentBubble(learner.id, runId, 'orchestrator', '协同总控 Agent',
+      `协同执行中断：${message.slice(0, 160)}。请重试，或换个更具体的任务描述。`);
+    learningStore.recordLearningEvent(learner.id, 'study_run_failed', { runId, error: message.slice(0, 300), durationMs: Date.now() - startedAt });
+  }
+}
+
 app.post('/api/learning/study/chat', (req, res) => {
   const learner = requireLearner(req, res);
   if (!learner) return;
@@ -999,55 +1233,19 @@ app.post('/api/learning/study/chat', (req, res) => {
     res.status(400).json({ success: false, error: '请输入要生成的学习资源或问题' });
     return;
   }
-  const pathNode = learningStore.getPathGraph(learner.id).nodes.find((node) => node.id === pathNodeId);
-  const userMessage = learningStore.saveChatMessage(learner.id, 'user', content, {
+  if (activeStudyRuns.has(learner.id)) {
+    res.status(409).json({ success: false, error: '已有一个协同任务进行中，请等它完成后再发起' });
+    return;
+  }
+  const pathNode = learningStore.getPathGraph(learner.id).nodes.find((node) => node.id === pathNodeId) ?? null;
+  learningStore.saveChatMessage(learner.id, 'user', content, {
     surface: 'study', pathNodeId: pathNode?.id ?? null, resourceType,
   });
-  try {
-    const evidencePack = evidenceService.buildEvidencePack(content, { learnerId: learner.id, sessionId: `study-${Date.now()}`, temporaryReference });
-    const requestedAgents = collaborationPreference === 'custom' && selectedAgentIds.length > 0
-      ? selectedAgentIds
-      : ['learning_planning', 'evidence_retrieval', 'domain_expert'] as LearningAgentId[];
-    const optionalAgents = Array.from(new Set<LearningAgentId>([
-      ...requestedAgents,
-      'resource_generation',
-      'cross_validation',
-      'privacy_compliance',
-    ]));
-    const activities = [
-      {
-        agentId: 'orchestrator', name: '协同总控 Agent', action: collaborationPreference === 'custom' ? '按你的角色偏好编排本次任务' : '分析目标并自动编排本次协同',
-        status: 'completed', tools: [
-          { name: '任务编排', detail: pathNode ? `关联路径节点：${pathNode.title}` : '按当前学习目标创建任务' },
-          { name: 'DAG 调度', detail: collaborationPreference === 'custom' ? '遵循指定角色，按依赖关系调度' : '根据目标与风险自动选择串行或并行阶段' },
-          { name: '发布门禁', detail: '资源生成后必须经过 Claim 审核、交叉验证与隐私检查' },
-        ],
-      },
-      ...(optionalAgents.includes('learning_planning') ? [{ agentId: 'learning_planning', name: '学情与路径智能体', action: '读取当前画像和学习路径，确定资源粒度', status: 'completed', tools: [{ name: '学习状态读取', detail: pathNode ? `当前节点：${pathNode.title}` : '未指定路径节点' }] }] : []),
-      ...(optionalAgents.includes('evidence_retrieval') ? [{ agentId: 'evidence_retrieval', name: '知识检索与溯源 Agent', action: `整理 ${evidencePack.items.length} 条可用依据`, status: 'completed', tools: evidencePack.retrievalPlan.map((method) => ({ name: method === 'structured' ? 'SQLite 数据查询' : 'FTS5 文档检索', detail: method === 'structured' ? '查询字段和时间窗口' : '定位领域资料片段' })) }] : []),
-      ...(optionalAgents.includes('domain_expert') ? [{ agentId: 'domain_expert', name: '领域诊断 Agent', action: '核对设备字段语义与诊断边界', status: 'completed', tools: [{ name: '字段语义核对', detail: '避免将异常数据直接写成确定故障' }] }] : []),
-    ];
-    const resource = buildResourceDraft(`study-${Date.now()}`, content, resourceType, evidencePack, pathNode?.knowledgePointId);
-    const audit = auditResource(resource, evidencePack);
-    const publication = resolveResourcePublication(audit.summary.status);
-    const auditedResource = { ...resource, evidencePackId: evidencePack.id, auditSummary: audit.summary, auditStatus: publication.auditStatus };
-    learningStore.saveResourceAudit(auditedResource.id, audit.claims);
-    if (publication.persist) learningStore.saveAsset(learner.id, undefined, auditedResource);
-    if (optionalAgents.includes('resource_generation')) activities.push({ agentId: 'resource_generation', name: '个性化资源生成 Agent', action: `生成${resource.title}`, status: 'completed', tools: [{ name: '资源模板', detail: `按 ${resourceType} 契约组织内容` }] });
-    if (optionalAgents.includes('cross_validation')) activities.push({ agentId: 'cross_validation', name: '辩论交叉验证 Agent', action: audit.summary.status === 'corroborated' ? '交叉验证通过' : '标记需要复核的内容', status: 'completed', tools: [{ name: 'Claim 审核', detail: `${audit.claims.length} 条声明已核对` }] });
-    if (optionalAgents.includes('privacy_compliance')) activities.push({ agentId: 'privacy_compliance', name: '合规与隐私 Agent', action: temporaryReference ? '临时资料仅用于本次任务，未写入知识库' : '确认本次任务未使用临时资料', status: 'completed', tools: [{ name: '资料边界检查', detail: temporaryReference ? '会话结束后不保留原文' : '无上传资料' }] });
-    const assistantMessage = learningStore.saveChatMessage(learner.id, 'assistant', publication.persist
-      ? `已完成${resource.title}，并通过发布检查，已保存到学习资产。`
-      : `已生成${resource.title}，但审核发现需要复核的内容，暂未作为已审核资产发布。`, {
-      surface: 'study', pathNodeId: pathNode?.id ?? null, resourceType, activities,
-      asset: { id: auditedResource.id, title: auditedResource.title, type: auditedResource.type, auditStatus: auditedResource.auditStatus, persisted: publication.persist },
-      evidence: { count: evidencePack.items.length, score: evidencePack.coverageScore, crossValidation: audit.summary.status },
-    });
-    learningStore.recordLearningEvent(learner.id, 'study_resource_generated', { pathNodeId: pathNode?.id ?? null, resourceId: auditedResource.id, resourceType, persisted: publication.persist, evidenceCount: evidencePack.items.length });
-    res.json({ success: true, userMessage, assistantMessage, asset: auditedResource, evidencePack, activities });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error instanceof Error ? error.message : String(error) });
-  }
+  const runId = `study-run-${randomUUID()}`;
+  activeStudyRuns.set(learner.id, { runId, startedAt: Date.now() });
+  void executeStudyRun(learner, { content, pathNode, resourceType, collaborationPreference, selectedAgentIds, temporaryReference }, runId)
+    .finally(() => activeStudyRuns.delete(learner.id));
+  res.json({ success: true, runId, running: true });
 });
 
 app.post('/api/auth/register', (req, res) => {

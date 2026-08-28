@@ -65,6 +65,7 @@ function typeLabel(type: ResourceType) {
 }
 
 function renderBlockContent(block: ResourceBlock) {
+  if (block.type === "heading") return <h3 className="text-lg font-semibold tracking-tight">{String(block.content)}</h3>;
   if (typeof block.content === "string") return <p className="whitespace-pre-wrap text-sm leading-7 text-muted-foreground">{block.content}</p>;
   if (Array.isArray(block.content)) return <ul className="space-y-2 pl-1 text-sm leading-6 text-muted-foreground">{block.content.map((item, index) => <li key={index} className="flex gap-2"><span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-foreground/45" />{String(item)}</li>)}</ul>;
   if (block.content && typeof block.content === "object") {
@@ -89,16 +90,35 @@ function getQuizQuestions(asset: ResourceAsset): QuizQuestion[] {
 
 type LecturePage = { key: string; title: string; blocks: ResourceBlock[] };
 
+function blockPageTitle(block: ResourceBlock, sawHeading: boolean) {
+  if (block.type === "evidence") return "证据参考";
+  if (block.type === "question") return "思考与练习";
+  if (block.type === "code") return "代码示例";
+  if (block.type === "table") return "数据摘录";
+  return sawHeading ? "学习内容" : "学习概览";
+}
+
+// 标题块开启新页并跟随其正文；代码/表格/证据/习题独立成页，其余正文并入当前页。
 function buildLecturePages(asset: ResourceAsset): LecturePage[] {
   const blocks = [...asset.blocks].sort((a, b) => a.position - b.position);
-  const opening = blocks.slice(0, 2);
-  const remaining = blocks.slice(2);
-  const pages: LecturePage[] = [{ key: "overview", title: "学习概览", blocks: opening }];
-  remaining.forEach((block, index) => pages.push({
-    key: `block-${block.id}`,
-    title: block.type === "evidence" ? `证据参考 ${index}` : block.type === "question" ? "思考与练习" : block.type === "code" ? "代码示例" : block.type === "table" ? "数据摘录" : `学习内容 ${index}`,
-    blocks: [block],
-  }));
+  const pages: LecturePage[] = [];
+  let current: LecturePage | null = null;
+  let sawHeading = false;
+  for (const block of blocks) {
+    if (block.type === "heading") {
+      sawHeading = true;
+      current = { key: `block-${block.id}`, title: String(block.content ?? "学习内容"), blocks: [block] };
+      pages.push(current);
+      continue;
+    }
+    const standalone = block.type === "evidence" || block.type === "table" || block.type === "code" || block.type === "question";
+    if (!current || standalone) {
+      current = { key: `block-${block.id}`, title: blockPageTitle(block, sawHeading), blocks: [] };
+      pages.push(current);
+    }
+    current.blocks.push(block);
+    if (block.type === "question") current = null;
+  }
   return pages.filter((page) => page.blocks.length > 0);
 }
 
