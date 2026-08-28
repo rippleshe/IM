@@ -17,6 +17,7 @@ import {
   Map,
   Save,
   Settings,
+  Target,
   Trash2,
   Wrench,
   XCircle,
@@ -209,6 +210,14 @@ export function ResourceWorkbench({ apiBase, user, onLogout, onNavigate }: Resou
     window.open(`${apiBase}/api/learning/assets/${encodeURIComponent(selectedAsset.id)}/export?format=${format}`, "_blank", "noopener,noreferrer");
   };
 
+  // 把“当前资源 + 掌握反馈”带到学习页，由多智能体针对薄弱点生成练习。
+  const reinforceFromAsset = (asset: ResourceAsset, level: "high" | "medium" | "low" | null) => {
+    const wording = level === "low" ? "掌握不好" : level === "medium" ? "掌握一般" : level === "high" ? "已完全掌握" : "尚未反馈掌握情况";
+    const draft = `针对《${asset.title}》做针对性练习：我的阅读反馈是“${wording}”，请围绕它覆盖的知识点生成分层习题并附解析，重点考薄弱处。`;
+    try { window.localStorage.setItem("im-training-agent:study-prefill", JSON.stringify({ draft, knowledgePointId: asset.knowledgePointIds[0] ?? "", resourceType: "tiered_quiz", createdAt: Date.now() })); } catch { /* 存储不可用时仅跳转 */ }
+    onNavigate("study");
+  };
+
   const logout = async () => { await fetch(`${apiBase}/api/auth/logout`, { method: "POST", credentials: "include" }).catch(() => undefined); onLogout(); };
 
   return <LecturePageContext.Provider value={{ pageIndex: lecturePageIndex, setPageIndex: setLecturePageIndex }}><main className={`flex h-screen min-h-0 flex-col overflow-hidden bg-background ${resizing ? "select-none" : ""}`}>
@@ -235,7 +244,7 @@ export function ResourceWorkbench({ apiBase, user, onLogout, onNavigate }: Resou
 
       <div role="separator" aria-orientation="vertical" onMouseDown={() => setResizing(true)} className="w-1.5 shrink-0 cursor-col-resize bg-border/60 transition-colors hover:bg-foreground/30" />
       <aside style={{ width: notesWidth }} className="flex shrink-0 flex-col border-l bg-muted/15" aria-label="资源笔记或解析">
-        {reader?.asset.type === "lecture" ? <LectureNotes apiBase={apiBase} reader={reader} onReaderChange={setReader} /> : reader?.asset.type === "tiered_quiz" ? <QuizAnswerPanel reader={reader} /> : reader ? <GenericFeedback apiBase={apiBase} reader={reader} onReaderChange={setReader} /> : <div className="flex h-full items-center justify-center px-8 text-center text-sm text-muted-foreground">选择一份资源后，在这里查看笔记、反馈或答案解析。</div>}
+        {reader?.asset.type === "lecture" ? <LectureNotes apiBase={apiBase} reader={reader} onReaderChange={setReader} onReinforce={() => reinforceFromAsset(reader.asset, reader.feedback?.masteryLevel ?? null)} /> : reader?.asset.type === "tiered_quiz" ? <QuizAnswerPanel reader={reader} /> : reader ? <GenericFeedback apiBase={apiBase} reader={reader} onReaderChange={setReader} onReinforce={() => reinforceFromAsset(reader.asset, reader.feedback?.masteryLevel ?? null)} /> : <div className="flex h-full items-center justify-center px-8 text-center text-sm text-muted-foreground">选择一份资源后，在这里查看笔记、反馈或答案解析。</div>}
       </aside>
     </div>
     {settingsOpen && <SettingsDialog apiBase={apiBase} onClose={() => setSettingsOpen(false)} />}
@@ -264,7 +273,7 @@ function LectureReader({ apiBase, reader, onReaderChange, onExport }: { apiBase:
   </div>;
 }
 
-function LectureNotes({ apiBase, reader, onReaderChange }: { apiBase: string; reader: ReaderData; onReaderChange: (data: ReaderData) => void }) {
+function LectureNotes({ apiBase, reader, onReaderChange, onReinforce }: { apiBase: string; reader: ReaderData; onReaderChange: (data: ReaderData) => void; onReinforce: () => void }) {
   const pages = useMemo(() => buildLecturePages(reader.asset), [reader.asset]);
   const { pageIndex } = useContext(LecturePageContext);
   const pageKey = pages[pageIndex]?.key ?? pages[0]?.key ?? "overview";
@@ -290,7 +299,7 @@ function LectureNotes({ apiBase, reader, onReaderChange }: { apiBase: string; re
     onReaderChange({ ...reader, feedback: { completed: true, mastered: level === "high", masteryLevel: level, updatedAt: Date.now() } });
   };
   const level = reader.feedback?.masteryLevel;
-  return <div className="flex min-h-0 flex-1 flex-col"><div className="border-b bg-background px-5 py-3.5"><div className="text-sm font-semibold">本页笔记</div><div className="mt-0.5 text-[11px] text-muted-foreground">笔记会跟随当前讲义页保存</div></div><div className="min-h-0 flex-1 p-4"><textarea value={draft} onChange={(event) => { setDraft(event.target.value); setSaved(false); }} placeholder="记录关键结论、疑问或自己的理解" className="h-full min-h-[220px] w-full resize-none rounded-xl border bg-card p-3 text-sm leading-6 outline-none placeholder:text-muted-foreground focus:ring-2 focus:ring-foreground/10" /></div><div className="border-t bg-background p-4"><button type="button" disabled={saving} onClick={() => void save()} className="flex h-9 w-full items-center justify-center gap-1.5 rounded-lg border text-xs font-medium hover:bg-muted disabled:opacity-50">{saved ? <Check className="h-3.5 w-3.5" /> : <Save className="h-3.5 w-3.5" />}{saved ? "笔记已保存" : saving ? "正在保存" : "保存本页笔记"}</button><div className="mt-5 border-t pt-4"><div className="text-sm font-semibold">阅读反馈</div><p className="mt-1 text-[11px] leading-5 text-muted-foreground">这会作为学习证据，供画像和下次路径调整参考。</p><div className="mt-3 grid gap-2"><button type="button" onClick={() => void feedback("high")} className={`h-9 rounded-lg border text-xs font-medium ${level === "high" ? "border-emerald-600 bg-emerald-600 text-white" : "hover:bg-emerald-50"}`}>完全掌握</button><button type="button" onClick={() => void feedback("medium")} className={`h-9 rounded-lg border text-xs font-medium ${level === "medium" ? "border-amber-500 bg-amber-500 text-white" : "hover:bg-amber-50"}`}>掌握一般</button><button type="button" onClick={() => void feedback("low")} className={`h-9 rounded-lg border text-xs font-medium ${level === "low" ? "border-rose-600 bg-rose-600 text-white" : "hover:bg-rose-50"}`}>掌握不好</button></div></div></div></div>;
+  return <div className="flex min-h-0 flex-1 flex-col"><div className="border-b bg-background px-5 py-3.5"><div className="text-sm font-semibold">本页笔记</div><div className="mt-0.5 text-[11px] text-muted-foreground">笔记会跟随当前讲义页保存</div></div><div className="min-h-0 flex-1 p-4"><textarea value={draft} onChange={(event) => { setDraft(event.target.value); setSaved(false); }} placeholder="记录关键结论、疑问或自己的理解" className="h-full min-h-[220px] w-full resize-none rounded-xl border bg-card p-3 text-sm leading-6 outline-none placeholder:text-muted-foreground focus:ring-2 focus:ring-foreground/10" /></div><div className="border-t bg-background p-4"><button type="button" disabled={saving} onClick={() => void save()} className="flex h-9 w-full items-center justify-center gap-1.5 rounded-lg border text-xs font-medium hover:bg-muted disabled:opacity-50">{saved ? <Check className="h-3.5 w-3.5" /> : <Save className="h-3.5 w-3.5" />}{saved ? "笔记已保存" : saving ? "正在保存" : "保存本页笔记"}</button><div className="mt-5 border-t pt-4"><div className="text-sm font-semibold">阅读反馈</div><p className="mt-1 text-[11px] leading-5 text-muted-foreground">这会作为学习证据，供画像和下次路径调整参考。</p><div className="mt-3 grid gap-2"><button type="button" onClick={() => void feedback("high")} className={`h-9 rounded-lg border text-xs font-medium ${level === "high" ? "border-emerald-600 bg-emerald-600 text-white" : "hover:bg-emerald-50"}`}>完全掌握</button><button type="button" onClick={() => void feedback("medium")} className={`h-9 rounded-lg border text-xs font-medium ${level === "medium" ? "border-amber-500 bg-amber-500 text-white" : "hover:bg-amber-50"}`}>掌握一般</button><button type="button" onClick={() => void feedback("low")} className={`h-9 rounded-lg border text-xs font-medium ${level === "low" ? "border-rose-600 bg-rose-600 text-white" : "hover:bg-rose-50"}`}>掌握不好</button></div><button type="button" onClick={onReinforce} className="mt-2.5 flex h-9 w-full items-center justify-center gap-1.5 rounded-lg border border-foreground/25 bg-muted/40 text-xs font-medium hover:bg-muted"><Target className="h-3.5 w-3.5" />按这份讲义的薄弱点生成练习</button><p className="mt-2 text-[10px] leading-4 text-muted-foreground">会带着讲义标题与你的反馈跳到学习页，由多智能体针对薄弱处出分层习题；作答结果会继续更新你的技能状态。</p></div></div></div>;
 }
 
 function QuizReader({ apiBase, reader, onReaderChange }: { apiBase: string; reader: ReaderData; onReaderChange: (data: ReaderData) => void }) {
@@ -329,11 +338,11 @@ function GenericReader({ reader, onExport }: { apiBase: string; reader: ReaderDa
   return <div className="flex min-h-0 flex-1 flex-col"><div className="flex shrink-0 items-center justify-between border-b px-5 py-3.5"><div><div className="text-[11px] text-muted-foreground">{typeLabel(reader.asset.type)}</div><h1 className="mt-0.5 text-sm font-semibold">{reader.asset.title}</h1></div><button type="button" onClick={() => onExport("md")} className="flex h-8 items-center gap-1 rounded-lg border px-2.5 text-xs hover:bg-muted"><Download className="h-3.5 w-3.5" />MD</button></div><div className="min-h-0 flex-1 overflow-y-auto"><article className="mx-auto max-w-3xl space-y-7 px-8 py-9"><div><div className="text-[11px] text-muted-foreground">学习目标</div><ul className="mt-3 space-y-2 text-sm leading-6 text-muted-foreground">{reader.asset.learningObjectives.map((objective) => <li key={objective} className="flex gap-2"><span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-foreground/45" />{objective}</li>)}</ul></div>{reader.asset.blocks.sort((a, b) => a.position - b.position).map((block) => <section key={block.id}>{renderBlockContent(block)}</section>)}</article></div></div>;
 }
 
-function GenericFeedback({ apiBase, reader, onReaderChange }: { apiBase: string; reader: ReaderData; onReaderChange: (data: ReaderData) => void }) {
+function GenericFeedback({ apiBase, reader, onReaderChange, onReinforce }: { apiBase: string; reader: ReaderData; onReaderChange: (data: ReaderData) => void; onReinforce: () => void }) {
   const markRead = async () => {
     const response = await fetch(`${apiBase}/api/learning/assets/${encodeURIComponent(reader.asset.id)}/feedback`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ completed: true }) });
     const data = await response.json() as { success?: boolean };
     if (response.ok && data.success) onReaderChange({ ...reader, feedback: { completed: true, mastered: reader.feedback?.mastered ?? false, masteryLevel: reader.feedback?.masteryLevel ?? null, updatedAt: Date.now() } });
   };
-  return <div className="flex h-full flex-col"><div className="border-b bg-background px-5 py-3.5"><div className="text-sm font-semibold">学习记录</div></div><div className="flex flex-1 flex-col justify-between p-5"><div><div className="rounded-xl border bg-card p-4"><div className="text-xs text-muted-foreground">当前资源</div><div className="mt-2 text-sm font-semibold">{typeLabel(reader.asset.type)}</div><p className="mt-2 text-xs leading-5 text-muted-foreground">完成使用后可留下学习记录，供个人画像与下一轮路径调整参考。</p></div></div><button type="button" onClick={() => void markRead()} className={`h-9 rounded-lg border text-xs font-medium ${reader.feedback?.completed ? "border-emerald-300 bg-emerald-50 text-emerald-700" : "hover:bg-muted"}`}>{reader.feedback?.completed ? "已记录完成" : "记录已学习"}</button></div></div>;
+  return <div className="flex h-full flex-col"><div className="border-b bg-background px-5 py-3.5"><div className="text-sm font-semibold">学习记录</div></div><div className="flex flex-1 flex-col justify-between p-5"><div><div className="rounded-xl border bg-card p-4"><div className="text-xs text-muted-foreground">当前资源</div><div className="mt-2 text-sm font-semibold">{typeLabel(reader.asset.type)}</div><p className="mt-2 text-xs leading-5 text-muted-foreground">完成使用后可留下学习记录，供个人画像与下一轮路径调整参考。</p></div></div><div><button type="button" onClick={() => void markRead()} className={`h-9 w-full rounded-lg border text-xs font-medium ${reader.feedback?.completed ? "border-emerald-300 bg-emerald-50 text-emerald-700" : "hover:bg-muted"}`}>{reader.feedback?.completed ? "已记录完成" : "记录已学习"}</button><button type="button" onClick={onReinforce} className="mt-2 flex h-9 w-full items-center justify-center gap-1.5 rounded-lg border border-foreground/25 bg-muted/40 text-xs font-medium hover:bg-muted"><Target className="h-3.5 w-3.5" />按这份资源的薄弱点生成练习</button></div></div></div>;
 }

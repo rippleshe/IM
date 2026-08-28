@@ -113,7 +113,28 @@ export function LearningWorkbench({ apiBase, user, onLogout, onNavigate }: Learn
     setStudyRunning(Boolean(messageData.studyRunning));
     setProfile(profileData.profile ?? null);
     setSelectedNodeId((current) => current && nextPath.nodes.some((item) => item.id === current) ? current : nextPath.nodes[0]?.id ?? null);
+    consumeStudyPrefill(nextPath);
   }, [apiBase]);
+
+  // 消费资源页“针对薄弱点生成练习”带来的预填任务：自动填草稿、切资源类型并关联路径节点。
+  const consumeStudyPrefill = (graph: PathGraph) => {
+    try {
+      const raw = window.localStorage.getItem("im-training-agent:study-prefill");
+      if (!raw) return;
+      window.localStorage.removeItem("im-training-agent:study-prefill");
+      const parsed = JSON.parse(raw) as { draft?: unknown; knowledgePointId?: unknown; resourceType?: unknown; createdAt?: unknown };
+      if (typeof parsed.draft !== "string" || !parsed.draft.trim()) return;
+      if (typeof parsed.createdAt === "number" && Date.now() - parsed.createdAt > 120_000) return;
+      setDraft(parsed.draft);
+      if (parsed.resourceType === "tiered_quiz" || parsed.resourceType === "lecture" || parsed.resourceType === "practice_guide" || parsed.resourceType === "concept_map" || parsed.resourceType === "review_cards" || parsed.resourceType === "challenge_task") {
+        setResourceType(parsed.resourceType);
+      }
+      if (typeof parsed.knowledgePointId === "string" && parsed.knowledgePointId) {
+        const node = graph.nodes.find((item) => item.knowledgePointId === parsed.knowledgePointId);
+        if (node) setSelectedNodeId(node.id);
+      }
+    } catch { /* 预填数据损坏时直接忽略 */ }
+  };
 
   const refreshMessages = useCallback(async () => {
     try {
