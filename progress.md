@@ -1,5 +1,17 @@
 # 阅读进度
 
+# 2026-08-28 挑战杯总规落地：平台基础设施与 SQLite→PostgreSQL 迁移（8/28-29 日程提前完成）
+
+- 按 sol 的第一份计划产出唯一技术总规 `docs/挑战杯技术开发总规.md`：现状审计（D1-D7 缺陷含 selectedAgentIds 假交互、difficulty 0.42 硬编码、进程内 Run 无持久化）、目标架构、API 契约、九组领域表、BKT/难度校准/苏格拉底/混合检索算法、迁移流程、任务顺序与量化验收。
+- 新增 docker-compose.yml（pgvector/pg16 + redis7，api/worker 为 full profile）+ Dockerfile + deploy/db/init 扩展脚本；用户已将 Docker Desktop 安装至 D:\ZPan\docker（数据盘随之在 D 盘）。
+- 本机原生 PostgreSQL 占用 5432 导致连接串认错服务，容器端口改映射 15432/16379 并写入 .env；PostgreSQL + Redis 容器 healthy 运行。
+- drizzle：server/db/schema.ts 落地九组领域表（含 document_chunks 1024 维 vector + GIN 全文 + HNSW 索引、study_runs/study_run_nodes/run_events、claims/debate_issues/audit_decisions、evaluation_cases/results）；drizzle-kit migrate 在本机静默退出，改用编程式 migrator（scripts/db-migrate.ts）。
+- 新增幂等迁移程序 scripts/migrate-sqlite-to-pg.ts：源库只读、指纹幂等跳过、分批 COPY（5000 行/批）、表级行数校验、Metro 时间边界校验、源 CSV SHA256（缺失时如实标注数据准备状态）、迁移报告 JSON、--dry-run/--force/--cutover。
+- 真实迁移完成：26 表全部校验通过，metro_readings 1,516,948 行（47 秒），时间边界源目标一致；幂等重跑 26 表全部跳过；claims.learner_id 由 learning_assets 回填成功。
+- 新增 server/runs 协议与动态 DAG 编排器：StudyRunRequest/StudyRunPlan/RunEvent/SSE 帧格式；planStudyRun 纯函数（auto 全链路 + 风险信号从严；custom 模式 selectedAgentIds 真实裁剪业务节点、业务角色 ≥3 且资源生成不可取消、四个门禁节点不可移除）；validatePlan 校验依赖闭合/无环/门禁齐全；6 个单元测试。
+- isLearningResourceType 收口到 src/learning/types.ts 作为唯一定义；tsconfig typecheck 范围扩至 server/db、server/runs、scripts（server/index.ts 存量严格模式错误不在本轮范围）。
+- 验证：类型检查 0 错误、101 测试全过、tsup 与 Next 构建通过；3001/3000 服务已重启正常；迁移后运行数据源仍为 SQLite，`--cutover` 待人工确认执行。
+
 # 2026-08-28 产品边界与旧包袱收口完成
 
 - 前端入口从 3745 行旧通用工作台收敛为精简产品壳，只保留登录、路径、协同学习和资源学习；移除不可达代码与 `@ts-nocheck`。

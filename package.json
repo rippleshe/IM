@@ -62,6 +62,9 @@
     "dev:web": "pnpm --dir web dev",
     "dev:full": "concurrently \"pnpm server\" \"pnpm dev:web\"",
     "data:metropt": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/setup-metropt.ps1",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "tsx scripts/db-migrate.ts",
+    "migrate:sqlite-to-pg": "tsx scripts/migrate-sqlite-to-pg.ts",
     "start": "node dist/server.js"
   },
   "keywords": [
@@ -92,9 +95,12 @@
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/node": "^20.11.0",
+    "@types/pg": "^8.23.1",
+    "@types/pg-copy-streams": "^1.2.5",
     "@typescript-eslint/eslint-plugin": "^7.18.0",
     "@typescript-eslint/parser": "^7.18.0",
     "concurrently": "^10.0.3",
+    "drizzle-kit": "^0.31.10",
     "eslint": "^8.56.0",
     "tsup": "^8.0.1",
     "tsx": "^4.20.6",
@@ -105,9 +111,14 @@
     "node": ">=18.0.0"
   },
   "dependencies": {
+    "bullmq": "^6.3.1",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
+    "drizzle-orm": "^0.45.2",
     "express": "^5.2.1",
-    "openai": "^6.39.1"
+    "ioredis": "^6.0.0",
+    "openai": "^6.39.1",
+    "pg": "^8.23.0",
+    "pg-copy-streams": "^7.0.0"
   }
 }

@@ -6,6 +6,14 @@ export type LearningResourceType =
   | 'tiered_quiz'
   | 'challenge_task';
 
+const LEARNING_RESOURCE_TYPE_VALUES: readonly LearningResourceType[] = [
+  'lecture', 'concept_map', 'practice_guide', 'review_cards', 'tiered_quiz', 'challenge_task',
+];
+
+export function isLearningResourceType(value: unknown): value is LearningResourceType {
+  return typeof value === 'string' && (LEARNING_RESOURCE_TYPE_VALUES as readonly string[]).includes(value);
+}
+
 export type EvidenceSourceType = 'dataset' | 'document' | 'learner_state' | 'upload';
 export type RetrievalMethod = 'sql' | 'fts' | 'vector' | 'none';
 export type EvidenceScope = 'system' | 'session_upload' | 'learner_private';

@@ -1,0 +1,85 @@
+# IM-Training-Agent 挑战杯运行拓扑（docs/挑战杯技术开发总规.md §2.1）
+# 开发期默认只起 postgres + redis；api/worker 用 --profile full 一键容器化。
+# PostgreSQL 是唯一业务数据源；Redis 只负责 BullMQ 队列、分布式锁与 run 事件分发。
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: im-training-agent-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-im_training}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-im_training_dev}
+      POSTGRES_DB: ${POSTGRES_DB:-im_training}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./deploy/db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-im_training} -d ${POSTGRES_DB:-im_training}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    container_name: im-training-agent-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "no", "--save", ""]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  api:
+    profiles: ["full"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: im-training-agent-api
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      DATABASE_URL: postgres://${POSTGRES_USER:-im_training}:${POSTGRES_PASSWORD:-im_training_dev}@postgres:5432/${POSTGRES_DB:-im_training}
+      REDIS_URL: redis://redis:6379
+      DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY}
+      DASHSCOPE_BASE_URL: ${DASHSCOPE_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
+      QWEN_MODEL: ${QWEN_MODEL:-qwen-plus}
+    ports:
+      - "3001:3001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker:
+    profiles: ["full"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: im-training-agent-worker
+    restart: unless-stopped
+    command: ["node", "dist/worker.js"]
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://${POSTGRES_USER:-im_training}:${POSTGRES_PASSWORD:-im_training_dev}@postgres:5432/${POSTGRES_DB:-im_training}
+      REDIS_URL: redis://redis:6379
+      DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY}
+      DASHSCOPE_BASE_URL: ${DASHSCOPE_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
+      QWEN_MODEL: ${QWEN_MODEL:-qwen-plus}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  redisdata:

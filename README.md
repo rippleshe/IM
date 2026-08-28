@@ -211,6 +211,20 @@ pnpm --dir web dev
 
 默认地址：`http://localhost:3000`
 
+### 平台基础设施：PostgreSQL + Redis（挑战杯主线）
+
+技术总规见 `docs/挑战杯技术开发总规.md`。PostgreSQL 16 + pgvector 是唯一业务数据源，Redis 7 只负责 BullMQ 队列、锁与 run 事件分发。两者以 Docker 容器运行（数据落在 Docker 的数据磁盘中）：
+
+```bash
+docker compose up -d postgres redis   # 启动数据库与队列
+pnpm db:migrate                       # 应用 PostgreSQL schema 迁移
+pnpm migrate:sqlite-to-pg --dry-run   # 只读校验源 SQLite：各表指纹与行数
+pnpm migrate:sqlite-to-pg             # 幂等迁移：表级事务、分批 COPY、行数/时间边界校验、迁移报告
+pnpm migrate:sqlite-to-pg --cutover   # 全部校验通过后标记切换运行数据源
+```
+
+`.env` 中配置 `DATABASE_URL` 与 `REDIS_URL`（见 `.env.example`）。注意：若本机 5432/6379 已被原生服务占用，在 `.env` 中改用 `POSTGRES_PORT`/`REDIS_PORT` 指定空闲端口。迁移完成并通过校验前，运行时数据源保持 SQLite；迁移全程只读源库，SQLite 仅作可恢复备份。
+
 ### 同时启动
 
 ```bash

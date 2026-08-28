@@ -25,6 +25,7 @@ server/public/*.txt
 # Local runtime data
 .im-training-agent/
 data/datasets/metropt/MetroPT3(AirCompressor).csv
+data/migration-report-*.json
 
 # IDE
 .vscode/
