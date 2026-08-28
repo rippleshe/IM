@@ -140,3 +140,12 @@
 - 浏览器实测注册流：注册 → 建档向导 → 工作台 15 节点路径，全链路通（建档端点 12 秒预算内 LLM 不及则回退内置树，现场演示即时可用；已留 live-demo 账号作为新用户全流程演示）。
 - 环境注意：.env 中含 # 的值必须加引号（dotenv 把 # 当行内注释），演示密码已改为带引号的 Zbt2026-Demo-Learner。
 - 验证：typecheck 0 错、115 测试全过、服务/worker 重启后登录正常。
+
+# 2026-08-28 深度审计：旧平铺路径系统全套退役
+
+- 审计结论：quiz 判分 BKT 链路、检索 FTS→LIKE 回退、难度校准（0.5 兜底 + calibration 覆盖）、web 组件引用、npm 依赖全部核验无误；真正的旧包袱是**旧版同步生成管线**（前端零调用）。
+- 删除三个死端点：GET /api/learning/path（旧平铺路径）、POST /api/learning/context/sync（旧同步全量生成，绕过 DAG）、POST /api/learning/resources/generate（单资源旁路，绕过难度校准）。
+- 删除孤儿代码：generateLearningPath/fallbackPath/normalizePathItems/GeneratedPathItem、LearningStore 的 ensureInitialPath/replacePath/getPath、LearningPathItemView 类型、resource-builder 孤儿 import。
+- 数据层退役：SQLite 停建 learning_path_items 并在初始化时 DROP 遗留表；PG schema 移除 learningPathItems，新增迁移 0002_drop_legacy_path_items（DROP TABLE IF EXISTS）并已应用；sqlite→pg 迁移脚本同步移除该表映射。
+- 保留项说明：socraticPriority（苏格拉底多轮功能原语，有测试）；AUTO_ASSET_TYPES（设置页在用）。
+- 回归：typecheck 0 错、115 测试全过；重启后已删端点 404（无 cookie 时被登录中间件 401 先拦属预期）、path-graph/profile 正常、浏览器抽查路径页 15 节点正常渲染。

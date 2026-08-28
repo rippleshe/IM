@@ -164,19 +164,6 @@ export const bktUpdates = pgTable('bkt_updates', {
   createdAt: ms('created_at').notNull(),
 }, (t) => [index('idx_bkt_updates_learner').on(t.learnerId, t.knowledgePointId, t.createdAt)]);
 
-export const learningPathItems = pgTable('learning_path_items', {
-  id: text('id').primaryKey(),
-  learnerId: text('learner_id').notNull(),
-  knowledgePointId: text('knowledge_point_id').notNull(),
-  title: text('title').notNull(),
-  status: text('status').notNull(),
-  priority: integer('priority').notNull(),
-  reason: text('reason').notNull(),
-  completionCriteria: text('completion_criteria').notNull(),
-  recommendedResourceType: text('recommended_resource_type').notNull(),
-  updatedAt: ms('updated_at').notNull(),
-});
-
 export const learningPathNodes = pgTable('learning_path_nodes', {
   id: text('id').primaryKey(),
   learnerId: text('learner_id').notNull(),

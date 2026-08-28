@@ -88,11 +88,6 @@ const TABLES: TableMapping[] = [
       t('attempt_count', 'attempt_count', 'int'), t('correct_count', 'correct_count', 'int'), t('updated_at', 'updated_at', 'int')],
   },
   {
-    table: 'learning_path_items', sourceFile: 'learning',
-    columns: [t('id'), t('learner_id'), t('knowledge_point_id'), t('title'), t('status'), t('priority', 'priority', 'int'),
-      t('reason'), t('completion_criteria'), t('recommended_resource_type'), t('updated_at', 'updated_at', 'int')],
-  },
-  {
     table: 'learning_path_nodes', sourceFile: 'learning',
     columns: [t('id'), t('learner_id'), t('knowledge_point_id'), t('title'), t('description'), t('user_status'),
       t('mastered', 'mastered', 'bool'), t('sort_order', 'sort_order', 'int'), t('created_at', 'created_at', 'int'), t('updated_at', 'updated_at', 'int')],

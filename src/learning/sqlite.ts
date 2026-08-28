@@ -141,18 +141,6 @@ export function initializeLearningDatabase(db: SqliteDatabase): void {
       duration_ms INTEGER NOT NULL DEFAULT 0,
       created_at INTEGER NOT NULL
     );
-    CREATE TABLE IF NOT EXISTS learning_path_items (
-      id TEXT PRIMARY KEY,
-      learner_id TEXT NOT NULL,
-      knowledge_point_id TEXT NOT NULL,
-      title TEXT NOT NULL,
-      status TEXT NOT NULL,
-      priority INTEGER NOT NULL,
-      reason TEXT NOT NULL,
-      completion_criteria TEXT NOT NULL,
-      recommended_resource_type TEXT NOT NULL,
-      updated_at INTEGER NOT NULL
-    );
     CREATE TABLE IF NOT EXISTS learner_profile_snapshots (
       id TEXT PRIMARY KEY,
       learner_id TEXT NOT NULL,
@@ -297,6 +285,8 @@ export function initializeLearningDatabase(db: SqliteDatabase): void {
   ensureColumn(db, 'learning_assets', 'difficulty', 'REAL');
   ensureColumn(db, 'learning_assets', 'difficulty_calibration', 'TEXT');
   ensureColumn(db, 'diagnostic_sessions', 'result_json', "TEXT NOT NULL DEFAULT '{}'");
+  // 旧平铺路径表退役（学习路径唯一数据源是 learning_path_nodes/edges 图表）：启动即清理遗留
+  db.exec('DROP TABLE IF EXISTS learning_path_items');
 }
 
 export function initializeDatasetDatabase(db: SqliteDatabase): void {

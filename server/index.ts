@@ -44,7 +44,6 @@ import { fallbackPathGraph, generateInitialPathGraph } from './initial-path.js';
 import { evidenceService, learningStore, identityStore, datasetDb } from './study-context.js';
 import type { AuthenticatedLearner, OnboardingInput } from '../src/learning/identity.js';
 import type { LearningPathEdgeView, LearningPathNodeView, LearningPathRevisionInput } from '../src/learning/store.js';
-import { buildLlmResourceDocument, buildResourceDraft } from '../src/learning/resource-builder.js';
 import { auditResource } from '../src/learning/audit.js';
 import type { LearningResourceType, ResourceDocument } from '../src/learning/types.js';
 
@@ -122,66 +121,7 @@ function requireLearner(req: express.Request, res: express.Response): Authentica
   return learner;
 }
 
-type GeneratedPathItem = {
-  knowledgePointId: string;
-  title: string;
-  status: 'active' | 'pending' | 'completed';
-  priority: number;
-  reason: string;
-  completionCriteria: string;
-  recommendedResourceType: string;
-};
-
 type GeneratedPathGraph = import('./initial-path.js').GeneratedPathGraph;
-
-
-function fallbackPath(goal: string): GeneratedPathItem[] {
-  const shortGoal = goal.replace(/\s+/g, ' ').trim().slice(0, 48) || '当前学习目标';
-  return [
-    { knowledgePointId: 'goal-understanding', title: `明确“${shortGoal}”的核心概念`, status: 'active', priority: 1, reason: '先建立概念边界和可验证目标', completionCriteria: '能用自己的话解释核心概念，并指出一个例子', recommendedResourceType: 'lecture' },
-    { knowledgePointId: 'goal-evidence', title: '用数据或实例验证理解', status: 'pending', priority: 2, reason: '把概念转成可观察、可检查的证据', completionCriteria: '完成一组基础练习并说明判断依据', recommendedResourceType: 'tiered_quiz' },
-    { knowledgePointId: 'goal-application', title: '完成一次迁移应用', status: 'pending', priority: 3, reason: '检验能否把知识用于新问题', completionCriteria: '提交一个完整应用方案并标注不确定性', recommendedResourceType: 'practice_guide' },
-    { knowledgePointId: 'goal-review', title: '复盘结果并调整下一步', status: 'pending', priority: 4, reason: '根据学习证据决定是否补充前置知识', completionCriteria: '总结错误原因并确定下一项任务', recommendedResourceType: 'concept_map' },
-  ];
-}
-
-function normalizePathItems(value: unknown, goal: string): GeneratedPathItem[] {
-  const list = Array.isArray(value) ? value : [];
-  const items = list.map((raw, index) => {
-    const item = raw as Record<string, unknown>;
-    const status = item.status === 'completed' || item.status === 'active' ? item.status : 'pending';
-    const recommendedResourceType = ['lecture', 'tiered_quiz', 'practice_guide', 'concept_map'].includes(String(item.recommendedResourceType))
-      ? String(item.recommendedResourceType)
-      : 'lecture';
-    return {
-      knowledgePointId: String(item.knowledgePointId || item.knowledge_point_id || `goal-${index + 1}`),
-      title: String(item.title || `学习任务 ${index + 1}`),
-      status,
-      priority: Number(item.priority) || index + 1,
-      reason: String(item.reason || '由当前学习目标生成'),
-      completionCriteria: String(item.completionCriteria || item.completion_criteria || '完成任务并提交可验证结果'),
-      recommendedResourceType,
-    } satisfies GeneratedPathItem;
-  }).filter((item) => item.title.trim());
-  return items.length >= 2 ? items.slice(0, 8) : fallbackPath(goal);
-}
-
-async function generateLearningPath(goal: string, model: string | undefined, thinking: { temperature: number; maxTokens: number }): Promise<GeneratedPathItem[]> {
-  const response = await multiModelClient.simple({
-    messages: [
-      {
-        role: 'system',
-        content: '你是学习路径规划器。只输出 JSON 数组，不要 Markdown。每个元素必须包含 knowledgePointId、title、status、priority、reason、completionCriteria、recommendedResourceType。status 只能是 active、pending、completed；recommendedResourceType 只能是 lecture、tiered_quiz、practice_guide、concept_map。生成 3 到 6 个可执行学习任务，第一项必须是 active。',
-      },
-      { role: 'user', content: `学习目标：${goal}` },
-    ],
-    model,
-    temperature: thinking.temperature,
-    maxTokens: Math.min(thinking.maxTokens, 4096),
-  });
-  const parsed = parseJson<unknown>(response.text);
-  return normalizePathItems(parsed, goal);
-}
 
 async function generateProfileSnapshot(learnerId: string, model: string | undefined, thinking: { temperature: number; maxTokens: number }) {
   const current = learningStore.getProfile(learnerId);
@@ -763,12 +703,6 @@ app.get('/api/learning/assets', (req, res) => {
   res.json({ success: true, learnerId: learner.id, assets: learningStore.listAssets(learner.id) });
 });
 
-app.get('/api/learning/path', (req, res) => {
-  const learner = requireLearner(req, res);
-  if (!learner) return;
-  res.json({ success: true, learnerId: learner.id, path: learningStore.getPath(learner.id) });
-});
-
 app.get('/api/learning/profile', (req, res) => {
   const learner = requireLearner(req, res);
   if (!learner) return;
@@ -792,90 +726,6 @@ app.get('/api/learning/evidence', (req, res) => {
   if (!learner) return;
   const limit = typeof req.query.limit === 'string' ? Number(req.query.limit) : 20;
   res.json({ success: true, evidence: learningStore.listEvidence(learner.id, Number.isFinite(limit) ? limit : 20) });
-});
-
-app.post('/api/learning/context/sync', async (req, res) => {
-  const learner = requireLearner(req, res);
-  if (!learner) return;
-  const goal = typeof req.body?.goal === 'string' ? req.body.goal.trim() : '';
-  const sessionId = typeof req.body?.sessionId === 'string' ? req.body.sessionId : undefined;
-  const temporaryReference = req.body?.temporaryReference && typeof req.body.temporaryReference === 'object'
-    ? {
-        name: typeof req.body.temporaryReference.name === 'string' ? req.body.temporaryReference.name : '临时参考资料',
-        content: typeof req.body.temporaryReference.content === 'string' ? req.body.temporaryReference.content.slice(0, 120_000) : '',
-      }
-    : undefined;
-  if (!goal) {
-    res.status(400).json({ success: false, error: 'goal is required' });
-    return;
-  }
-  try {
-    const thinking = getThinkingSettings(req.body?.thinkingDepth);
-    const model = getRequestedModel(req.body?.model);
-    const evidencePack = evidenceService.buildEvidencePack(goal, { learnerId: learner.id, sessionId, temporaryReference });
-    let pathItems: GeneratedPathItem[];
-    try {
-      pathItems = await generateLearningPath(goal, model, thinking);
-    } catch (error) {
-      console.warn('Learning path generation fell back:', error instanceof Error ? error.message : String(error));
-      pathItems = fallbackPath(goal);
-    }
-    const path = learningStore.replacePath(learner.id, pathItems);
-    learningStore.recordLearningEvent(learner.id, 'learning_task', { goal, sessionId, evidenceCount: evidencePack.items.length });
-
-    const assets = runtimeWorkbenchSettings.autoAssetTypes
-      .map((type) => {
-        const activeKnowledgePointId = pathItems.find((item) => item.status === 'active')?.knowledgePointId ?? pathItems[0]?.knowledgePointId;
-        const resource = buildResourceDraft(sessionId ?? `training-${Date.now()}`, goal, type, evidencePack, activeKnowledgePointId);
-        const audit = auditResource(resource, evidencePack);
-        const publication = resolveResourcePublication(audit.summary.status);
-        const auditedResource = {
-          ...resource,
-          evidencePackId: evidencePack.id,
-          auditSummary: audit.summary,
-          auditStatus: publication.auditStatus,
-        };
-        learningStore.saveResourceAudit(auditedResource.id, audit.claims);
-        return { resource: auditedResource, persist: publication.persist };
-      })
-      .filter((result) => result.persist)
-      .map((result) => result.resource);
-    assets.forEach((resource) => learningStore.saveAsset(learner.id, sessionId, resource));
-
-    res.json({ success: true, path, assets, profile: learningStore.getProfile(learner.id), evidencePack });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error instanceof Error ? error.message : String(error) });
-  }
-});
-
-app.post('/api/learning/resources/generate', (req, res) => {
-  const learner = requireLearner(req, res);
-  if (!learner) return;
-  const query = typeof req.body?.query === 'string' ? req.body.query.trim() : '';
-  const sessionId = typeof req.body?.sessionId === 'string' ? req.body.sessionId : undefined;
-  const knowledgePointId = typeof req.body?.knowledgePointId === 'string' ? req.body.knowledgePointId : undefined;
-  const type: LearningResourceType = isLearningResourceType(req.body?.type) ? req.body.type : 'lecture';
-  if (!query) {
-    res.status(400).json({ success: false, error: 'query is required' });
-    return;
-  }
-  try {
-    const evidencePack = evidenceService.buildEvidencePack(query, { learnerId: learner.id, sessionId });
-    const resource = buildResourceDraft(sessionId ?? `training-${Date.now()}`, query, type, evidencePack, knowledgePointId);
-    const audit = auditResource(resource, evidencePack);
-    const publication = resolveResourcePublication(audit.summary.status);
-    const auditedResource = {
-      ...resource,
-      evidencePackId: evidencePack.id,
-      auditSummary: audit.summary,
-      auditStatus: publication.auditStatus,
-    };
-    learningStore.saveResourceAudit(auditedResource.id, audit.claims);
-    if (publication.persist) learningStore.saveAsset(learner.id, sessionId, auditedResource);
-    res.json({ success: true, resource: auditedResource, evidencePack, audit });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error instanceof Error ? error.message : String(error) });
-  }
 });
 
 app.get('/api/learning/assets/:assetId/export', (req, res) => {

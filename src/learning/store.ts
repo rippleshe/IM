@@ -4,17 +4,6 @@ import type { SqliteDatabase } from './sqlite.js';
 import type { QuizQuestion, ResourceDocument } from './types.js';
 import type { ClaimAuditRecord } from './audit.js';
 
-export interface LearningPathItemView {
-  id: string;
-  knowledgePointId: string;
-  title: string;
-  status: string;
-  priority: number;
-  reason: string;
-  completionCriteria: string;
-  recommendedResourceType: string;
-}
-
 export interface LearningPathNodeView {
   id: string;
   knowledgePointId: string;
@@ -451,57 +440,6 @@ export class LearningStore {
       DELETE FROM learning_path_items
       WHERE learner_id = ? AND id IN ('path-evidence-reading', 'path-practice-case', 'path-quiz-feedback')
     `).run(learnerId);
-  }
-
-  ensureInitialPath(learnerId: string): void {
-    // 路径只由一次真实学习任务生成，不在这里注入演示节点。
-    void learnerId;
-  }
-
-  replacePath(
-    learnerId: string,
-    items: Array<{
-      knowledgePointId: string;
-      title: string;
-      status: string;
-      priority: number;
-      reason: string;
-      completionCriteria: string;
-      recommendedResourceType: string;
-    }>,
-  ): LearningPathItemView[] {
-    const insert = this.db.prepare(`
-      INSERT INTO learning_path_items
-        (id, learner_id, knowledge_point_id, title, status, priority, reason, completion_criteria, recommended_resource_type, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-    const now = Date.now();
-    this.db.prepare('DELETE FROM learning_path_items WHERE learner_id = ?').run(learnerId);
-    items.forEach((item, index) => {
-      insert.run(
-        `path-${randomUUID()}`,
-        learnerId,
-        item.knowledgePointId || `goal-${index + 1}`,
-        item.title,
-        item.status,
-        item.priority || index + 1,
-        item.reason,
-        item.completionCriteria,
-        item.recommendedResourceType,
-        now,
-      );
-    });
-    return this.getPath(learnerId);
-  }
-
-  getPath(learnerId: string): LearningPathItemView[] {
-    this.ensureInitialPath(learnerId);
-    return this.db.prepare(`
-      SELECT id, knowledge_point_id AS knowledgePointId, title, status, priority,
-        reason, completion_criteria AS completionCriteria,
-        recommended_resource_type AS recommendedResourceType
-      FROM learning_path_items WHERE learner_id = ? ORDER BY priority ASC
-    `).all(learnerId) as LearningPathItemView[];
   }
 
   replacePathGraph(
