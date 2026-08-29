@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { AuthEntry, type AuthenticatedUser } from "@/components/auth-entry";
+import { DiagnosticFlow } from "@/components/diagnostic-flow";
 import { LearningPathWorkbench } from "@/components/learning-path-workbench";
 import { LearningWorkbench } from "@/components/learning-workbench";
 import { ResourceWorkbench } from "@/components/resource-workbench";
@@ -35,6 +36,11 @@ export default function LearningApp() {
 
   if (!user || !user.onboardingCompleted) {
     return <AuthEntry apiBase={API_BASE} user={user} onAuthenticated={setUser} />;
+  }
+
+  // 建档后强制进入 12 题初始诊断（总规 §4 产品闭环）；演示种子账号已预置诊断结果
+  if (!user.diagnosticCompleted) {
+    return <DiagnosticFlow apiBase={API_BASE} user={user} onFinished={setUser} />;
   }
 
   const sharedProps = {

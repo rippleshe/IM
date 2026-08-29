@@ -70,7 +70,8 @@
     "docs:ingest": "tsx scripts/ingest-docs.ts",
     "docs:embed": "tsx scripts/embed-documents.ts",
     "worker": "tsx server/worker.ts",
-    "start": "node dist/server.js"
+    "start": "node dist/server.js",
+    "db:bootstrap": "tsx scripts/db-bootstrap.ts"
   },
   "keywords": [
     "multi-agent",

@@ -45,6 +45,7 @@ import { fallbackPathGraph, generateInitialPathGraph } from './initial-path.js';
 import { dataSource, evidenceService, learningStore, identityStore, datasetDb } from './study-context.js';
 import { getLearningDatabase } from './db/client.js';
 import { generateProfileSnapshot } from './profile-snapshot.js';
+import { buildProfileInsights } from './profile-insights.js';
 import { AVATAR_IMAGE_MAX_CHARS } from '../src/learning/identity.js';
 import type { AuthenticatedLearner, OnboardingInput } from '../src/learning/identity.js';
 import type { LearningPathEdgeView, LearningPathNodeView, LearningPathRevisionInput } from '../src/learning/store.js';
@@ -218,8 +219,15 @@ async function respondToLearningConversation(learnerId: string, prompt: string):
     : await learningStore.getProfile(learnerId);
   return { assistant, pathChanged: result.changed, profile, activities };
 }
+/** 身份响应统一附加 diagnosticCompleted：前端据此决定是否强制进入 12 题诊断（总规 §3、§4 产品闭环） */
+async function serializeLearner(user: AuthenticatedLearner | null): Promise<AuthenticatedLearner | null> {
+  if (!user) return null;
+  const latest = await learningStore.getLatestDiagnosticSession(user.id);
+  return { ...user, diagnosticCompleted: Boolean(latest) };
+}
+
 app.get('/api/auth/me', async (req, res) => {
-  res.json({ success: true, user: await getRequestLearner(req) });
+  res.json({ success: true, user: await serializeLearner(await getRequestLearner(req)) });
 });
 
 app.patch('/api/auth/avatar', async (req, res) => {
@@ -361,7 +369,7 @@ app.post('/api/auth/register', async (req, res) => {
     });
     const session = await identityStore.createSession(user.id);
     setAuthCookie(res, session.token, session.expiresAt);
-    res.status(201).json({ success: true, user });
+    res.status(201).json({ success: true, user: { ...user, diagnosticCompleted: false } });
   } catch (error) {
     res.status(400).json({ success: false, error: error instanceof Error ? error.message : String(error) });
   }
@@ -378,7 +386,7 @@ app.post('/api/auth/login', async (req, res) => {
   }
   const session = await identityStore.createSession(user.id);
   setAuthCookie(res, session.token, session.expiresAt);
-  res.json({ success: true, user });
+  res.json({ success: true, user: await serializeLearner(user) });
 });
 
 app.post('/api/auth/logout', async (req, res) => {
@@ -429,7 +437,7 @@ app.post('/api/auth/onboarding', async (req, res) => {
       console.warn('Initial profile generation skipped:', error instanceof Error ? error.message : String(error));
       profile = await learningStore.getProfile(learner.id);
     }
-    res.json({ success: true, user: { ...learner, onboardingCompleted: true }, onboarding, path, profile });
+    res.json({ success: true, user: { ...learner, onboardingCompleted: true, diagnosticCompleted: false }, onboarding, path, profile });
   } catch (error) {
     res.status(400).json({ success: false, error: error instanceof Error ? error.message : String(error) });
   }
@@ -705,7 +713,22 @@ app.get('/api/learning/assets', async (req, res) => {
 app.get('/api/learning/profile', async (req, res) => {
   const learner = await requireLearner(req, res);
   if (!learner) return;
-  res.json({ success: true, profile: await learningStore.getProfile(learner.id) });
+  const profile = await learningStore.getProfile(learner.id);
+  const insights = await buildProfileInsights(learner.id);
+  res.json({ success: true, profile: { ...profile, ...insights } });
+});
+
+/** BKT 更新审计（总规 §7.1）：每次状态变更的前后值与触发事件，可回溯 */
+app.get('/api/learning/bkt-updates', async (req, res) => {
+  const learner = await requireLearner(req, res);
+  if (!learner) return;
+  const limit = Math.max(1, Math.min(Number(req.query.limit) || 30, 100));
+  const result = await getLearningDatabase().pool.query(
+    `SELECT id, knowledge_point_id AS "knowledgePointId", trigger_type AS "triggerType",
+       before, after, created_at AS "createdAt"
+     FROM bkt_updates WHERE learner_id = $1 ORDER BY created_at DESC LIMIT $2`, [learner.id, limit],
+  );
+  res.json({ success: true, updates: result.rows });
 });
 
 app.post('/api/learning/profile/regenerate', async (req, res) => {

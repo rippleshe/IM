@@ -14,6 +14,11 @@ export type LearningProfile = {
   assetsCount?: number;
   todayAssetsCount?: number;
   accuracy?: number | null;
+  /** 画像洞见（server/profile-insights.ts 确定性推导） */
+  blindSpots?: Array<{ knowledgePointId: string; label: string; pMastery: number; confidence: number; attemptCount: number; reason: string }>;
+  difficultyCurve?: Array<{ knowledgePointId: string; label: string; pMastery: number; confidence: number; prereqReadiness: number; targetDifficulty: number; expectedSuccessRate: number }>;
+  resourceMatch?: Array<{ resourceType: string; label: string; targetDifficulty: number; expectedSuccessRate: number; suitability: "recommended" | "ok" | "stretch"; note: string }>;
+  latestDiagnostic?: { total: number; correct: number; createdAt: number } | null;
 };
 
 type ProfileDialogProps = {
@@ -191,6 +196,48 @@ export function ProfileDialog({ apiBase, user, headerRight, extraMetrics = [], o
         </div>
 
         {profile?.radar?.length ? <div className="mt-5 rounded-xl border p-4"><ProfileRadar items={profile.radar} /></div> : null}
+
+        {(profile?.blindSpots?.length ?? 0) > 0 && (
+          <div className="mt-5">
+            <div className="text-xs font-medium text-muted-foreground">知识盲区（作答与诊断证据驱动）</div>
+            <div className="mt-2 space-y-2">
+              {profile!.blindSpots!.map((spot) => <div key={spot.knowledgePointId} className="rounded-xl border border-amber-200/70 bg-amber-50/50 p-3 text-xs">
+                <div className="flex items-center justify-between gap-2"><span className="font-semibold">{spot.label}</span><span className="text-amber-700">掌握 {Math.round(spot.pMastery * 100)}%</span></div>
+                <p className="mt-1 leading-5 text-muted-foreground">{spot.reason}</p>
+              </div>)}
+            </div>
+          </div>
+        )}
+
+        {(profile?.difficultyCurve?.length ?? 0) > 0 && (
+          <div className="mt-5">
+            <div className="text-xs font-medium text-muted-foreground">难度匹配曲线（目标成功率 65%–80%）</div>
+            <div className="mt-2 space-y-2.5 rounded-xl border p-4">
+              {profile!.difficultyCurve!.map((point) => <div key={point.knowledgePointId} className="text-xs">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-medium">{point.label}</span>
+                  <span className="text-muted-foreground">建议难度 {Math.round(point.targetDifficulty * 100)}% · 预计成功率 {Math.round(point.expectedSuccessRate * 100)}%</span>
+                </div>
+                <div className="mt-1.5 flex items-center gap-2">
+                  <span className="h-2 flex-1 overflow-hidden rounded-full bg-muted"><span className="block h-full rounded-full bg-foreground/65" style={{ width: `${Math.round(point.targetDifficulty * 100)}%` }} /></span>
+                  <span className="w-24 shrink-0 text-right text-[10px] text-muted-foreground">掌握 {Math.round(point.pMastery * 100)}% · 先修 {Math.round(point.prereqReadiness * 100)}%</span>
+                </div>
+              </div>)}
+            </div>
+          </div>
+        )}
+
+        {(profile?.resourceMatch?.length ?? 0) > 0 && (
+          <div className="mt-5">
+            <div className="text-xs font-medium text-muted-foreground">资源匹配建议</div>
+            <div className="mt-2 grid gap-2 sm:grid-cols-2">
+              {profile!.resourceMatch!.map((item) => <div key={item.resourceType} className={`rounded-xl border p-3 text-xs ${item.suitability === "recommended" ? "border-emerald-300 bg-emerald-50/50" : "border-border bg-background"}`}>
+                <div className="flex items-center justify-between gap-2"><span className="font-semibold">{item.label}</span><span className="text-muted-foreground">难度 {Math.round(item.targetDifficulty * 100)}%</span></div>
+                <p className="mt-1 leading-5 text-muted-foreground">{item.note}</p>
+              </div>)}
+            </div>
+          </div>
+        )}
 
         <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
           {metrics.map((metric) => <div key={metric.label} className="rounded-xl border bg-background p-3"><div className="text-[11px] text-muted-foreground">{metric.label}</div><div className="mt-1 text-base font-semibold">{metric.value}</div></div>)}

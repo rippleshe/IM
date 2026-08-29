@@ -11,6 +11,8 @@ export interface AuthenticatedLearner {
   /** 用户自传头像（canvas 缩图后的 data URL，≤200KB）；空 = 用 avatarKey 色块首字母 */
   avatarImage: string | null;
   onboardingCompleted: boolean;
+  /** 是否已完成 12 题初始诊断（API 层按诊断会话计算，非 users 列） */
+  diagnosticCompleted?: boolean;
 }
 
 export const AVATAR_KEYS = ['graphite', 'ocean', 'violet', 'forest', 'amber', 'rose'] as const;

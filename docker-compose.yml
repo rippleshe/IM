@@ -36,6 +36,24 @@ services:
       timeout: 3s
       retries: 20
 
+  bootstrap:
+    profiles: ["full"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: im-training-agent-bootstrap
+    restart: "no"
+    command: ["node", "dist/db-bootstrap.js"]
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://${POSTGRES_USER:-im_training}:${POSTGRES_PASSWORD:-im_training_dev}@postgres:5432/${POSTGRES_DB:-im_training}
+    volumes:
+      # 完整 MetroPT-3 CSV 可选挂载（data/datasets/metropt/MetroPT3(AirCompressor).csv）
+      - ./data/datasets:/app/data/datasets:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   api:
     profiles: ["full"]
     build:
@@ -58,6 +76,24 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      bootstrap:
+        condition: service_completed_successfully
+
+  web:
+    profiles: ["full"]
+    build:
+      context: .
+      dockerfile: web/Dockerfile
+    container_name: im-training-agent-web
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      HOSTNAME: 0.0.0.0
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
 
   worker:
     profiles: ["full"]
