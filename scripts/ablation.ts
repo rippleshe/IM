@@ -14,7 +14,6 @@ import 'dotenv/config';
 import { mkdirSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { sql } from 'drizzle-orm';
 
 import { getLearningDatabase } from '../server/db/client.js';
 import { planStudyRun, type PlannerSignals } from '../server/runs/planner.js';
@@ -54,8 +53,8 @@ const PERSONA_SIGNALS: Record<string, PlannerSignals> = {
 };
 const NEUTRAL: PlannerSignals = { profileUncertainty: 0.5, knowledgeRisk: 0, evidenceCoverageHint: 'normal' };
 
-function planFingerprint(plan: { riskLevel: string; strictAdjudication: boolean; challengeFocus: string[] }): string {
-  return `${plan.riskLevel}|${plan.strictAdjudication}|${[...plan.challengeFocus].sort().join(',')}`;
+function planFingerprint(plan: { riskLevel: string; strict: boolean; challengeFocus: string[] }): string {
+  return `${plan.riskLevel}|${plan.strict}|${[...plan.challengeFocus].sort().join(',')}`;
 }
 
 async function main(): Promise<void> {
@@ -96,9 +95,9 @@ async function main(): Promise<void> {
     });
   }
   report.A1_dynamic_vs_fixed.dynamicDistinct =
-    new Set(report.A1_dynamic_vs_fixed.personaPlans.map((plan) => planFingerprint(plan as never))).size;
+    new Set(report.A1_dynamic_vs_fixed.personaPlans.map((plan) => planFingerprint(plan))).size;
   report.A1_dynamic_vs_fixed.fixedDistinct =
-    new Set(report.A1_dynamic_vs_fixed.fixedPlans.map((plan) => planFingerprint(plan as never))).size;
+    new Set(report.A1_dynamic_vs_fixed.fixedPlans.map((plan) => planFingerprint(plan))).size;
   report.A1_dynamic_vs_fixed.pass =
     report.A1_dynamic_vs_fixed.dynamicDistinct >= 2 && report.A1_dynamic_vs_fixed.fixedDistinct === 1;
 
@@ -177,4 +176,3 @@ main().catch((error) => {
   console.error('[ablation] 失败：', error instanceof Error ? error.message : error);
   process.exit(1);
 });
-void sql;

@@ -50,6 +50,13 @@
       "when": 1787994000000,
       "tag": "0006_run_idempotency",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1787995000000,
+      "tag": "0007_guidance_question",
+      "breakpoints": true
     }
   ]
 }

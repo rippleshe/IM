@@ -79,7 +79,6 @@ function criticalityOf(graph: LearningPathGraphView, nodeId: string | null, know
 }
 
 async function askQuestion(
-  learnerId: string,
   knowledgePointId: string,
   round: number,
   evidenceDigest: string,
@@ -119,7 +118,6 @@ async function askQuestion(
 }
 
 async function evaluateAnswer(
-  learnerId: string,
   knowledgePointId: string,
   question: string,
   answer: string,
@@ -180,7 +178,11 @@ export async function startGuidanceSession(learnerId: string, pathNodeId: string
 
   const pack = await learningStore.listEvidence(learnerId, 4);
   const evidenceDigest = pack.map((item) => `${item.sourceTitle}：${item.content.slice(0, 160)}`).join('\n');
-  const question = await askQuestion(learnerId, target.knowledgePointId, 1, evidenceDigest, []);
+  const question = await askQuestion(target.knowledgePointId, 1, evidenceDigest, []);
+  // 首轮问题落库：answerGuidanceSession 评价需要问题上下文
+  await getLearningDatabase().db.update(guidanceSessions)
+    .set({ currentQuestion: question })
+    .where(eq(guidanceSessions.id, sessionId));
 
   return {
     sessionId,
@@ -188,6 +190,7 @@ export async function startGuidanceSession(learnerId: string, pathNodeId: string
     label: labelOf(target.knowledgePointId) || KP_LABEL_FALLBACK,
     status: 'active',
     roundCount: 0,
+    maxRounds: SOCRATIC_MAX_ROUNDS,
     question: { round: 1, question },
     decision: null,
   };
@@ -219,9 +222,10 @@ export async function answerGuidanceSession(learnerId: string, sessionId: string
   const previousTurns = await database.db.select().from(guidanceTurns)
     .where(eq(guidanceTurns.sessionId, sessionId));
   const lastTurn = previousTurns.sort((a, b) => a.round - b.round).at(-1);
-  const questionText = lastTurn?.question ?? '';
+  // 当前问题优先取会话持久化的 currentQuestion（首轮评价必须有上下文）
+  const questionText = sessionRow.currentQuestion ?? lastTurn?.question ?? '';
 
-  const evaluation = await evaluateAnswer(learnerId, sessionRow.knowledgePointId, questionText, answer);
+  const evaluation = await evaluateAnswer(sessionRow.knowledgePointId, questionText, answer);
   const bktBefore = await learningStore.getSkillState(learnerId, sessionRow.knowledgePointId);
   const bktAfter = await learningStore.applySkillObservation(
     learnerId, sessionRow.knowledgePointId, evaluation.verdict === 'correct', `socratic_round_${round}`,
@@ -242,14 +246,14 @@ export async function answerGuidanceSession(learnerId: string, sessionId: string
 
   const continueSession = shouldContinueSocratic(round, bktAfter.confidence);
   if (continueSession) {
-    await database.db.update(guidanceSessions)
-      .set({ roundCount: round })
-      .where(eq(guidanceSessions.id, sessionId));
     const history = previousTurns.map((turn) => ({
       question: turn.question,
       evaluation: turn.evaluation,
     }));
-    const nextQuestion = await askQuestion(learnerId, sessionRow.knowledgePointId, round + 1, '', history);
+    const nextQuestion = await askQuestion(sessionRow.knowledgePointId, round + 1, '', history);
+    await database.db.update(guidanceSessions)
+      .set({ roundCount: round, currentQuestion: nextQuestion })
+      .where(eq(guidanceSessions.id, sessionId));
     return {
       sessionId,
       status: 'active',

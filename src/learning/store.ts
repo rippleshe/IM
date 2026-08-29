@@ -435,13 +435,6 @@ export class LearningStore {
       : message.metadata['surface'] !== 'study');
   }
 
-  clearLegacySeedPath(learnerId: string): void {
-    this.db.prepare(`
-      DELETE FROM learning_path_items
-      WHERE learner_id = ? AND id IN ('path-evidence-reading', 'path-practice-case', 'path-quiz-feedback')
-    `).run(learnerId);
-  }
-
   replacePathGraph(
     learnerId: string,
     nodes: Array<{ knowledgePointId: string; title: string; description: string; sortOrder?: number }>,

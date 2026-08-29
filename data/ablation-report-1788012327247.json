@@ -1,0 +1,325 @@
+{
+  "generatedAt": "2026-08-29T14:05:27.188Z",
+  "A1_dynamic_vs_fixed": {
+    "personaPlans": [
+      {
+        "persona": "learner-foundation",
+        "riskLevel": "high",
+        "strict": true,
+        "challengeFocus": [
+          "no_evidence",
+          "conflict",
+          "out_of_scope_causality",
+          "difficulty_mismatch"
+        ]
+      },
+      {
+        "persona": "learner-advanced",
+        "riskLevel": "low",
+        "strict": false,
+        "challengeFocus": [
+          "no_evidence",
+          "conflict",
+          "out_of_scope_causality"
+        ]
+      },
+      {
+        "persona": "learner-maintenance",
+        "riskLevel": "medium",
+        "strict": false,
+        "challengeFocus": [
+          "no_evidence",
+          "conflict",
+          "out_of_scope_causality",
+          "difficulty_mismatch"
+        ]
+      }
+    ],
+    "fixedPlans": [
+      {
+        "persona": "learner-foundation",
+        "riskLevel": "medium",
+        "strict": false,
+        "challengeFocus": [
+          "no_evidence",
+          "conflict",
+          "out_of_scope_causality",
+          "difficulty_mismatch"
+        ]
+      },
+      {
+        "persona": "learner-advanced",
+        "riskLevel": "medium",
+        "strict": false,
+        "challengeFocus": [
+          "no_evidence",
+          "conflict",
+          "out_of_scope_causality",
+          "difficulty_mismatch"
+        ]
+      },
+      {
+        "persona": "learner-maintenance",
+        "riskLevel": "medium",
+        "strict": false,
+        "challengeFocus": [
+          "no_evidence",
+          "conflict",
+          "out_of_scope_causality",
+          "difficulty_mismatch"
+        ]
+      }
+    ],
+    "dynamicDistinct": 3,
+    "fixedDistinct": 1,
+    "pass": true
+  },
+  "A2_gate_ablation": {
+    "runsAnalyzed": 20,
+    "draftHallucinationRate": null,
+    "releasedHallucinationRate": 0,
+    "revisedRuns": 0,
+    "note": "20 次发布的资源终轮 unsupported 声明为 0（发布幻觉率 <5% 达标）；修订触发 0 次。初稿幻觉率需 --live 全量评测逐轮快照，见评测报告。",
+    "pass": true
+  },
+  "A3_difficulty_ablation": {
+    "cases": [
+      {
+        "persona": "learner-foundation",
+        "knowledgePointId": "python-basics",
+        "pMastery": 0.45,
+        "calibratedExpected": 0.72,
+        "fixedExpected": 0.55
+      },
+      {
+        "persona": "learner-foundation",
+        "knowledgePointId": "python-control",
+        "pMastery": 0.12,
+        "calibratedExpected": 0.67,
+        "fixedExpected": 0.42
+      },
+      {
+        "persona": "learner-foundation",
+        "knowledgePointId": "python-data-structures",
+        "pMastery": 0.12,
+        "calibratedExpected": 0.67,
+        "fixedExpected": 0.42
+      },
+      {
+        "persona": "learner-foundation",
+        "knowledgePointId": "pandas-reading",
+        "pMastery": 0.45,
+        "calibratedExpected": 0.72,
+        "fixedExpected": 0.55
+      },
+      {
+        "persona": "learner-foundation",
+        "knowledgePointId": "pandas-filter",
+        "pMastery": 0.12,
+        "calibratedExpected": 0.67,
+        "fixedExpected": 0.42
+      },
+      {
+        "persona": "learner-foundation",
+        "knowledgePointId": "data-cleaning",
+        "pMastery": 0.12,
+        "calibratedExpected": 0.67,
+        "fixedExpected": 0.42
+      },
+      {
+        "persona": "learner-foundation",
+        "knowledgePointId": "statistics-basics",
+        "pMastery": 0.19,
+        "calibratedExpected": 0.7,
+        "fixedExpected": 0.46
+      },
+      {
+        "persona": "learner-foundation",
+        "knowledgePointId": "time-series-basics",
+        "pMastery": 0.12,
+        "calibratedExpected": 0.67,
+        "fixedExpected": 0.42
+      },
+      {
+        "persona": "learner-foundation",
+        "knowledgePointId": "anomaly-threshold",
+        "pMastery": 0.12,
+        "calibratedExpected": 0.67,
+        "fixedExpected": 0.42
+      },
+      {
+        "persona": "learner-foundation",
+        "knowledgePointId": "ai4i-overview",
+        "pMastery": 0.45,
+        "calibratedExpected": 0.72,
+        "fixedExpected": 0.55
+      },
+      {
+        "persona": "learner-foundation",
+        "knowledgePointId": "evidence-boundary",
+        "pMastery": 0.45,
+        "calibratedExpected": 0.72,
+        "fixedExpected": 0.55
+      },
+      {
+        "persona": "learner-advanced",
+        "knowledgePointId": "python-basics",
+        "pMastery": 0.45,
+        "calibratedExpected": 0.72,
+        "fixedExpected": 0.55
+      },
+      {
+        "persona": "learner-advanced",
+        "knowledgePointId": "python-control",
+        "pMastery": 0.45,
+        "calibratedExpected": 0.72,
+        "fixedExpected": 0.55
+      },
+      {
+        "persona": "learner-advanced",
+        "knowledgePointId": "python-data-structures",
+        "pMastery": 0.45,
+        "calibratedExpected": 0.72,
+        "fixedExpected": 0.55
+      },
+      {
+        "persona": "learner-advanced",
+        "knowledgePointId": "pandas-reading",
+        "pMastery": 0.45,
+        "calibratedExpected": 0.72,
+        "fixedExpected": 0.55
+      },
+      {
+        "persona": "learner-advanced",
+        "knowledgePointId": "pandas-filter",
+        "pMastery": 0.12,
+        "calibratedExpected": 0.67,
+        "fixedExpected": 0.42
+      },
+      {
+        "persona": "learner-advanced",
+        "knowledgePointId": "data-cleaning",
+        "pMastery": 0.45,
+        "calibratedExpected": 0.72,
+        "fixedExpected": 0.55
+      },
+      {
+        "persona": "learner-advanced",
+        "knowledgePointId": "statistics-basics",
+        "pMastery": 0.77,
+        "calibratedExpected": 0.72,
+        "fixedExpected": 0.7
+      },
+      {
+        "persona": "learner-advanced",
+        "knowledgePointId": "time-series-basics",
+        "pMastery": 0.45,
+        "calibratedExpected": 0.72,
+        "fixedExpected": 0.55
+      },
+      {
+        "persona": "learner-advanced",
+        "knowledgePointId": "anomaly-threshold",
+        "pMastery": 0.12,
+        "calibratedExpected": 0.67,
+        "fixedExpected": 0.42
+      },
+      {
+        "persona": "learner-advanced",
+        "knowledgePointId": "ai4i-overview",
+        "pMastery": 0.45,
+        "calibratedExpected": 0.72,
+        "fixedExpected": 0.55
+      },
+      {
+        "persona": "learner-advanced",
+        "knowledgePointId": "evidence-boundary",
+        "pMastery": 0.45,
+        "calibratedExpected": 0.72,
+        "fixedExpected": 0.55
+      },
+      {
+        "persona": "learner-maintenance",
+        "knowledgePointId": "python-basics",
+        "pMastery": 0.45,
+        "calibratedExpected": 0.72,
+        "fixedExpected": 0.55
+      },
+      {
+        "persona": "learner-maintenance",
+        "knowledgePointId": "python-control",
+        "pMastery": 0.12,
+        "calibratedExpected": 0.67,
+        "fixedExpected": 0.42
+      },
+      {
+        "persona": "learner-maintenance",
+        "knowledgePointId": "python-data-structures",
+        "pMastery": 0.12,
+        "calibratedExpected": 0.67,
+        "fixedExpected": 0.42
+      },
+      {
+        "persona": "learner-maintenance",
+        "knowledgePointId": "pandas-reading",
+        "pMastery": 0.45,
+        "calibratedExpected": 0.72,
+        "fixedExpected": 0.55
+      },
+      {
+        "persona": "learner-maintenance",
+        "knowledgePointId": "pandas-filter",
+        "pMastery": 0.12,
+        "calibratedExpected": 0.67,
+        "fixedExpected": 0.42
+      },
+      {
+        "persona": "learner-maintenance",
+        "knowledgePointId": "data-cleaning",
+        "pMastery": 0.45,
+        "calibratedExpected": 0.72,
+        "fixedExpected": 0.55
+      },
+      {
+        "persona": "learner-maintenance",
+        "knowledgePointId": "statistics-basics",
+        "pMastery": 0.77,
+        "calibratedExpected": 0.72,
+        "fixedExpected": 0.7
+      },
+      {
+        "persona": "learner-maintenance",
+        "knowledgePointId": "time-series-basics",
+        "pMastery": 0.45,
+        "calibratedExpected": 0.72,
+        "fixedExpected": 0.55
+      },
+      {
+        "persona": "learner-maintenance",
+        "knowledgePointId": "evidence-boundary",
+        "pMastery": 0.19,
+        "calibratedExpected": 0.7,
+        "fixedExpected": 0.46
+      },
+      {
+        "persona": "learner-maintenance",
+        "knowledgePointId": "ai4i-overview",
+        "pMastery": 0.19,
+        "calibratedExpected": 0.7,
+        "fixedExpected": 0.46
+      },
+      {
+        "persona": "learner-maintenance",
+        "knowledgePointId": "anomaly-threshold",
+        "pMastery": 0.4,
+        "calibratedExpected": 0.72,
+        "fixedExpected": 0.55
+      }
+    ],
+    "calibratedInBand": 33,
+    "calibratedTotal": 33,
+    "fixedInBand": 2,
+    "fixedTotal": 33,
+    "pass": true
+  }
+}

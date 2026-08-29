@@ -22,7 +22,7 @@ async function main(): Promise<void> {
   await seedMetroCatalogPg(pool);
 
   console.log('[bootstrap] 3/5 AI4I 2020 数据集…');
-  const ai4i = importCsvDatasetPg(pool, {
+  const ai4i = await importCsvDatasetPg(pool, {
     id: 'ai4i-2020',
     name: 'AI4I 2020 Predictive Maintenance',
     csvPath: path.resolve(process.cwd(), 'data', 'datasets', 'ai4i', 'ai4i_2020.csv'),

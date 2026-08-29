@@ -434,7 +434,9 @@ export async function upsertDocumentChunkPg(pool: Pool, chunk: DocumentChunkSeed
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
      ON CONFLICT (id) DO UPDATE SET
        title = excluded.title, content = excluded.content, search_text = excluded.search_text,
-       locator = excluded.locator, trust_level = excluded.trust_level, embedding = NULL`,
+       locator = excluded.locator, trust_level = excluded.trust_level,
+       -- 内容未变保留已回填的向量；内容变化才置空待重回填（避免 bootstrap 重导抹掉全部向量）
+       embedding = CASE WHEN document_chunks.search_text = excluded.search_text THEN document_chunks.embedding ELSE NULL END`,
     [chunk.id, chunk.sourceId, chunk.sourcePath, chunk.title, chunk.content,
       `${chunk.title}\n${chunk.content}`, chunk.locator, chunk.trustLevel, Date.now()],
   );

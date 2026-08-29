@@ -472,6 +472,8 @@ export const guidanceSessions = pgTable('guidance_sessions', {
   knowledgePointId: text('knowledge_point_id').notNull(),
   status: text('status').notNull().default('active'),
   roundCount: integer('round_count').notNull().default(0),
+  /** 当前待回答的问题：首轮评价需要问题上下文，回答后更新为下一问 */
+  currentQuestion: text('current_question'),
   decision: jsonb('decision'),
   createdAt: ms('created_at').notNull(),
   finishedAt: ms('finished_at'),

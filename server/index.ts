@@ -1,7 +1,7 @@
 import dotenv from 'dotenv';
 dotenv.config();
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { existsSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -16,12 +16,13 @@ import {
   modelRegistry,
   multiModelClient,
   parseJson,
-  resolveResourcePublication,
+  runtimeModelConfig,
   runtimeWorkbenchSettings,
   saveRuntimeModelConfig,
   saveRuntimeWorkbenchSettings,
   withTimeout,
 } from './study-runtime.js';
+import type { ProviderConfig } from '../src/models/config.js';
 import type { AutoAssetType, LearningAgentId, ThinkingDepth } from './study-runtime.js';
 
 
@@ -48,16 +49,10 @@ import { generateProfileSnapshot } from './profile-snapshot.js';
 import { buildProfileInsights } from './profile-insights.js';
 import { AVATAR_IMAGE_MAX_CHARS } from '../src/learning/identity.js';
 import type { AuthenticatedLearner, OnboardingInput } from '../src/learning/identity.js';
-import type { LearningPathEdgeView, LearningPathNodeView, LearningPathRevisionInput } from '../src/learning/store.js';
-import { auditResource } from '../src/learning/audit.js';
-import type { LearningResourceType, ResourceDocument } from '../src/learning/types.js';
+import type { LearningPathEdgeView, LearningPathRevisionInput, LearningStore } from '../src/learning/store.js';
+import type { ResourceDocument } from '../src/learning/types.js';
 
 const AUTH_COOKIE_NAME = 'im_training_agent_auth';
-const LEARNING_RESOURCE_TYPES: LearningResourceType[] = ['lecture', 'tiered_quiz', 'practice_guide', 'concept_map', 'review_cards', 'challenge_task'];
-
-function isLearningResourceType(value: unknown): value is LearningResourceType {
-  return typeof value === 'string' && LEARNING_RESOURCE_TYPES.includes(value as LearningResourceType);
-}
 
 function resourceToMarkdown(resource: ResourceDocument): string {
   const lines = [`# ${resource.title}`, '', `- 类型：${resource.type}`, `- 难度：${Math.round(resource.difficulty * 100)}%`, '', '## 学习目标', ...resource.learningObjectives.map((item) => `- ${item}`), ''];
@@ -102,7 +97,7 @@ function setAuthCookie(res: express.Response, token: string, expiresAt: number):
   res.cookie(AUTH_COOKIE_NAME, token, {
     httpOnly: true,
     sameSite: 'lax',
-    secure: process.env.NODE_ENV === 'production',
+    secure: process.env['NODE_ENV'] === 'production',
     expires: new Date(expiresAt),
     path: '/',
   });
@@ -112,7 +107,7 @@ function clearAuthCookie(res: express.Response): void {
   res.clearCookie(AUTH_COOKIE_NAME, {
     httpOnly: true,
     sameSite: 'lax',
-    secure: process.env.NODE_ENV === 'production',
+    secure: process.env['NODE_ENV'] === 'production',
     path: '/',
   });
 }
@@ -135,39 +130,39 @@ type LearningAssistantOutput = {
 
 function normalizeLearningAssistantOutput(value: unknown): LearningAssistantOutput {
   const source = value && typeof value === 'object' ? value as Record<string, unknown> : {};
-  const rawRevision = source.revision && typeof source.revision === 'object' ? source.revision as Record<string, unknown> : {};
+  const rawRevision = source['revision'] && typeof source['revision'] === 'object' ? source['revision'] as Record<string, unknown> : {};
   const normalizeNodes = (raw: unknown) => Array.isArray(raw) ? raw.map((item) => {
     const node = item && typeof item === 'object' ? item as Record<string, unknown> : {};
     return {
-      knowledgePointId: String(node.knowledgePointId || '').trim(),
-      title: String(node.title || '').trim(),
-      description: String(node.description || '').trim(),
+      knowledgePointId: String(node['knowledgePointId'] || '').trim(),
+      title: String(node['title'] || '').trim(),
+      description: String(node['description'] || '').trim(),
     };
   }).filter((node) => node.knowledgePointId && node.title && node.description).slice(0, 8) : [];
   const normalizeUpdates = (raw: unknown) => Array.isArray(raw) ? raw.map((item) => {
     const node = item && typeof item === 'object' ? item as Record<string, unknown> : {};
     return {
-      knowledgePointId: String(node.knowledgePointId || '').trim(),
-      title: typeof node.title === 'string' ? node.title.trim() : undefined,
-      description: typeof node.description === 'string' ? node.description.trim() : undefined,
+      knowledgePointId: String(node['knowledgePointId'] || '').trim(),
+      title: typeof node['title'] === 'string' ? node['title'].trim() : undefined,
+      description: typeof node['description'] === 'string' ? node['description'].trim() : undefined,
     };
   }).filter((node) => node.knowledgePointId).slice(0, 8) : [];
   const normalizeEdges = (raw: unknown) => Array.isArray(raw) ? raw.map((item) => {
     const edge = item && typeof item === 'object' ? item as Record<string, unknown> : {};
     return {
-      fromKnowledgePointId: String(edge.fromKnowledgePointId || '').trim(),
-      toKnowledgePointId: String(edge.toKnowledgePointId || '').trim(),
-      relation: ['prerequisite', 'branch', 'application', 'review'].includes(String(edge.relation))
-        ? String(edge.relation) as LearningPathEdgeView['relation'] : 'branch' as const,
+      fromKnowledgePointId: String(edge['fromKnowledgePointId'] || '').trim(),
+      toKnowledgePointId: String(edge['toKnowledgePointId'] || '').trim(),
+      relation: ['prerequisite', 'branch', 'application', 'review'].includes(String(edge['relation']))
+        ? String(edge['relation']) as LearningPathEdgeView['relation'] : 'branch' as const,
     };
   }).filter((edge) => edge.fromKnowledgePointId && edge.toKnowledgePointId).slice(0, 12) : [];
   const revision: LearningPathRevisionInput = {
-    addNodes: normalizeNodes(rawRevision.addNodes),
-    updateNodes: normalizeUpdates(rawRevision.updateNodes),
-    addEdges: normalizeEdges(rawRevision.addEdges),
+    addNodes: normalizeNodes(rawRevision['addNodes']),
+    updateNodes: normalizeUpdates(rawRevision['updateNodes']),
+    addEdges: normalizeEdges(rawRevision['addEdges']),
   };
   return {
-    reply: typeof source.reply === 'string' && source.reply.trim() ? source.reply.trim().slice(0, 1_200) : '我已读取你的问题，并会依据当前路径与学习证据继续协同。',
+    reply: typeof source['reply'] === 'string' && source['reply'].trim() ? source['reply'].trim().slice(0, 1_200) : '我已读取你的问题，并会依据当前路径与学习证据继续协同。',
     revision,
   };
 }
@@ -270,7 +265,7 @@ app.use('/api/learning', (req, res, next) => {
 app.get('/api/learning/chat', async (req, res) => {
   const learner = await requireLearner(req, res);
   if (!learner) return;
-  const surface = req.query.surface === 'study' ? 'study' : 'path';
+  const surface = req.query['surface'] === 'study' ? 'study' : 'path';
   res.json({
     success: true,
     messages: await learningStore.listChatMessages(learner.id, 80, surface),
@@ -508,7 +503,7 @@ app.patch('/api/learning/path-graph/nodes/:nodeId', async (req, res) => {
 app.post('/api/learning/assets/:assetId/feedback', async (req, res) => {
   const learner = await requireLearner(req, res);
   if (!learner) return;
-  const isOwnAsset = await learningStore.listAssets(learner.id).some((asset) => asset.id === req.params.assetId);
+  const isOwnAsset = (await learningStore.listAssets(learner.id)).some((asset) => asset.id === req.params.assetId);
   if (!isOwnAsset) {
     res.status(404).json({ success: false, error: '未找到该学习资产' });
     return;
@@ -716,7 +711,7 @@ app.post('/api/settings/asset-policy', async (req, res) => {
 });
 
 app.get('/api/settings/privacy-audit', async (req, res) => {
-  const limit = typeof req.query.limit === 'string' ? Number(req.query.limit) : 8;
+  const limit = typeof req.query['limit'] === 'string' ? Number(req.query['limit']) : 8;
   res.json({ success: true, events: await learningStore.listPrivacyAuditEvents(Number.isFinite(limit) ? limit : 8) });
 });
 
@@ -759,7 +754,7 @@ app.get('/api/learning/profile', async (req, res) => {
 app.get('/api/learning/bkt-updates', async (req, res) => {
   const learner = await requireLearner(req, res);
   if (!learner) return;
-  const limit = Math.max(1, Math.min(Number(req.query.limit) || 30, 100));
+  const limit = Math.max(1, Math.min(Number(req.query['limit']) || 30, 100));
   const result = await getLearningDatabase().pool.query(
     `SELECT id, knowledge_point_id AS "knowledgePointId", trigger_type AS "triggerType",
        before, after, created_at AS "createdAt"
@@ -783,7 +778,7 @@ app.post('/api/learning/profile/regenerate', async (req, res) => {
 app.get('/api/learning/evidence', async (req, res) => {
   const learner = await requireLearner(req, res);
   if (!learner) return;
-  const limit = typeof req.query.limit === 'string' ? Number(req.query.limit) : 20;
+  const limit = typeof req.query['limit'] === 'string' ? Number(req.query['limit']) : 20;
   res.json({ success: true, evidence: await learningStore.listEvidence(learner.id, Number.isFinite(limit) ? limit : 20) });
 });
 
@@ -795,7 +790,7 @@ app.get('/api/learning/assets/:assetId/export', async (req, res) => {
     res.status(404).json({ success: false, error: '未找到该学习资产' });
     return;
   }
-  const format = req.query.format === 'json' ? 'json' : req.query.format === 'txt' ? 'txt' : 'md';
+  const format = req.query['format'] === 'json' ? 'json' : req.query['format'] === 'txt' ? 'txt' : 'md';
   const safeName = resource.title.replace(/[\\/:*?"<>|]/g, '-').slice(0, 80) || 'learning-resource';
   if (format === 'json') {
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
@@ -808,11 +803,11 @@ app.get('/api/learning/assets/:assetId/export', async (req, res) => {
   res.send(format === 'md' ? resourceToMarkdown(resource) : resourceToMarkdown(resource).replace(/^#+\s?/gm, '').replace(/`/g, ''));
 });
 
-const PORT = process.env.PORT || 3001;
+const PORT = process.env['PORT'] || 3001;
 
 async function startServer(): Promise<void> {
   const metroCsvPath = path.resolve(
-    process.env.IM_TRAINING_AGENT_METROPT_CSV
+    process.env['IM_TRAINING_AGENT_METROPT_CSV']
       || path.join(process.cwd(), 'data', 'datasets', 'metropt', 'MetroPT3(AirCompressor).csv'),
   );
   if (dataSource === 'postgres') {

@@ -106,7 +106,9 @@ export async function hybridDocumentRowsPg(
         rankings['vector'] = vectorRows.map((row, index) => ({ id: row.id, rank: index + 1 }));
         vectorRows.forEach((row) => rowsById.set(row.id, row));
       } else {
+        // 库内没有任何向量：向量路不可用，按降级如实上报
         info.reason = 'no_embeddings';
+        info.degraded = true;
       }
     } catch {
       info.reason = 'vector_query_failed';

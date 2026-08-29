@@ -5,6 +5,14 @@ node_modules/
 dist/
 *.log
 .im-training-agent/
-data/
 .git/
 .env
+
+# data 目录只保留镜像引导需要的知识卡与 AI4I（Dockerfile COPY 依赖）
+data/*
+!data/knowledge/
+!data/datasets/
+data/datasets/*
+!data/datasets/ai4i/
+data/datasets/ai4i/*
+!data/datasets/ai4i/ai4i_2020.csv

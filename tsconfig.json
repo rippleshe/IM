@@ -30,6 +30,6 @@
     "allowSyntheticDefaultImports": true,
     "types": ["node"]
   },
-  "include": ["src/**/*", "server/db/**/*", "server/runs/**/*", "scripts/**/*", "drizzle.config.ts"],
-  "exclude": ["node_modules", "dist", "**/*.test.ts"]
+  "include": ["src/**/*", "server/**/*", "scripts/**/*", "drizzle.config.ts"],
+  "exclude": ["node_modules", "dist", "web", "**/*.test.ts"]
 }

@@ -114,7 +114,8 @@ function loadRuntimeModelConfig(): ModelProvidersConfig {
 }
 
 const baseModelConfig = loadBaseModelConfig();
-const runtimeModelConfig = loadRuntimeModelConfig();
+/** 运行时模型配置（设置页保存的 provider/model 覆盖）；index.ts 的 settings 端点也使用 */
+export const runtimeModelConfig = loadRuntimeModelConfig();
 
 export function mergeModelConfig(): ModelProvidersConfig {
   const providers = new Map(baseModelConfig.providers.map((provider) => [provider.id, provider]));

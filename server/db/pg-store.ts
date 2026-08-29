@@ -359,26 +359,28 @@ export class PgLearningStore {
     return { attempt, question };
   }
 
-  /** BKT 观测更新（总规 §7.1）：读状态 → bktUpdate → 写状态 + bkt_updates 审计行 */
+  /** BKT 观测更新（总规 §7.1）：读状态 → bktUpdate → 写状态 + bkt_updates 审计行（同事务，保证审计完整） */
   async applySkillObservation(learnerId: string, knowledgePointId: string, correct: boolean, trigger: string): Promise<BktState> {
     const key = normalizeKnowledgePointId(knowledgePointId);
     const before = await this.getSkillState(learnerId, key) ?? createBktState(0.15);
     const after = bktUpdate(before, correct);
-    await this.pool.query(
-      `INSERT INTO learner_skill_states (learner_id, knowledge_point_id, p_mastery, confidence, attempt_count, correct_count, p_guess, p_slip, p_learn, evidence_source, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-       ON CONFLICT (learner_id, knowledge_point_id) DO UPDATE SET
-         p_mastery = excluded.p_mastery, confidence = excluded.confidence,
-         attempt_count = excluded.attempt_count, correct_count = excluded.correct_count,
-         p_guess = excluded.p_guess, p_slip = excluded.p_slip, p_learn = excluded.p_learn,
-         evidence_source = excluded.evidence_source, updated_at = excluded.updated_at`,
-      [learnerId, key, after.pMastery, after.confidence, after.attemptCount, after.correctCount, after.pGuess, after.pSlip, after.pLearn, trigger, Date.now()],
-    );
-    await this.pool.query(
-      `INSERT INTO bkt_updates (id, learner_id, knowledge_point_id, trigger_type, before, after, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-      [`bkt-${randomUUID()}`, learnerId, key, trigger, before, after, Date.now()],
-    );
+    await withTransaction(this.pool, async (client) => {
+      await client.query(
+        `INSERT INTO learner_skill_states (learner_id, knowledge_point_id, p_mastery, confidence, attempt_count, correct_count, p_guess, p_slip, p_learn, evidence_source, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+         ON CONFLICT (learner_id, knowledge_point_id) DO UPDATE SET
+           p_mastery = excluded.p_mastery, confidence = excluded.confidence,
+           attempt_count = excluded.attempt_count, correct_count = excluded.correct_count,
+           p_guess = excluded.p_guess, p_slip = excluded.p_slip, p_learn = excluded.p_learn,
+           evidence_source = excluded.evidence_source, updated_at = excluded.updated_at`,
+        [learnerId, key, after.pMastery, after.confidence, after.attemptCount, after.correctCount, after.pGuess, after.pSlip, after.pLearn, trigger, Date.now()],
+      );
+      await client.query(
+        `INSERT INTO bkt_updates (id, learner_id, knowledge_point_id, trigger_type, before, after, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [`bkt-${randomUUID()}`, learnerId, key, trigger, before, after, Date.now()],
+      );
+    });
     return after;
   }
 
@@ -485,10 +487,6 @@ export class PgLearningStore {
     return messages.filter((message) => surface === 'study'
       ? message.metadata['surface'] === 'study'
       : message.metadata['surface'] !== 'study');
-  }
-
-  async clearLegacySeedPath(_learnerId: string): Promise<void> {
-    // learning_path_items 已在迁移 0002 中退役，PG 无此表：保留方法签名以对齐旧 API。
   }
 
   async replacePathGraph(

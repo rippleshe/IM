@@ -26,7 +26,7 @@ import {
 import { cancelRunJobs } from './queue.js';
 import { createRunSubscriber } from './events.js';
 
-type RequireLearner = (req: express.Request, res: express.Response) => AuthenticatedLearner | null;
+type RequireLearner = (req: express.Request, res: express.Response) => Promise<AuthenticatedLearner | null> | AuthenticatedLearner | null;
 
 /** 编排信号来自学习状态的确定性推导；BKT 上线后由置信度直接驱动（总规 §5、§7） */
 async function derivePlannerSignals(learnerId: string): Promise<{ profileUncertainty: number; knowledgeRisk: number; evidenceCoverageHint: 'sparse' | 'normal' | 'rich' }> {
