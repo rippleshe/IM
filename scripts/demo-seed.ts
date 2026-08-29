@@ -10,6 +10,23 @@ import { DIAGNOSTIC_QUESTIONS, scoreDiagnostic } from '../src/learning/diagnosti
 import { identityStore, learningStore } from '../server/study-context.js';
 import { getAgentExecutionSettings, withTimeout } from '../server/study-runtime.js';
 import { fallbackPathGraph, generateInitialPathGraph, type GeneratedPathGraph } from '../server/initial-path.js';
+import { generateProfileSnapshot } from '../server/profile-snapshot.js';
+
+/** 种子画像兜底：LLM 不可用时按建档信息与诊断成绩生成确定的描述与雷达。 */
+function fallbackProfileSnapshot(learnerId: string, persona: PersonaSeed, correct: number, total: number): void {
+  const accuracy = correct / total;
+  const summary = `${persona.onboarding.selfDescription} 当前学习目标是“${persona.onboarding.goal}”。诊断测评 ${correct}/${total} 正确，基础维度评估基于作答记录生成，后续学习证据会持续修正画像。`;
+  const keywords = [persona.onboarding.goal.slice(0, 12), ...Object.keys(persona.accuracyByDimension)].slice(0, 5);
+  const radar = [
+    { name: '代码理解', score: Math.max(0.05, Math.min(0.95, persona.accuracyByDimension['python'] ?? 0.5)) },
+    { name: '数据处理', score: Math.max(0.05, Math.min(0.95, persona.accuracyByDimension['data_processing'] ?? 0.5)) },
+    { name: '统计基础', score: Math.max(0.05, Math.min(0.95, persona.accuracyByDimension['statistics'] ?? 0.5)) },
+    { name: '时序分析', score: Math.max(0.05, Math.min(0.95, persona.accuracyByDimension['time_series'] ?? 0.5)) },
+    { name: '设备诊断', score: Math.max(0.05, Math.min(0.95, persona.accuracyByDimension['device_diagnosis'] ?? 0.5)) },
+  ];
+  void accuracy;
+  learningStore.saveProfileSnapshot(learnerId, { summary, keywords, radar });
+}
 
 interface PersonaSeed {
   loginName: 'learner-foundation' | 'learner-advanced' | 'learner-maintenance';
@@ -126,6 +143,19 @@ async function main(): Promise<void> {
     }
     learningStore.replacePathGraph(learnerId, pathGraph.nodes, pathGraph.edges);
     console.log(`[demo:seed]   路径已生成：${pathGraph.nodes.length} 节点 / ${pathGraph.edges.length} 边`);
+
+    // 画像快照：LLM 总结（60 秒预算）失败则用建档+诊断数据确定性兜底，保证画像弹窗有描述与关键词
+    try {
+      await withTimeout(
+        generateProfileSnapshot(learnerId, defaultRoute.model, defaultRoute.thinking),
+        60_000,
+        '种子画像生成超时',
+      );
+    } catch (error) {
+      console.warn(`[demo:seed]   画像 LLM 生成回退为确定性画像（${error instanceof Error ? error.message : String(error)}）`);
+      fallbackProfileSnapshot(learnerId, persona, result.correct, result.total);
+    }
+    console.log('[demo:seed]   画像描述与关键词已写入');
   }
   console.log('[demo:seed] ✔ 三个差异化账号就绪：路径已预生成，评委登录即见差异化知识树');
   process.exit(0);

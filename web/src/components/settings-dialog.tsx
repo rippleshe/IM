@@ -151,9 +151,10 @@ export function SettingsDialog({ apiBase, onClose }: { apiBase: string; onClose:
     finally { setSaving(false); }
   };
 
-  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/20 p-4" role="dialog" aria-modal="true" aria-label="设置">
-    <section className="max-h-[calc(100vh-2rem)] w-full max-w-2xl overflow-y-auto rounded-2xl border bg-card p-5 shadow-xl">
-      <div className="flex items-center justify-between"><h2 className="flex items-center gap-2 text-sm font-semibold"><Settings className="h-4 w-4" />设置</h2><button type="button" onClick={onClose} className="rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-muted">关闭</button></div>
+  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/25 p-6" role="dialog" aria-modal="true" aria-label="设置">
+    <section className="flex max-h-[calc(100vh-4rem)] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border bg-card shadow-2xl">
+      <header className="flex shrink-0 items-center justify-between border-b px-7 py-5"><h2 className="flex items-center gap-2 text-base font-semibold"><Settings className="h-4.5 w-4.5" />设置</h2><button type="button" onClick={onClose} className="rounded-md px-3 py-1.5 text-sm text-muted-foreground hover:bg-muted">关闭</button></header>
+      <div className="min-h-0 flex-1 overflow-y-auto px-7 py-5">
       <div className="mt-4 grid grid-cols-4 rounded-lg bg-muted/70 p-1 text-xs">{([["models", "模型服务"], ["agents", "协同编排"], ["assets", "学习资产"], ["privacy", "数据与隐私"]] as const).map(([key, label]) => <button key={key} type="button" onClick={() => { setTab(key); setError(""); }} className={`rounded-md px-2 py-2 ${tab === key ? "bg-background font-medium shadow-sm" : "text-muted-foreground hover:text-foreground"}`}>{label}</button>)}</div>
       {error && <div className="mt-3 rounded-lg border border-destructive/25 bg-destructive/5 px-3 py-2 text-xs text-destructive">{error}</div>}
       <div className="mt-4 min-h-[300px]">
@@ -203,6 +204,7 @@ export function SettingsDialog({ apiBase, onClose }: { apiBase: string; onClose:
           <div className="grid grid-cols-3 gap-2">{([["lecture", "讲义"], ["tiered_quiz", "分层习题"], ["concept_map", "知识图谱"]] as const).map(([type, label]) => { const enabled = settings?.autoAssetTypes.includes(type) ?? false; return <button key={type} type="button" disabled={saving || !settings} onClick={() => void toggleAsset(type)} className={`rounded-xl border p-4 text-left ${enabled ? "border-foreground bg-muted/60" : "hover:bg-muted/40"}`}><div className="text-xs font-medium">{label}</div><div className="mt-2 text-[11px] text-muted-foreground">{enabled ? "自动生成" : "关闭"}</div></button>; })}</div>
         </div>}
         {tab === "privacy" && <PrivacyPanel apiBase={apiBase} />}
+      </div>
       </div>
     </section>
   </div>;

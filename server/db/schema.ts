@@ -35,6 +35,8 @@ export const users = pgTable('users', {
   loginName: text('login_name').notNull().unique(),
   displayName: text('display_name').notNull(),
   avatarKey: text('avatar_key').notNull().default('graphite'),
+  /** 用户自传头像（缩图 data URL）；NULL = 使用 avatarKey 色块首字母 */
+  avatarImage: text('avatar_image'),
   passwordHash: text('password_hash').notNull(),
   passwordSalt: text('password_salt').notNull(),
   onboardingCompleted: boolean('onboarding_completed').notNull().default(false),

@@ -22,6 +22,13 @@
       "when": 1787990000000,
       "tag": "0002_drop_legacy_path_items",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1787991000000,
+      "tag": "0003_avatar_image",
+      "breakpoints": true
     }
   ]
 }

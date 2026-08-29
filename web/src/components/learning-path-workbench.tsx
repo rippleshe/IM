@@ -21,10 +21,10 @@ import {
 } from "lucide-react";
 import type { AuthenticatedUser } from "@/components/auth-entry";
 import { SettingsDialog } from "@/components/settings-dialog";
+import { AvatarBubble, ProfileDialog } from "@/components/profile-dialog";
 
 type PathStatus = "not_started" | "learning" | "completed";
 type PathRelation = "prerequisite" | "branch" | "application" | "review";
-type AvatarKey = AuthenticatedUser["avatarKey"];
 
 export type NodeRecommendation = {
   level: "no_evidence" | "reinforce" | "maintain" | "advance";
@@ -99,15 +99,7 @@ type LearningPathWorkbenchProps = {
   user: AuthenticatedUser;
   onLogout: () => void;
   onNavigate?: (view: "path" | "study" | "resources") => void;
-};
-
-const avatarStyles: Record<AvatarKey, string> = {
-  graphite: "bg-zinc-900 text-white",
-  ocean: "bg-sky-600 text-white",
-  violet: "bg-violet-600 text-white",
-  forest: "bg-emerald-600 text-white",
-  amber: "bg-amber-500 text-white",
-  rose: "bg-rose-600 text-white",
+  onUserChange?: (user: AuthenticatedUser) => void;
 };
 
 const relationLabels: Record<PathRelation, string> = {
@@ -243,7 +235,7 @@ function Metric({ label, value }: { label: string; value: string | number }) {
   return <div className="rounded-lg bg-muted/60 p-2.5"><div className="text-muted-foreground">{label}</div><div className="mt-1 text-base font-semibold">{value}</div></div>;
 }
 
-export function LearningPathWorkbench({ apiBase, user, onLogout, onNavigate }: LearningPathWorkbenchProps) {
+export function LearningPathWorkbench({ apiBase, user, onLogout, onNavigate, onUserChange }: LearningPathWorkbenchProps) {
   const [path, setPath] = useState<PathGraph>({ nodes: [], edges: [] });
   const [profile, setProfile] = useState<ProfileMetric | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -253,8 +245,6 @@ export function LearningPathWorkbench({ apiBase, user, onLogout, onNavigate }: L
   const [sending, setSending] = useState(false);
   const [savingNodeId, setSavingNodeId] = useState<string | null>(null);
   const [profileOpen, setProfileOpen] = useState(false);
-  const [activeAvatar, setActiveAvatar] = useState<AvatarKey>(user.avatarKey);
-  const [regeneratingProfile, setRegeneratingProfile] = useState(false);
   const [openActivityId, setOpenActivityId] = useState<string | null>(null);
   const [notice, setNotice] = useState("");
   const [serviceReady, setServiceReady] = useState(false);
@@ -344,39 +334,13 @@ export function LearningPathWorkbench({ apiBase, user, onLogout, onNavigate }: L
     }
   };
 
-  const saveAvatar = async (avatarKey: AvatarKey) => {
-    setActiveAvatar(avatarKey);
-    try {
-      const response = await fetch(`${apiBase}/api/auth/avatar`, { method: "PATCH", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ avatarKey }) });
-      if (!response.ok) throw new Error("头像保存失败");
-    } catch (error) {
-      setActiveAvatar(user.avatarKey);
-      setNotice(error instanceof Error ? error.message : "头像保存失败");
-    }
-  };
-
-  const regenerateProfile = async () => {
-    setRegeneratingProfile(true);
-    setNotice("");
-    try {
-      const response = await fetch(`${apiBase}/api/learning/profile/regenerate`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: "{}" });
-      const data = await response.json() as { success?: boolean; error?: string; profile?: ProfileMetric };
-      if (!response.ok || !data.success || !data.profile) throw new Error(data.error || "画像生成失败");
-      setProfile(data.profile);
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : "画像生成失败");
-    } finally {
-      setRegeneratingProfile(false);
-    }
-  };
-
   const logout = async () => { await fetch(`${apiBase}/api/auth/logout`, { method: "POST", credentials: "include" }).catch(() => undefined); onLogout(); };
   const selectNode = (node: PathNode) => setSelectedNodeId(node.id);
 
   return <main className="flex h-screen min-h-0 flex-col overflow-hidden bg-background text-foreground">
     <header className="flex h-16 shrink-0 items-center justify-between border-b px-5 sm:px-7">
-      <button type="button" onClick={() => setProfileOpen(true)} className="flex min-w-0 items-center gap-2.5 text-left" aria-label="打开学习画像"><span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-semibold ${avatarStyles[activeAvatar]}`}>{user.displayName.slice(0, 1).toUpperCase()}</span><span className="min-w-0"><span className="block text-sm font-semibold tracking-tight">IM-Training-Agent</span><span className="block text-[11px] text-muted-foreground">{user.displayName} · 学习画像</span></span></button>
-      <nav aria-label="学习空间" className="flex items-center rounded-lg border bg-muted/40 p-1 text-sm"><button type="button" onClick={() => setSettingsOpen(true)} className="rounded-md px-3 py-1.5 text-muted-foreground hover:text-foreground">设置</button><button type="button" className="rounded-md bg-background px-4 py-1.5 font-medium shadow-sm">路径</button><button type="button" onClick={() => onNavigate?.("study")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">学习</button><button type="button" onClick={() => onNavigate?.("resources")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">资源</button></nav>
+      <div className="flex items-center gap-2.5"><AvatarBubble user={user} size="h-9 w-9 text-xs" /><span className="min-w-0"><span className="block text-sm font-semibold tracking-tight">IM-Training-Agent</span><span className="block text-[11px] text-muted-foreground">{user.displayName}</span></span></div>
+      <nav aria-label="学习空间" className="flex items-center rounded-lg border bg-muted/40 p-1 text-sm"><button type="button" onClick={() => setSettingsOpen(true)} className="rounded-md px-3 py-1.5 text-muted-foreground hover:text-foreground">设置</button><button type="button" onClick={() => setProfileOpen(true)} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">画像</button><button type="button" className="rounded-md bg-background px-4 py-1.5 font-medium shadow-sm">路径</button><button type="button" onClick={() => onNavigate?.("study")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">学习</button><button type="button" onClick={() => onNavigate?.("resources")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">资源</button></nav>
       <button type="button" onClick={logout} className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-2 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"><LogOut className="h-3.5 w-3.5" />退出</button>
     </header>
 
@@ -404,7 +368,7 @@ export function LearningPathWorkbench({ apiBase, user, onLogout, onNavigate }: L
       </aside>
     </div>
 
-    {profileOpen && <div className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/20 p-4" role="dialog" aria-modal="true" aria-label="学习画像"><section className="max-h-[calc(100vh-2rem)] w-full max-w-lg overflow-y-auto rounded-2xl border bg-card p-5 shadow-xl"><div className="flex items-center justify-between"><div className="flex items-center gap-2 text-sm font-semibold"><Sparkles className="h-4 w-4" />学习画像</div><button type="button" onClick={() => setProfileOpen(false)} className="rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-muted">关闭</button></div><div className="mt-5 flex items-center gap-3"><span className={`flex h-12 w-12 items-center justify-center rounded-full text-sm font-semibold ${avatarStyles[activeAvatar]}`}>{user.displayName.slice(0, 1).toUpperCase()}</span><div><div className="text-sm font-semibold">{user.displayName}</div><div className="text-xs text-muted-foreground">@{user.loginName}</div></div></div><div className="mt-4 flex items-center gap-2"><span className="text-xs text-muted-foreground">头像</span>{(Object.keys(avatarStyles) as AvatarKey[]).map((avatar) => <button key={avatar} type="button" onClick={() => void saveAvatar(avatar)} aria-label={`设置${avatar}头像`} className={`h-6 w-6 rounded-full ${avatarStyles[avatar]} ${activeAvatar === avatar ? "ring-2 ring-offset-2 ring-foreground" : ""}`} />)}</div><p className="mt-4 rounded-xl bg-muted/60 p-3 text-sm leading-6">{profile?.summary || "首次路径已建立；你的后续学习记录会持续完善画像。"}</p><div className="mt-4 flex flex-wrap gap-1.5">{profile?.keywords?.map((keyword) => <span key={keyword} className="rounded-full border px-2.5 py-1 text-[11px]">{keyword}</span>)}</div><div className="mt-5"><ProfileRadar items={profile?.radar ?? []} /></div><div className="mt-5 grid grid-cols-3 gap-2 text-xs"><Metric label="学习时间" value={`${profile?.studyMinutes ?? 0} 分`} /><Metric label="学习资产" value={profile?.assetsCount ?? 0} /><Metric label="今日新增" value={profile?.todayAssetsCount ?? 0} /><Metric label="正确率" value={profile?.accuracy === null || profile?.accuracy === undefined ? "—" : `${Math.round(profile.accuracy * 100)}%`} /><Metric label="已学完节点" value={completedNodes} /><Metric label="已掌握节点" value={masteredNodes} /></div><button type="button" onClick={() => void regenerateProfile()} disabled={regeneratingProfile} className="mt-5 inline-flex h-9 w-full items-center justify-center gap-2 rounded-lg border text-xs font-medium hover:bg-muted disabled:opacity-60">{regeneratingProfile ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}重新生成画像</button></section></div>}
+    {profileOpen && <ProfileDialog apiBase={apiBase} user={user} onUserChange={onUserChange} extraMetrics={[{ label: '今日新增', value: profile?.todayAssetsCount ?? 0 }, { label: '已学完节点', value: completedNodes }, { label: '已掌握节点', value: masteredNodes }]} onClose={() => setProfileOpen(false)} />}
     {settingsOpen && <SettingsDialog apiBase={apiBase} onClose={() => setSettingsOpen(false)} />}
   </main>;
 }

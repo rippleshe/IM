@@ -285,6 +285,8 @@ export function initializeLearningDatabase(db: SqliteDatabase): void {
   ensureColumn(db, 'learning_assets', 'difficulty', 'REAL');
   ensureColumn(db, 'learning_assets', 'difficulty_calibration', 'TEXT');
   ensureColumn(db, 'diagnostic_sessions', 'result_json', "TEXT NOT NULL DEFAULT '{}'");
+  // 用户自传头像（缩图 data URL）；NULL = 使用 avatarKey 色块
+  ensureColumn(db, 'users', 'avatar_image', 'TEXT');
   // 旧平铺路径表退役（学习路径唯一数据源是 learning_path_nodes/edges 图表）：启动即清理遗留
   db.exec('DROP TABLE IF EXISTS learning_path_items');
 }

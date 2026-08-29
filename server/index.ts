@@ -42,6 +42,8 @@ app.use(express.static(path.join(path.dirname(fileURLToPath(import.meta.url)), '
 import { importMetroPt3Csv } from '../src/learning/metropt3.js';
 import { fallbackPathGraph, generateInitialPathGraph } from './initial-path.js';
 import { evidenceService, learningStore, identityStore, datasetDb } from './study-context.js';
+import { generateProfileSnapshot } from './profile-snapshot.js';
+import { AVATAR_IMAGE_MAX_CHARS } from '../src/learning/identity.js';
 import type { AuthenticatedLearner, OnboardingInput } from '../src/learning/identity.js';
 import type { LearningPathEdgeView, LearningPathNodeView, LearningPathRevisionInput } from '../src/learning/store.js';
 import { auditResource } from '../src/learning/audit.js';
@@ -122,32 +124,6 @@ function requireLearner(req: express.Request, res: express.Response): Authentica
 }
 
 type GeneratedPathGraph = import('./initial-path.js').GeneratedPathGraph;
-
-async function generateProfileSnapshot(learnerId: string, model: string | undefined, thinking: { temperature: number; maxTokens: number }) {
-  const current = learningStore.getProfile(learnerId);
-  const onboarding = identityStore.getOnboarding(learnerId);
-  const response = await multiModelClient.simple({
-    messages: [
-      {
-        role: 'system',
-        content: '你是学习画像总结器。只输出 JSON 对象，不要 Markdown。字段必须是 summary（不超过80字）、keywords（3到6个短词）、radar（3到5项，每项含 name、score 0到1、reason）。只能根据提供的统计与技能证据描述，不得虚构能力。',
-      },
-      { role: 'user', content: JSON.stringify({ initialProfile: onboarding, metrics: { assetsCount: current.assetsCount, todayAssetsCount: current.todayAssetsCount, completedAssetsCount: current.completedAssetsCount, masteredAssetsCount: current.masteredAssetsCount, evidenceCount: current.evidenceCount, studyMinutes: current.studyMinutes, accuracy: current.accuracy }, skills: current.skills }) },
-    ],
-    model,
-    temperature: thinking.temperature,
-    maxTokens: Math.min(thinking.maxTokens, 2048),
-  });
-  const parsed = parseJson<{ summary?: unknown; keywords?: unknown; radar?: unknown }>(response.text) || {};
-  const keywords = Array.isArray(parsed.keywords) ? parsed.keywords.map(String).filter(Boolean).slice(0, 6) : [];
-  const radar = Array.isArray(parsed.radar) ? parsed.radar.map((raw) => {
-    const item = raw as Record<string, unknown>;
-    return { name: String(item.name || '学习维度'), score: Math.max(0, Math.min(1, Number(item.score) || 0)), reason: String(item.reason || '') };
-  }).filter((item) => item.name).slice(0, 5) : [];
-  const summary = typeof parsed.summary === 'string' && parsed.summary.trim() ? parsed.summary.trim().slice(0, 160) : current.summary;
-  learningStore.saveProfileSnapshot(learnerId, { summary, keywords, radar });
-  return learningStore.getProfile(learnerId);
-}
 
 type LearningAssistantOutput = {
   reply: string;
@@ -248,6 +224,27 @@ app.patch('/api/auth/avatar', (req, res) => {
   const learner = requireLearner(req, res);
   if (!learner) return;
   const user = identityStore.updateAvatar(learner.id, typeof req.body?.avatarKey === 'string' ? req.body.avatarKey : '');
+  if (!user) {
+    res.status(404).json({ success: false, error: '未找到当前用户' });
+    return;
+  }
+  res.json({ success: true, user });
+});
+
+/** 用户自传头像：请求体 { image: dataURL | null }，服务端校验类型与大小上限。 */
+app.patch('/api/auth/avatar-image', (req, res) => {
+  const learner = requireLearner(req, res);
+  if (!learner) return;
+  const raw = req.body?.image;
+  if (raw !== null && (typeof raw !== 'string' || !raw.startsWith('data:image/'))) {
+    res.status(400).json({ success: false, error: '头像必须是图片 data URL 或 null' });
+    return;
+  }
+  if (raw && raw.length > AVATAR_IMAGE_MAX_CHARS) {
+    res.status(413).json({ success: false, error: '头像图片过大，请换一张小一些的图片' });
+    return;
+  }
+  const user = identityStore.updateAvatarImage(learner.id, raw === null ? null : raw);
   if (!user) {
     res.status(404).json({ success: false, error: '未找到当前用户' });
     return;

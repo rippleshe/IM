@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import type { AuthenticatedUser } from "@/components/auth-entry";
 import { SettingsDialog } from "@/components/settings-dialog";
+import { AvatarBubble, ProfileDialog } from "@/components/profile-dialog";
 
 type ResourceType = "lecture" | "tiered_quiz" | "practice_guide" | "concept_map" | "review_cards" | "challenge_task";
 type ResourceBlock = { id: string; type: string; position: number; content: unknown; evidenceIds: string[] };
@@ -50,11 +51,6 @@ const typeItems: Array<{ type: ResourceType; label: string; icon: typeof BookOpe
   { type: "review_cards", label: "复习卡", icon: Layers3 },
   { type: "challenge_task", label: "挑战", icon: Flag },
 ];
-
-const avatarClasses: Record<AuthenticatedUser["avatarKey"], string> = {
-  graphite: "bg-zinc-900 text-white", ocean: "bg-sky-600 text-white", violet: "bg-violet-600 text-white",
-  forest: "bg-emerald-600 text-white", amber: "bg-amber-500 text-white", rose: "bg-rose-600 text-white",
-};
 
 function typeLabel(type: ResourceType) {
   return typeItems.find((item) => item.type === type)?.label ?? "资源";
@@ -98,18 +94,18 @@ type ResourceWorkbenchProps = {
   user: AuthenticatedUser;
   onLogout: () => void;
   onNavigate: (view: "path" | "study" | "resources") => void;
+  onUserChange?: (user: AuthenticatedUser) => void;
 };
 
-export function ResourceWorkbench({ apiBase, user, onLogout, onNavigate }: ResourceWorkbenchProps) {
+export function ResourceWorkbench({ apiBase, user, onLogout, onNavigate, onUserChange }: ResourceWorkbenchProps) {
   const [assets, setAssets] = useState<ResourceAsset[]>([]);
   const [activeType, setActiveType] = useState<ResourceType>("lecture");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [reader, setReader] = useState<ReaderData | null>(null);
   const [loading, setLoading] = useState(true);
   const [notice, setNotice] = useState("");
-  const [catalogHover, setCatalogHover] = useState(false);
-  const closeTimer = useRef<number | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
   const [notesWidth, setNotesWidth] = useState(330);
   const [resizing, setResizing] = useState(false);
 
@@ -147,17 +143,6 @@ export function ResourceWorkbench({ apiBase, user, onLogout, onNavigate }: Resou
     setActiveType(type);
     setSelectedId(assets.find((asset) => asset.type === type)?.id ?? null);
     setNotice("");
-    if (closeTimer.current) { window.clearTimeout(closeTimer.current); closeTimer.current = null; }
-  };
-
-  const openCatalog = () => {
-    if (closeTimer.current) { window.clearTimeout(closeTimer.current); closeTimer.current = null; }
-    setCatalogHover(true);
-  };
-
-  const scheduleCatalogClose = () => {
-    if (closeTimer.current) window.clearTimeout(closeTimer.current);
-    closeTimer.current = window.setTimeout(() => setCatalogHover(false), 180);
   };
 
   const deleteAsset = async (asset: ResourceAsset) => {
@@ -190,23 +175,22 @@ export function ResourceWorkbench({ apiBase, user, onLogout, onNavigate }: Resou
 
   return <main className={`flex h-screen min-h-0 flex-col overflow-hidden bg-background ${resizing ? "select-none" : ""}`}>
     <header className="flex h-16 shrink-0 items-center justify-between border-b px-5 sm:px-7">
-      <button type="button" onClick={() => onNavigate("path")} className="flex items-center gap-2.5 text-left"><span className={`flex h-9 w-9 items-center justify-center rounded-full text-xs font-semibold ${avatarClasses[user.avatarKey]}`}>{user.displayName.slice(0, 1).toUpperCase()}</span><span><span className="block text-sm font-semibold tracking-tight">IM-Training-Agent</span><span className="block text-[11px] text-muted-foreground">{user.displayName} · 学习画像</span></span></button>
-      <nav aria-label="学习空间" className="flex items-center rounded-lg border bg-muted/40 p-1 text-sm"><button type="button" onClick={() => setSettingsOpen(true)} className="rounded-md px-3 py-1.5 text-muted-foreground hover:text-foreground">设置</button><button type="button" onClick={() => onNavigate("path")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">路径</button><button type="button" onClick={() => onNavigate("study")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">学习</button><button type="button" className="rounded-md bg-background px-4 py-1.5 font-medium shadow-sm">资源</button></nav>
+      <div className="flex items-center gap-2.5"><AvatarBubble user={user} size="h-9 w-9 text-xs" /><span><span className="block text-sm font-semibold tracking-tight">IM-Training-Agent</span><span className="block text-[11px] text-muted-foreground">{user.displayName}</span></span></div>
+      <nav aria-label="学习空间" className="flex items-center rounded-lg border bg-muted/40 p-1 text-sm"><button type="button" onClick={() => setSettingsOpen(true)} className="rounded-md px-3 py-1.5 text-muted-foreground hover:text-foreground">设置</button><button type="button" onClick={() => setProfileOpen(true)} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">画像</button><button type="button" onClick={() => onNavigate("path")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">路径</button><button type="button" onClick={() => onNavigate("study")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">学习</button><button type="button" className="rounded-md bg-background px-4 py-1.5 font-medium shadow-sm">资源</button></nav>
       <button type="button" onClick={logout} className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-2 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"><LogOut className="h-3.5 w-3.5" />退出</button>
     </header>
 
-    <div className="relative flex min-h-0 min-w-[1040px] flex-1 overflow-hidden">
-      <nav aria-label="资源类型" onMouseEnter={openCatalog} onMouseLeave={scheduleCatalogClose} className="flex w-12 shrink-0 flex-col items-center gap-1 border-r bg-muted/20 py-3">
-        {typeItems.map((item) => { const Icon = item.icon; const active = activeType === item.type; const count = assets.filter((asset) => asset.type === item.type).length; return <button key={item.type} type="button" onClick={() => selectType(item.type)} title={`${item.label} · ${count} 份`} className={`relative flex h-9 w-9 items-center justify-center rounded-lg transition-colors ${active ? "bg-foreground text-background" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}><Icon className="h-4 w-4" />{count > 0 && !active ? <span aria-hidden className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-foreground/40" /> : null}</button>; })}
-      </nav>
-      <aside onMouseLeave={scheduleCatalogClose} className={`absolute inset-y-0 left-12 z-30 w-[268px] overflow-hidden border-r bg-card shadow-xl transition-transform duration-200 ${catalogHover ? "translate-x-0" : "-translate-x-full"}`} aria-label="资源目录">
-        <div className="flex h-14 shrink-0 items-center border-b px-4"><div><div className="text-sm font-semibold">{typeLabel(activeType)}</div><div className="mt-0.5 text-[11px] text-muted-foreground">{activeAssets.length} 份</div></div></div>
-        <div className="h-[calc(100%-3.5rem)] overflow-y-auto p-2">{loading ? <div className="px-2 py-4 text-xs text-muted-foreground">正在读取资源</div> : activeAssets.length === 0 ? <div className="rounded-xl border border-dashed px-3 py-8 text-center text-xs leading-5 text-muted-foreground">还没有{typeLabel(activeType)}。<br />从学习页生成后会自动入库。</div> : <div className="space-y-2">{activeAssets.map((asset) => <article key={asset.id} className={`group rounded-xl border p-3 transition-colors ${selectedId === asset.id ? "border-foreground/35 bg-muted/50" : "hover:border-foreground/25"}`}><button type="button" onClick={() => setSelectedId(asset.id)} className="block w-full text-left"><div className="line-clamp-2 text-xs font-semibold leading-5">{asset.title}</div><div className="mt-2 text-[10px] text-muted-foreground">{new Intl.DateTimeFormat("zh-CN", { month: "numeric", day: "numeric" }).format(asset.createdAt)}</div></button><button type="button" onClick={() => void deleteAsset(asset)} className="mt-2 inline-flex items-center gap-1 text-[10px] text-muted-foreground opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100"><Trash2 className="h-3 w-3" />删除</button></article>)}</div>}</div>
+    <div className="flex min-h-0 min-w-[1180px] flex-1 overflow-hidden">
+      <aside aria-label="资源目录" className="flex w-[264px] shrink-0 flex-col border-r bg-muted/15">
+        <nav aria-label="资源类型" className="shrink-0 space-y-1 border-b bg-background p-2">
+          {typeItems.map((item) => { const Icon = item.icon; const active = activeType === item.type; const count = assets.filter((asset) => asset.type === item.type).length; return <button key={item.type} type="button" onClick={() => selectType(item.type)} className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-xs font-medium transition-colors ${active ? "bg-foreground text-background" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}><Icon className="h-4 w-4 shrink-0" /><span className="flex-1">{item.label}</span>{count > 0 ? <span className={`rounded-full px-1.5 py-0.5 text-[10px] leading-none ${active ? "bg-background/25" : "bg-muted"}`}>{count}</span> : null}</button>; })}
+        </nav>
+        <div className="flex h-11 shrink-0 items-center justify-between border-b bg-background px-4"><span className="text-xs font-semibold">{typeLabel(activeType)}</span><span className="text-[10px] text-muted-foreground">{activeAssets.length} 份</span></div>
+        <div className="min-h-0 flex-1 overflow-y-auto p-2">{loading ? <div className="px-2 py-4 text-xs text-muted-foreground">正在读取资源</div> : activeAssets.length === 0 ? <div className="rounded-xl border border-dashed px-3 py-8 text-center text-xs leading-5 text-muted-foreground">还没有{typeLabel(activeType)}。<br />从学习页生成后会自动入库。</div> : <div className="space-y-2">{activeAssets.map((asset) => <article key={asset.id} className={`group rounded-xl border p-3 transition-colors ${selectedId === asset.id ? "border-foreground/35 bg-background shadow-sm" : "border-transparent hover:border-foreground/25 hover:bg-background"}`}><button type="button" onClick={() => setSelectedId(asset.id)} className="block w-full text-left"><div className="line-clamp-2 text-xs font-semibold leading-5">{asset.title}</div><div className="mt-2 text-[10px] text-muted-foreground">{new Intl.DateTimeFormat("zh-CN", { month: "numeric", day: "numeric" }).format(asset.createdAt)}</div></button><button type="button" onClick={() => void deleteAsset(asset)} className="mt-2 inline-flex items-center gap-1 text-[10px] text-muted-foreground opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100"><Trash2 className="h-3 w-3" />删除</button></article>)}</div>}</div>
       </aside>
 
       <section className="flex min-w-[460px] flex-1 flex-col overflow-hidden bg-card" aria-label="资源阅读与作答">
         {notice ? <div className="shrink-0 border-b border-destructive/20 bg-destructive/5 px-5 py-2 text-xs text-destructive">{notice}</div> : null}
-        {selectedAsset ? <div className="flex shrink-0 items-center gap-2 border-b bg-background px-5 py-2"><span className="shrink-0 rounded-full border px-2 py-0.5 text-[10px] text-muted-foreground">{typeLabel(selectedAsset.type)}</span><select value={selectedAsset.id} onChange={(event) => setSelectedId(event.target.value)} aria-label="切换同类型资源" className="h-7 min-w-0 flex-1 truncate rounded-lg border bg-background px-2 text-xs">{activeAssets.map((asset) => <option key={asset.id} value={asset.id}>{asset.title}</option>)}</select><button type="button" onClick={() => void deleteAsset(selectedAsset)} aria-label="删除当前资源" className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-destructive"><Trash2 className="h-3.5 w-3.5" /></button></div> : null}
         {reader?.asset.type === "lecture" ? <LectureReader reader={reader} onExport={exportAsset} /> : reader?.asset.type === "tiered_quiz" ? <QuizReader apiBase={apiBase} reader={reader} onReaderChange={setReader} /> : reader ? <GenericReader apiBase={apiBase} reader={reader} onReaderChange={setReader} onExport={exportAsset} /> : loading ? <div className="flex h-full items-center justify-center text-sm text-muted-foreground">正在读取资源</div> : <EmptyReader label={typeLabel(activeType)} />}
       </section>
 
@@ -216,6 +200,7 @@ export function ResourceWorkbench({ apiBase, user, onLogout, onNavigate }: Resou
       </aside>
     </div>
     {settingsOpen && <SettingsDialog apiBase={apiBase} onClose={() => setSettingsOpen(false)} />}
+    {profileOpen && <ProfileDialog apiBase={apiBase} user={user} onUserChange={onUserChange} onClose={() => setProfileOpen(false)} />}
   </main>;
 }
 

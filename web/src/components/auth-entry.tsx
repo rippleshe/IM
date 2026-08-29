@@ -11,6 +11,8 @@ export interface AuthenticatedUser {
   loginName: string;
   displayName: string;
   avatarKey: "graphite" | "ocean" | "violet" | "forest" | "amber" | "rose";
+  /** 用户自传头像（缩图 data URL）；null = 用 avatarKey 色块首字母 */
+  avatarImage: string | null;
   onboardingCompleted: boolean;
 }
 

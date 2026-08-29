@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import type { AuthenticatedUser } from "@/components/auth-entry";
 import { SettingsDialog } from "@/components/settings-dialog";
+import { AvatarBubble, ProfileDialog } from "@/components/profile-dialog";
 import { RecommendationBadge, type PathGraph, type PathNode, TreeCanvas } from "@/components/learning-path-workbench";
 
 type ResourceType = "lecture" | "tiered_quiz" | "practice_guide" | "concept_map" | "review_cards" | "challenge_task";
@@ -63,11 +64,6 @@ const nodeLabels: Record<string, { name: string; agentId: AgentId }> = {
 
 type RunNodeState = "running" | "succeeded" | "failed" | "revising";
 
-const avatarClasses: Record<AuthenticatedUser["avatarKey"], string> = {
-  graphite: "bg-zinc-900 text-white", ocean: "bg-sky-600 text-white", violet: "bg-violet-600 text-white",
-  forest: "bg-emerald-600 text-white", amber: "bg-amber-500 text-white", rose: "bg-rose-600 text-white",
-};
-
 function agentTone(id: string | undefined) {
   if (id === "orchestrator") return "bg-zinc-900 text-white";
   if (id === "evidence_retrieval") return "bg-sky-600 text-white";
@@ -87,9 +83,10 @@ type LearningWorkbenchProps = {
   user: AuthenticatedUser;
   onLogout: () => void;
   onNavigate: (view: "path" | "study" | "resources") => void;
+  onUserChange?: (user: AuthenticatedUser) => void;
 };
 
-export function LearningWorkbench({ apiBase, user, onLogout, onNavigate }: LearningWorkbenchProps) {
+export function LearningWorkbench({ apiBase, user, onLogout, onNavigate, onUserChange }: LearningWorkbenchProps) {
   const [path, setPath] = useState<PathGraph>({ nodes: [], edges: [] });
   const [messages, setMessages] = useState<StudyMessage[]>([]);
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -291,8 +288,8 @@ export function LearningWorkbench({ apiBase, user, onLogout, onNavigate }: Learn
 
   return <main className={`flex h-screen min-h-0 flex-col overflow-hidden bg-background ${resizing ? "select-none" : ""}`}>
     <header className="flex h-16 shrink-0 items-center justify-between border-b px-5 sm:px-7">
-      <button type="button" onClick={() => setProfileOpen(true)} className="flex min-w-0 items-center gap-2.5 text-left" aria-label="打开学习画像"><span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-semibold ${avatarClasses[user.avatarKey]}`}>{user.displayName.slice(0, 1).toUpperCase()}</span><span className="min-w-0"><span className="block text-sm font-semibold tracking-tight">IM-Training-Agent</span><span className="block text-[11px] text-muted-foreground">{user.displayName} · 学习画像</span></span></button>
-      <nav aria-label="学习空间" className="flex items-center rounded-lg border bg-muted/40 p-1 text-sm"><button type="button" onClick={() => setSettingsOpen(true)} className="rounded-md px-3 py-1.5 text-muted-foreground hover:text-foreground">设置</button><button type="button" onClick={() => onNavigate("path")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">路径</button><button type="button" className="rounded-md bg-background px-4 py-1.5 font-medium shadow-sm">学习</button><button type="button" onClick={() => onNavigate("resources")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">资源</button></nav>
+      <div className="flex items-center gap-2.5"><AvatarBubble user={user} size="h-9 w-9 text-xs" /><span className="min-w-0"><span className="block text-sm font-semibold tracking-tight">IM-Training-Agent</span><span className="block text-[11px] text-muted-foreground">{user.displayName}</span></span></div>
+      <nav aria-label="学习空间" className="flex items-center rounded-lg border bg-muted/40 p-1 text-sm"><button type="button" onClick={() => setSettingsOpen(true)} className="rounded-md px-3 py-1.5 text-muted-foreground hover:text-foreground">设置</button><button type="button" onClick={() => setProfileOpen(true)} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">画像</button><button type="button" onClick={() => onNavigate("path")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">路径</button><button type="button" className="rounded-md bg-background px-4 py-1.5 font-medium shadow-sm">学习</button><button type="button" onClick={() => onNavigate("resources")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">资源</button></nav>
       <button type="button" onClick={logout} className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-2 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"><LogOut className="h-3.5 w-3.5" />退出</button>
     </header>
 
@@ -346,7 +343,7 @@ export function LearningWorkbench({ apiBase, user, onLogout, onNavigate }: Learn
       <aside style={{ width: rightWidth }} className="flex shrink-0 flex-col bg-muted/15" aria-label="当前学习路径"><div className="flex shrink-0 items-center justify-between border-b bg-background px-4 py-3.5"><div className="flex items-center gap-2"><Network className="h-4 w-4" /><h2 className="text-sm font-semibold">学习路径</h2></div><span className="text-xs text-muted-foreground">{path.nodes.length} 个节点</span></div><div className="min-h-0 basis-[59%] p-3">{path.nodes.length ? <TreeCanvas graph={path} selectedNodeId={selectedNodeId} onSelect={(node) => setSelectedNodeId(node.id)} /> : <div className="flex h-full items-center justify-center rounded-xl border border-dashed text-xs text-muted-foreground">尚未建立学习路径</div>}</div><div className="min-h-0 basis-[41%] overflow-y-auto border-t bg-background p-4">{selectedNode ? <div><div className="flex items-start justify-between gap-3"><div><div className="text-[10px] text-muted-foreground">当前节点</div><h3 className="mt-1 text-sm font-semibold leading-5">{selectedNode.title}</h3></div><span className={`mt-1 h-2.5 w-2.5 shrink-0 rounded-full ${selectedNode.mastered ? "bg-emerald-600" : selectedNode.userStatus === "completed" ? "bg-blue-600" : selectedNode.userStatus === "learning" ? "bg-amber-500" : "bg-zinc-300"}`} /></div>{selectedNode.recommendation ? <div className="mt-3"><RecommendationBadge recommendation={selectedNode.recommendation} /></div> : null}<p className="mt-3 text-xs leading-5 text-muted-foreground">{selectedNode.description}</p><button type="button" onClick={() => addMention(selectedNode)} className="mt-3 inline-flex h-8 w-full items-center justify-center gap-1 rounded-lg border text-xs font-medium hover:bg-muted">@ 引用到输入</button><div className="mt-2 flex gap-2"><button type="button" onClick={() => void updateNode(selectedNode, { userStatus: selectedNode.userStatus === "completed" ? "learning" : "completed" })} className="inline-flex h-8 flex-1 items-center justify-center gap-1 rounded-lg border text-xs hover:bg-muted"><Check className="h-3.5 w-3.5" />{selectedNode.userStatus === "completed" ? "继续学习" : "学完"}</button><button type="button" onClick={() => void updateNode(selectedNode, { mastered: !selectedNode.mastered, userStatus: selectedNode.mastered ? selectedNode.userStatus : "completed" })} className="inline-flex h-8 flex-1 items-center justify-center gap-1 rounded-lg border text-xs hover:bg-muted">{selectedNode.mastered ? "取消掌握" : "掌握"}</button></div></div> : <div className="flex h-full items-center justify-center text-xs text-muted-foreground">选择一个节点</div>}</div></aside>
     </div>
 
-    {profileOpen && <div className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/20 p-4" role="dialog" aria-modal="true" aria-label="学习画像"><section className="w-full max-w-md rounded-2xl border bg-card p-5 shadow-xl"><div className="flex items-center justify-between"><div className="flex items-center gap-2 text-sm font-semibold"><UserRound className="h-4 w-4" />学习画像</div><button type="button" onClick={() => setProfileOpen(false)} className="rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-muted">关闭</button></div><div className="mt-5 flex items-center gap-3"><span className={`flex h-11 w-11 items-center justify-center rounded-full text-sm font-semibold ${avatarClasses[user.avatarKey]}`}>{user.displayName.slice(0, 1).toUpperCase()}</span><div><div className="text-sm font-semibold">{user.displayName}</div><div className="text-xs text-muted-foreground">@{user.loginName}</div></div></div><p className="mt-4 rounded-xl bg-muted/60 p-3 text-sm leading-6">{profile?.summary ?? "当前还没有足够的学习证据。"}</p><div className="mt-3 flex flex-wrap gap-1.5">{profile?.keywords?.map((keyword) => <span key={keyword} className="rounded-full border px-2.5 py-1 text-[11px]">{keyword}</span>)}</div><div className="mt-4 grid grid-cols-3 gap-2 text-xs"><Metric label="学习时间" value={`${profile?.studyMinutes ?? 0} 分`} /><Metric label="学习资产" value={profile?.assetsCount ?? 0} /><Metric label="正确率" value={profile?.accuracy === null || profile?.accuracy === undefined ? "—" : `${Math.round(profile.accuracy * 100)}%`} /></div></section></div>}
+    {profileOpen && <ProfileDialog apiBase={apiBase} user={user} onUserChange={onUserChange} onClose={() => setProfileOpen(false)} />}
     {settingsOpen && <SettingsDialog apiBase={apiBase} onClose={() => setSettingsOpen(false)} />}
   </main>;
 }

@@ -8,11 +8,16 @@ export interface AuthenticatedLearner {
   loginName: string;
   displayName: string;
   avatarKey: AvatarKey;
+  /** 用户自传头像（canvas 缩图后的 data URL，≤200KB）；空 = 用 avatarKey 色块首字母 */
+  avatarImage: string | null;
   onboardingCompleted: boolean;
 }
 
 export const AVATAR_KEYS = ['graphite', 'ocean', 'violet', 'forest', 'amber', 'rose'] as const;
 export type AvatarKey = typeof AVATAR_KEYS[number];
+
+/** 头像图片上限（base64 data URL 字符长度），前端 canvas 压到 128px 后远小于该值。 */
+export const AVATAR_IMAGE_MAX_CHARS = 280_000;
 
 export interface OnboardingInput {
   role: string;
@@ -38,7 +43,7 @@ export class IdentityStore {
 
     const salt = randomBytes(16).toString('base64url');
     const passwordHash = hashPassword(input.password, salt);
-    const user: AuthenticatedLearner = { id: `user-${randomUUID()}`, loginName, displayName, avatarKey: 'graphite', onboardingCompleted: false };
+    const user: AuthenticatedLearner = { id: `user-${randomUUID()}`, loginName, displayName, avatarKey: 'graphite', avatarImage: null, onboardingCompleted: false };
     const now = Date.now();
     this.db.prepare(`
       INSERT INTO users (id, login_name, display_name, avatar_key, password_hash, password_salt, onboarding_completed, created_at, updated_at)
@@ -50,20 +55,21 @@ export class IdentityStore {
   authenticate(loginName: string, password: string): AuthenticatedLearner | null {
     const normalized = normalizeLoginName(loginName);
     const row = this.db.prepare(`
-      SELECT id, login_name AS loginName, display_name AS displayName, avatar_key AS avatarKey, password_hash AS passwordHash,
-        password_salt AS passwordSalt, onboarding_completed AS onboardingCompleted
+      SELECT id, login_name AS loginName, display_name AS displayName, avatar_key AS avatarKey, avatar_image AS avatarImage,
+        password_hash AS passwordHash, password_salt AS passwordSalt, onboarding_completed AS onboardingCompleted
       FROM users WHERE login_name = ?
     `).get(normalized) as {
       id: string;
       loginName: string;
       displayName: string;
       avatarKey: string;
+      avatarImage: string | null;
       passwordHash: string;
       passwordSalt: string;
       onboardingCompleted: number;
     } | undefined;
     if (!row || !verifyPassword(password, row.passwordSalt, row.passwordHash)) return null;
-    return { id: row.id, loginName: row.loginName, displayName: row.displayName, avatarKey: normalizeAvatarKey(row.avatarKey), onboardingCompleted: Boolean(row.onboardingCompleted) };
+    return { id: row.id, loginName: row.loginName, displayName: row.displayName, avatarKey: normalizeAvatarKey(row.avatarKey), avatarImage: row.avatarImage, onboardingCompleted: Boolean(row.onboardingCompleted) };
   }
 
   createSession(userId: string): { token: string; expiresAt: number } {
@@ -81,8 +87,8 @@ export class IdentityStore {
     if (!token) return null;
     const now = Date.now();
     const row = this.db.prepare(`
-      SELECT u.id, u.login_name AS loginName, u.display_name AS displayName, u.avatar_key AS avatarKey, u.onboarding_completed AS onboardingCompleted,
-        s.id AS sessionId
+      SELECT u.id, u.login_name AS loginName, u.display_name AS displayName, u.avatar_key AS avatarKey, u.avatar_image AS avatarImage,
+        u.onboarding_completed AS onboardingCompleted, s.id AS sessionId
       FROM auth_sessions s JOIN users u ON u.id = s.user_id
       WHERE s.token_hash = ? AND s.expires_at > ?
     `).get(hashToken(token), now) as {
@@ -90,12 +96,13 @@ export class IdentityStore {
       loginName: string;
       displayName: string;
       avatarKey: string;
+      avatarImage: string | null;
       onboardingCompleted: number;
       sessionId: string;
     } | undefined;
     if (!row) return null;
     this.db.prepare('UPDATE auth_sessions SET last_seen_at = ? WHERE id = ?').run(now, row.sessionId);
-    return { id: row.id, loginName: row.loginName, displayName: row.displayName, avatarKey: normalizeAvatarKey(row.avatarKey), onboardingCompleted: Boolean(row.onboardingCompleted) };
+    return { id: row.id, loginName: row.loginName, displayName: row.displayName, avatarKey: normalizeAvatarKey(row.avatarKey), avatarImage: row.avatarImage, onboardingCompleted: Boolean(row.onboardingCompleted) };
   }
 
   revokeSession(token: string | undefined): void {
@@ -115,9 +122,21 @@ export class IdentityStore {
     const nextAvatar = normalizeAvatarKey(avatarKey);
     const now = Date.now();
     this.db.prepare('UPDATE users SET avatar_key = ?, updated_at = ? WHERE id = ?').run(nextAvatar, now, learnerId);
+    return this.getById(learnerId);
+  }
+
+  /** 用户自传头像：存缩图 data URL；传 null 清除回到色块首字母。 */
+  updateAvatarImage(learnerId: string, image: string | null): AuthenticatedLearner | null {
+    const now = Date.now();
+    this.db.prepare('UPDATE users SET avatar_image = ?, updated_at = ? WHERE id = ?')
+      .run(image && image.length <= AVATAR_IMAGE_MAX_CHARS && image.startsWith('data:image/') ? image : null, now, learnerId);
+    return this.getById(learnerId);
+  }
+
+  getById(learnerId: string): AuthenticatedLearner | null {
     const row = this.db.prepare(`
       SELECT id, login_name AS loginName, display_name AS displayName, avatar_key AS avatarKey,
-        onboarding_completed AS onboardingCompleted FROM users WHERE id = ?
+        avatar_image AS avatarImage, onboarding_completed AS onboardingCompleted FROM users WHERE id = ?
     `).get(learnerId) as Omit<AuthenticatedLearner, 'avatarKey' | 'onboardingCompleted'> & { avatarKey: string; onboardingCompleted: number } | undefined;
     return row ? { ...row, avatarKey: normalizeAvatarKey(row.avatarKey), onboardingCompleted: Boolean(row.onboardingCompleted) } : null;
   }

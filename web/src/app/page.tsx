@@ -42,6 +42,7 @@ export default function LearningApp() {
     user,
     onLogout: () => setUser(null),
     onNavigate: setView,
+    onUserChange: setUser,
   };
 
   if (view === "study") return <LearningWorkbench {...sharedProps} />;
