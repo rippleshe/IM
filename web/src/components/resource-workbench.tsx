@@ -65,8 +65,34 @@ function renderRichText(text: string) {
   });
 }
 
+// Mermaid 知识图谱渲染：概念图资源以 flowchart 文本存储，客户端动态加载 mermaid 绘制。
+function MermaidDiagram({ code }: { code: string }) {
+  const [svg, setSvg] = useState("");
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    let active = true;
+    void (async () => {
+      try {
+        const mermaid = (await import("mermaid")).default;
+        mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme: "neutral" });
+        const { svg: rendered } = await mermaid.render(`mermaid-${Math.random().toString(36).slice(2)}`, code);
+        if (active) setSvg(rendered);
+      } catch {
+        if (active) setFailed(true);
+      }
+    })();
+    return () => { active = false; };
+  }, [code]);
+  if (failed) return <pre className="overflow-x-auto rounded-xl border bg-muted/20 px-4 py-3 font-mono text-xs leading-5 text-muted-foreground">{code}</pre>;
+  if (!svg) return <div className="flex h-24 items-center justify-center rounded-xl border bg-muted/20 text-xs text-muted-foreground">正在渲染知识图谱…</div>;
+  return <div className="overflow-x-auto rounded-xl border bg-background p-4" dangerouslySetInnerHTML={{ __html: svg }} />;
+}
+
 function renderBlockContent(block: ResourceBlock) {
   if (block.type === "heading") return <h3 className="border-b pb-2 text-lg font-semibold tracking-tight">{String(block.content)}</h3>;
+  if (block.type === "paragraph" && typeof block.content === "string" && /^(flowchart|graph)\b/.test(block.content.trim())) {
+    return <MermaidDiagram code={block.content} />;
+  }
   if (typeof block.content === "string") return <div className="space-y-1">{renderRichText(block.content)}</div>;
   if (Array.isArray(block.content)) return <ul className="space-y-2 pl-1 text-sm leading-6 text-muted-foreground">{block.content.map((item, index) => <li key={index} className="flex gap-2"><span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-foreground/45" />{String(item)}</li>)}</ul>;
   if (block.content && typeof block.content === "object") {

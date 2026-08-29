@@ -2,6 +2,8 @@
 FROM node:22-alpine AS base
 WORKDIR /app
 RUN corepack enable
+# pnpm v11 在运行脚本前自动 install（verify-deps）；容器构建期无 registry 访问，必须关闭
+ENV npm_config_verify_deps_before_run=false
 
 FROM base AS deps
 COPY web/package.json pnpm-lock.yaml ./web/

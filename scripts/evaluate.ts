@@ -90,6 +90,8 @@ async function main(): Promise<void> {
   const limitIndex = args.indexOf('--limit');
   const limit = limitIndex >= 0 ? Number(args[limitIndex + 1]) || Infinity : Infinity;
   const live = args.includes('--live');
+  const strideIndex = args.indexOf('--stride');
+  const stride = strideIndex >= 0 ? Number(args[strideIndex + 1]) || 1 : 1;
 
   const cases = buildEvaluationCases();
   console.log(`[evaluate] 案例总数 ${cases.length}（三画像各 ${cases.length / 3}）`);
@@ -100,7 +102,9 @@ async function main(): Promise<void> {
 
   const results: CaseResult[] = [];
   const selected = cases.slice(0, limit === Infinity ? cases.length : limit);
-  for (const caseItem of selected) {
+  // --stride N：每 N 个案例取 1 个，分层覆盖三画像与六类资源（live 模式用）
+  const selectedStratified = stride > 1 ? selected.filter((_, index) => index % stride === 0) : selected;
+  for (const caseItem of selectedStratified) {
     const prior = PERSONA_PRIORS[caseItem.persona];
     const calibration = calibrateDifficulty({
       pMastery: prior.pMastery, confidence: prior.confidence,

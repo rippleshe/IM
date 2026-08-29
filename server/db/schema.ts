@@ -409,6 +409,8 @@ export const privacyAuditEvents = pgTable('privacy_audit_events', {
 export const studyRuns = pgTable('study_runs', {
   id: text('id').primaryKey(),
   learnerId: text('learner_id').notNull(),
+  /** 幂等键（总规 §3）：同 learner 重复提交返回既有运行 */
+  idempotencyKey: text('idempotency_key'),
   requestJson: jsonb('request_json').notNull(),
   planJson: jsonb('plan_json').notNull(),
   /** 节点间传递的中间产物（证据摘要、生成草稿、审核结果），支持 Worker 重启后恢复 */

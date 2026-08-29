@@ -71,7 +71,8 @@
     "docs:embed": "tsx scripts/embed-documents.ts",
     "worker": "tsx server/worker.ts",
     "start": "node dist/server.js",
-    "db:bootstrap": "tsx scripts/db-bootstrap.ts"
+    "db:bootstrap": "tsx scripts/db-bootstrap.ts",
+    "ablation": "tsx scripts/ablation.ts"
   },
   "keywords": [
     "multi-agent",

@@ -101,11 +101,13 @@ export async function createStudyRun(input: {
   learnerId: string;
   request: StudyRunRequest;
   plan: StudyRunPlan;
+  idempotencyKey?: string | null;
 }): Promise<StudyRunRow> {
   const now = Date.now();
   await db().db.insert(studyRuns).values({
     id: input.runId,
     learnerId: input.learnerId,
+    idempotencyKey: input.idempotencyKey ?? null,
     requestJson: input.request,
     planJson: input.plan,
     contextJson: {},
@@ -131,6 +133,14 @@ export async function createStudyRun(input: {
 
 export async function getRunById(runId: string): Promise<StudyRunRow | null> {
   const rows = await db().db.select().from(studyRuns).where(eq(studyRuns.id, runId)).limit(1);
+  return rows[0] ? rowToRun(rows[0]) : null;
+}
+
+/** 幂等键查询（总规 §3）：同 learner 同 key 返回既有运行 */
+export async function findRunByIdempotencyKey(learnerId: string, key: string): Promise<StudyRunRow | null> {
+  const rows = await db().db.select().from(studyRuns)
+    .where(and(eq(studyRuns.learnerId, learnerId), eq(studyRuns.idempotencyKey, key)))
+    .limit(1);
   return rows[0] ? rowToRun(rows[0]) : null;
 }
 

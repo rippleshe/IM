@@ -43,6 +43,13 @@
       "when": 1787993000000,
       "tag": "0005_debate_source",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1787994000000,
+      "tag": "0006_run_idempotency",
+      "breakpoints": true
     }
   ]
 }

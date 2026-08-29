@@ -17,6 +17,7 @@ import {
   appendRunEvent,
   createStudyRun,
   enqueueRootNodes,
+  findRunByIdempotencyKey,
   getRunForLearner,
   listEventsSince,
   listRunNodes,
@@ -47,8 +48,19 @@ export function createRunsRouter(requireLearner: RequireLearner): express.Router
     try {
       const request = parseStudyRunRequest(req.body);
       const runId = `study-run-${randomUUID()}`;
+      // 幂等键（总规 §3）：同 learner 重复提交同一 key 直接返回既有运行
+      const idempotencyKey = typeof req.headers['idempotency-key'] === 'string' && req.headers['idempotency-key'].trim()
+        ? req.headers['idempotency-key'].trim().slice(0, 120)
+        : null;
+      if (idempotencyKey) {
+        const existing = await findRunByIdempotencyKey(learner.id, idempotencyKey);
+        if (existing) {
+          res.status(200).json({ success: true, runId: existing.id, plan: existing.plan, replayed: true });
+          return;
+        }
+      }
       const plan = planStudyRun(runId, request, await derivePlannerSignals(learner.id));
-      const run = await createStudyRun({ runId, learnerId: learner.id, request, plan });
+      const run = await createStudyRun({ runId, learnerId: learner.id, request, plan, idempotencyKey });
       await learningStore.saveChatMessage(learner.id, 'user', request.task, {
         surface: 'study', pathNodeId: request.pathNodeId, resourceType: request.resourceType,
       });

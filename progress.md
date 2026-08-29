@@ -1,5 +1,22 @@
 # 阅读进度
 
+# 2026-08-29 总规阶段一~五主体执行：PG 单数据源 + 诊断/画像/苏格拉底 + 混合检索/批评裁决 + 评测交付
+
+- 阶段一A/B：未提交的用户自传头像工作收口——PATCH /api/auth/avatar-image、users.avatar_image（SQLite ensureColumn + PG 迁移 0003）、共享 ProfileDialog，三个工作台顶栏统一 AvatarBubble 消费 avatarImage；清理一次性脚本与根目录旧 .next；前端 .next 缓存损坏导致的 GET / 404 已排查修复（清缓存重启）。
+- 阶段一D（核心）：PostgreSQL 单数据源切换落地。新增 server/db/pg-store.ts（PgIdentityStore + PgLearningStore，与 SQLite 版逐方法等价：BKT/诊断/路径/资产/反馈/画像/证据/隐私审计，jsonb 显式序列化避免数组转 PG 数组字面量的坑）与 server/db/pg-evidence.ts（PgEvidenceService + 结构化数据集查询 + 干净环境引导导入）；study-context.ts 数据源开关（DATABASE_URL 即 PG，IM_TRAINING_AGENT_DATA_SOURCE=sqlite 回退）；全部存储调用点补 await（await 对同步实现 no-op，双实现兼容），routes.ts requireLearner 异步化修复 learner_id=undefined 的门禁绕过隐患；IdentityStore 新增 getByLoginName 公共 API 替换 demo-seed 的内部 hack 查询。
+- 关键修复：ESM import 提升 + dotenv 时序问题——study-runtime 在 index.ts 的 dotenv.config() 之前求值，DASHSCOPE_API_KEY 为空导致模型 provider 未注册，服务内所有 LLM 调用一直静默走兜底模板；study-runtime/study-context 顶部前置 import 'dotenv/config' 后修复。
+- 阶段一C：Compose 全链路补齐——新增 bootstrap 服务（scripts/db-bootstrap.ts：迁移→Metro 目录→AI4I→知识卡→可选 Metro CSV，全部幂等，实测跑通）、web 服务（web/Dockerfile standalone 构建）；tsup 增加 db-bootstrap 入口，Dockerfile 携带迁移 SQL 与引导数据；compose config 校验通过（镜像构建因 docker.io 网络不可达暂缓，待代理重试）。
+- --cutover 标记已写入：PostgreSQL 为唯一业务数据源，SQLite 仅作只读备份；PG 实测端到端：注册→建档→诊断→证据→Run 十节点 DAG→门禁发布入库→assets/作答/画像全链路；demo:seed 直接种入 PG（三账号差异化 BKT/LLM 路径/画像）。
+- 阶段二A：建档后强制 12 题入学诊断——新增 web/src/components/diagnostic-flow.tsx（逐题作答自动前进、服务端判分、维度小结与逐题解析）；/api/auth/me、login、register、onboarding 统一携带 diagnosticCompleted。
+- 阶段二B：GET /api/learning/profile 扩展 blindSpots（BKT 掌握×作答证据排序）/difficultyCurve（难度校准推导，预计成功率落 65-80% 教学区间）/resourceMatch（六类资源适配建议）；新增 GET /api/learning/bkt-updates 审计端点；server/profile-insights.ts 确定性洞见模块；画像弹窗新增盲区/难度曲线/资源匹配三区块。
+- 阶段二C：苏格拉底启发式追问全链路——guidance_sessions/guidance_turns PG 表（迁移 0004）、src/learning/socratic.ts 纯函数（关键度×(1-置信度) 选题、终止条件、确定性兜底）、server/guidance-service.ts 编排（LLM 逐轮提问与公开评价、每轮 BKT 更新、置信≥0.8 或 5 轮终止出决策）、两个 API 端点、前端 guidance-dialog.tsx + 路径页节点详情入口；实测 LLM 生成式追问 + BKT 0.357→0.5 实时更新。
+- 阶段三A：运行时混合检索——src/learning/retrieval/hybrid.ts（纯 RRF，k=60）+ server/db/pg-retrieval.ts（tsvector 全文路与 pgvector cosine 向量路各 top-20、RRF 融合 top-8）；查询向量 DashScope text-embedding-v4，嵌入失败降级纯 FTS 并把降级原因写入 EvidencePack.hybrid 与 Run 事件/群聊气泡；bootstrap 重导后向量重回填（缓存复用 616/616 零成本）。
+- 阶段三B：独立批评 Agent + 裁决 Agent——debate_issues 加 source 列（迁移 0005）；反方质询升级为规则兜底 + LLM 独立批评（检测无证据/冲突/越界因果/难度失配，失败静默回退）；裁决升级为规则裁决 + 裁决 Agent 独立判决取更严者（门禁只能收紧不能放松），rationale 记录双轨；实测批评 Agent 补充 3 条高质量议题（量化支持缺失/未验证因果/难度失配）、双轨裁决一致。
+- 阶段四：六类资源端到端扫描全部 succeeded 且门禁通过入库（auditStatus passed + difficultyCalibration 落库）；concept_map 的 Mermaid flowchart 文本在资源页客户端渲染（web 新增 mermaid 依赖动态导入，失败回退代码块）；阅读反馈→预填→作答→BKT→节点建议闭环此前已验证。
+- 阶段五：三账号证据包导出 data/exports/{persona}-run-export.json（画像+诊断+DAG 节点+22-23 事件+声明图+裁决+最终资产，差异化任务产出差异化资源）；scripts/ablation.ts 消融实验三组全过——A1 动态 DAG 三画像分化 3 种计划（固定 1 种）、A2 发布资源幻觉率 0（4 次运行）、A3 BKT 校准难度成功率 33/33 落 65-80% 区间（固定 0.42 仅 2/33）；evaluate 支持 --stride 分层采样；pnpm evaluate --live 分层子集验证真实生成幻觉率；findings.md §6 演示分镜按当前产品更新。
+- 踩坑记录：node-postgres 会把 JS 数组序列化为 PG 数组字面量导致 jsonb 列写入报错（需显式 JSON.stringify）；drizzle select 返回数组而非 {rows}；export 脚本 grep 节点状态误判运行终态（须锚定 run 对象）；本机 5432 被 PG 占用继续沿用 15432/16379；docker.io 直连不可达影响镜像构建。
+- 验证：typecheck 0 错、115 测试全过、前端 tsc/standalone 构建通过；PG 模式全链路冒烟与冒烟数据清理完成。
+
 # 2026-08-28 BullMQ 动态 DAG 全链路 + 个性化算法层（8/30-9/3 日程主体完成）
 
 - 模型运行时与数据层引导抽为共享模块：server/study-runtime.ts（模型注册/角色路由/发布门禁）、server/study-context.ts（SQLite 打开与存储实例），api 与 worker 进程同源不再复制；index.ts 两段纯搬移并验证启动。
