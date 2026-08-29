@@ -517,6 +517,8 @@ export const debateIssues = pgTable('debate_issues', {
   issueType: text('issue_type').notNull(),
   targetClaimId: text('target_claim_id'),
   argument: text('argument').notNull(),
+  /** 议题来源：rule = 确定性规则兜底，critic = 独立批评 Agent */
+  source: text('source').notNull().default('rule'),
   status: text('status').notNull().default('raised'),
   createdAt: ms('created_at').notNull(),
 }, (t) => [

@@ -18,6 +18,15 @@ export type EvidenceSourceType = 'dataset' | 'document' | 'learner_state' | 'upl
 export type RetrievalMethod = 'sql' | 'fts' | 'vector' | 'none';
 export type EvidenceScope = 'system' | 'session_upload' | 'learner_private';
 
+/** 混合检索信息（总规 §7.5）：向量路是否可用与降级原因 */
+export interface HybridRetrievalInfo {
+  vectorUsed: boolean;
+  degraded: boolean;
+  reason?: string;
+  ftsCandidates: number;
+  vectorCandidates: number;
+}
+
 export interface EvidenceCheck {
   id: string;
   label: string;
@@ -61,6 +70,8 @@ export interface EvidencePack {
     temporaryReferenceUsed: boolean;
     retained: false;
   };
+  /** 混合检索信息（总规 §7.5）：向量路是否可用与降级原因，仅 PG 数据源填充 */
+  hybrid?: HybridRetrievalInfo;
   learnerId?: string;
   sessionId?: string;
   createdAt: number;

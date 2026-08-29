@@ -222,6 +222,12 @@ async function retrieveEvidence(run: StudyRunRow, node: RunNodeSpec, plan: Array
       `完成结构化检索：取回 ${pack.items.length} 条数据证据，可回溯定位如：${pack.items[0]?.locator ?? '无'}。`);
     return `结构化证据 ${pack.items.length} 条`;
   }
+  // 混合检索降级上报（总规 §7.5）：向量路不可用时如实展示，不静默
+  if (pack.hybrid?.degraded) {
+    const reasonText = pack.hybrid.reason === 'embed_failed' ? '查询向量生成失败' : pack.hybrid.reason === 'vector_query_failed' ? '向量查询异常' : '库内暂无向量';
+    await emitEvent(run, node, 'node.progress', `混合检索降级：${reasonText}，已回退全文检索。`, { hybrid: pack.hybrid });
+    await bubble(run, node.role, `注意：向量检索暂不可用（${reasonText}），文档证据已降级为全文检索，不影响门禁流程。`);
+  }
   await bubble(run, node.role, pack.items.length > 0
     ? `完成文档检索：按相关度命中 ${pack.items.length} 份资料，最相关《${pack.items[0]?.sourceTitle ?? ''}》${pack.items[0]?.locator ? `（${pack.items[0].locator}）` : ''}。`
     : '文档检索未命中可用资料，将提示生成端只依赖结构化数据并保守表达。');
@@ -345,25 +351,76 @@ async function persistClaims(run: StudyRunRow, items: ClaimAuditRecord[]): Promi
   }
 }
 
+type DebateIssueInput = {
+  issueType: 'no_evidence' | 'conflict' | 'out_of_scope_causality' | 'difficulty_mismatch';
+  targetClaimId: string | null;
+  argument: string;
+  source: 'rule' | 'critic';
+};
+
+/** 独立批评 Agent（总规 §5.2 升级）：LLM 从反方立场逐条审查草稿；失败返回空，规则兜底不受影响 */
+async function criticAgentIssues(run: StudyRunRow, audit: NonNullable<RunContext['audit']>): Promise<DebateIssueInput[]> {
+  const ctx = contextOf(run);
+  const draft = ctx.draft;
+  const merged = ctx.merged_pack;
+  if (!draft) return [];
+  const focus = run.plan.challengeFocus;
+  try {
+    const raw = await callAgent('cross_validation',
+      '你是独立批评智能体（反方），只负责挑错，不负责修改。只输出 JSON：{"issues":[{"issueType":"no_evidence|conflict|out_of_scope_causality|difficulty_mismatch","targetClaimId":"对应声明的 id 或 null","argument":"不超过80字的具体批评"}]}。审查维度：no_evidence=声明在证据里找不到支持；conflict=声明数字或结论与证据冲突；out_of_scope_causality=把数据异常写成了越界的确定性因果；difficulty_mismatch=内容难度与学习者状态不匹配。只在确有问题时列出，最多 4 条，没有问题就输出空数组。',
+      JSON.stringify({
+        claims: audit.claims.map((claim) => ({ id: claim.id, text: claim.text.slice(0, 160), verdict: claim.verdict })),
+        draftExcerpt: draft.blocks
+          .filter((block) => block.type === 'heading' || block.type === 'paragraph' || block.type === 'list')
+          .map((block) => (typeof block.content === 'string' ? block.content : ''))
+          .filter(Boolean).join('\n').slice(0, 1200),
+        evidence: evidenceDigest(merged ?? null),
+        focus,
+        learnerState: ctx.assess?.analysis ?? '',
+        resourceDifficulty: draft.difficulty,
+      }), 1200);
+    const parsed = parseJson<{ issues?: unknown }>(raw) ?? {};
+    if (!Array.isArray(parsed.issues)) return [];
+    const allowed = new Set(['no_evidence', 'conflict', 'out_of_scope_causality', 'difficulty_mismatch']);
+    return parsed.issues.flatMap((item): Array<DebateIssueInput> => {
+      const issue = item as { issueType?: unknown; targetClaimId?: unknown; argument?: unknown };
+      if (!allowed.has(String(issue.issueType))) return [];
+      const argument = typeof issue.argument === 'string' && issue.argument.trim() ? issue.argument.trim().slice(0, 300) : '';
+      if (!argument) return [];
+      const targetClaimId = typeof issue.targetClaimId === 'string' && audit.claims.some((claim) => claim.id === issue.targetClaimId)
+        ? issue.targetClaimId
+        : null;
+      return [{ issueType: String(issue.issueType) as DebateIssueInput['issueType'], targetClaimId, argument, source: 'critic' }];
+    }).slice(0, 4);
+  } catch {
+    return [];
+  }
+}
+
 async function runDebateChallenge(run: StudyRunRow, node: RunNodeSpec): Promise<string> {
   const ctx = contextOf(run);
   const audit = ctx.audit;
   if (!audit) throw new Error('缺少审核结果，无法发起反方质询');
   const focus = run.plan.challengeFocus;
-  const issues: Array<{ issueType: 'no_evidence' | 'conflict' | 'out_of_scope_causality' | 'difficulty_mismatch'; targetClaimId: string | null; argument: string }> = [];
+  const issues: DebateIssueInput[] = [];
   for (const claim of audit.claims) {
     if (claim.verdict === 'unsupported') {
-      issues.push({ issueType: 'no_evidence', targetClaimId: claim.id, argument: claim.critique || '该表述在证据包中找不到支持来源' });
+      issues.push({ issueType: 'no_evidence', targetClaimId: claim.id, argument: claim.critique || '该表述在证据包中找不到支持来源', source: 'rule' });
     } else if (claim.verdict === 'review' && focus.includes('conflict')) {
-      issues.push({ issueType: 'conflict', targetClaimId: claim.id, argument: claim.critique || '该数字无法与证据核对，存在证据冲突风险' });
+      issues.push({ issueType: 'conflict', targetClaimId: claim.id, argument: claim.critique || '该数字无法与证据核对，存在证据冲突风险', source: 'rule' });
     }
   }
   if (focus.includes('out_of_scope_causality')) {
-    issues.push({ issueType: 'out_of_scope_causality', targetClaimId: null, argument: '数据异常只能支持风险判断，越界的因果结论必须降级为待现场复核' });
+    issues.push({ issueType: 'out_of_scope_causality', targetClaimId: null, argument: '数据异常只能支持风险判断，越界的因果结论必须降级为待现场复核', source: 'rule' });
   }
   if (focus.includes('difficulty_mismatch') && ctx.assess) {
-    issues.push({ issueType: 'difficulty_mismatch', targetClaimId: null, argument: `学情侧提示：${ctx.assess.analysis.slice(0, 120)}——请核对资源难度是否匹配当前掌握度` });
+    issues.push({ issueType: 'difficulty_mismatch', targetClaimId: null, argument: `学情侧提示：${ctx.assess.analysis.slice(0, 120)}——请核对资源难度是否匹配当前掌握度`, source: 'rule' });
   }
+  // 独立批评 Agent：LLM 从反方立场补充议题（失败静默回退规则兜底）
+  const ruleKeys = new Set(issues.map((issue) => `${issue.issueType}:${issue.targetClaimId ?? ''}`));
+  const criticIssues = (await criticAgentIssues(run, audit))
+    .filter((issue) => !ruleKeys.has(`${issue.issueType}:${issue.targetClaimId ?? ''}`));
+  issues.push(...criticIssues);
   if (issues.length > 0) {
     await runDb().insert(debateIssues).values(issues.map((issue) => ({
       id: `${run.id}:issue-${randomUUID()}`,
@@ -372,15 +429,41 @@ async function runDebateChallenge(run: StudyRunRow, node: RunNodeSpec): Promise<
       issueType: issue.issueType,
       targetClaimId: issue.targetClaimId ? `${run.id}:${issue.targetClaimId}` : null,
       argument: issue.argument.slice(0, 1000),
+      source: issue.source,
       status: 'raised' as const,
       createdAt: Date.now(),
     })));
   }
   await bubble(run, node.role,
     issues.length > 0
-      ? `质询提出 ${issues.length} 个议题（无证据 ${issues.filter((issue) => issue.issueType === 'no_evidence').length}、冲突 ${issues.filter((issue) => issue.issueType === 'conflict').length}、越界因果 ${issues.filter((issue) => issue.issueType === 'out_of_scope_causality').length}、难度适配 ${issues.filter((issue) => issue.issueType === 'difficulty_mismatch').length}）。无法核对或越界的表述将被从严裁决。`
-      : '质询未发现无证据、冲突或越界表述，提交裁决确认。');
+      ? `质询提出 ${issues.length} 个议题（规则 ${issues.length - criticIssues.length} 条、批评 Agent 补充 ${criticIssues.length} 条：无证据 ${issues.filter((issue) => issue.issueType === 'no_evidence').length}、冲突 ${issues.filter((issue) => issue.issueType === 'conflict').length}、越界因果 ${issues.filter((issue) => issue.issueType === 'out_of_scope_causality').length}、难度适配 ${issues.filter((issue) => issue.issueType === 'difficulty_mismatch').length}）。无法核对或越界的表述将被从严裁决。`
+      : '质询（含独立批评 Agent）未发现无证据、冲突或越界表述，提交裁决确认。');
   return `反方质询 ${issues.length} 个议题`;
+}
+
+const VERDICT_SEVERITY: Record<string, number> = { supported: 0, partial: 1, conflict: 2, unsupported: 3 };
+
+/** 裁决 Agent（总规 §5.2 升级）：LLM 独立给出整体判决；失败返回 null，规则兜底不受影响 */
+async function adjudicatorAgentVerdict(run: StudyRunRow, audit: NonNullable<RunContext['audit']>): Promise<{ verdict: 'supported' | 'partial' | 'conflict' | 'unsupported'; rationale: string } | null> {
+  try {
+    const raw = await callAgent('cross_validation',
+      '你是证据裁决智能体（裁判），在反方质询后给出整体判决。只输出 JSON：{"verdict":"supported|partial|conflict|unsupported","rationale":"不超过80字的公开判决理由"}。判据：全部实质性声明都有证据支持且来源互证=supported；存在待复核表述=partial；证据之间存在冲突=conflict；存在无证据支持的实质性结论=unsupported。你的判决只能基于给定材料。',
+      JSON.stringify({
+        claims: audit.claims.map((claim) => ({ id: claim.id, text: claim.text.slice(0, 140), verdict: claim.verdict })),
+        crossValidation: audit.summary,
+        challengeFocus: run.plan.challengeFocus,
+        strictAdjudication: run.plan.strictAdjudication,
+      }), 800);
+    const parsed = parseJson<{ verdict?: unknown; rationale?: unknown }>(raw) ?? {};
+    const verdict = String(parsed.verdict);
+    if (!(verdict in VERDICT_SEVERITY)) return null;
+    return {
+      verdict: verdict as 'supported' | 'partial' | 'conflict' | 'unsupported',
+      rationale: typeof parsed.rationale === 'string' && parsed.rationale.trim() ? parsed.rationale.trim().slice(0, 160) : '裁决 Agent 未给出理由。',
+    };
+  } catch {
+    return null;
+  }
 }
 
 async function runAdjudicate(run: StudyRunRow, node: RunNodeSpec, attempt: number): Promise<'released' | 'revised' | 'rejected'> {
@@ -390,11 +473,16 @@ async function runAdjudicate(run: StudyRunRow, node: RunNodeSpec, attempt: numbe
   const unsupported = audit.claims.filter((claim) => claim.verdict === 'unsupported').length;
   const review = audit.claims.filter((claim) => claim.verdict === 'review').length;
   const summaryStatus = audit.summary.status;
-  const verdict = unsupported > 0
+  const ruleVerdict = unsupported > 0
     ? 'unsupported'
     : summaryStatus === 'conflict'
       ? 'conflict'
       : (review > 0 || summaryStatus !== 'corroborated') ? 'partial' : 'supported';
+  // 裁决 Agent 独立判决；与规则结论取更严者——门禁只能收紧不能放松（总规 §5.2）
+  const agent = await adjudicatorAgentVerdict(run, audit);
+  const verdict = agent && (VERDICT_SEVERITY[agent.verdict] ?? 0) > (VERDICT_SEVERITY[ruleVerdict] ?? 0)
+    ? agent.verdict
+    : ruleVerdict;
   const strict = run.plan.strictAdjudication;
   const released = verdict === 'supported' || (verdict === 'partial' && !strict);
   await runDb().insert(auditDecisions).values({
@@ -403,13 +491,13 @@ async function runAdjudicate(run: StudyRunRow, node: RunNodeSpec, attempt: numbe
     resourceId: run.id,
     round: attempt,
     verdict,
-    rationale: `支持 ${audit.claims.length - review - unsupported}/${audit.claims.length}，待复核 ${review}，无证据 ${unsupported}；交叉验证 ${summaryStatus}${strict ? '；知识风险高，partial 亦不放行' : ''}。`,
+    rationale: `规则裁决 ${ruleVerdict}；裁决 Agent ${agent ? agent.verdict : '不可用（回退规则）'}；${agent ? agent.rationale : ''}支持 ${audit.claims.length - review - unsupported}/${audit.claims.length}，待复核 ${review}，无证据 ${unsupported}；交叉验证 ${summaryStatus}${strict ? '；知识风险高，partial 亦不放行' : ''}`.slice(0, 900),
     released,
     createdAt: Date.now(),
   });
   await mergeRunContext(run.id, { adjudication: { verdict, released, round: attempt } });
   await bubble(run, node.role,
-    `第 ${attempt} 轮裁决：${verdict}。${released ? '通过发布门禁。' : '未通过发布门禁。'}`);
+    `第 ${attempt} 轮裁决：${verdict}（规则 ${ruleVerdict}${agent ? `；裁决 Agent ${agent.verdict}` : '；裁决 Agent 不可用，按规则执行'}）。${released ? '通过发布门禁。' : '未通过发布门禁。'}`);
 
   if (!released) {
     if (attempt <= REVISION_BUDGET) {

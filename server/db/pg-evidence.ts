@@ -17,6 +17,7 @@ import { from as copyFrom } from 'pg-copy-streams';
 
 import { KNOWLEDGE_CARD_SOURCE_ID, chunkCardContent } from '../../src/learning/knowledge-import.js';
 import { crossValidate, normalizeSearchTerms } from '../../src/learning/evidence.js';
+import { hybridDocumentRowsPg } from './pg-retrieval.js';
 import type { CsvDatasetSource } from '../../src/learning/tabular.js';
 import type {
   DatasetSummary,
@@ -122,40 +123,6 @@ function toTsQuery(terms: string[]): string | null {
     .map((term) => `'${term.replaceAll("'", '')}'`);
   if (cleaned.length === 0) return null;
   return cleaned.join(' | ');
-}
-
-interface DocumentRow {
-  id: string;
-  sourceId: string;
-  sourcePath: string;
-  locator: string;
-  title: string;
-  content: string;
-}
-
-async function documentRowsPg(pool: Pool, terms: string[]): Promise<DocumentRow[]> {
-  if (terms.length === 0) return [];
-  const tsquery = toTsQuery(terms);
-  if (tsquery) {
-    try {
-      const rows = (await pool.query(
-        `SELECT id, source_id AS "sourceId", source_path AS "sourcePath", locator, title, content
-         FROM document_chunks
-         WHERE to_tsvector('simple', search_text) @@ to_tsquery('simple', $1)
-         ORDER BY ts_rank(to_tsvector('simple', search_text), to_tsquery('simple', $1)) DESC
-         LIMIT 8`, [tsquery],
-      )).rows as DocumentRow[];
-      if (rows.length > 0) return rows;
-    } catch {
-      // tsquery 语法异常时走 ILIKE 兜底（与 SQLite 版 FTS→LIKE 回退语义一致）
-    }
-  }
-  const likeClauses = terms.map((_, index) => `(title ILIKE $${index + 1} OR content ILIKE $${index + 1})`).join(' OR ');
-  const likeParams = terms.map((term) => `%${term}%`);
-  return (await pool.query(
-    `SELECT id, source_id AS "sourceId", source_path AS "sourcePath", locator, title, content
-     FROM document_chunks WHERE ${likeClauses} LIMIT 8`, likeParams,
-  )).rows as DocumentRow[];
 }
 
 /* ------------------------------------------------------------------ */
@@ -302,18 +269,24 @@ export class PgEvidenceService {
     const wantDocuments = !options.retrievalPlan || options.retrievalPlan.includes('document');
     const terms = normalizeSearchTerms(query);
     const structured = wantStructured ? await structuredEvidencePg(this.pool) : [];
-    const documents = wantDocuments ? (await documentRowsPg(this.pool, terms)).map((row, index) => evidenceItem({
-      sourceType: 'document',
-      sourceId: row.sourceId,
-      sourceTitle: row.title,
-      locator: `${row.sourcePath}#${row.locator}`,
-      content: row.content,
-      retrievalMethod: 'fts',
-      relevanceScore: Math.max(0.55, 0.94 - index * 0.06),
-      trustLevel: 'high',
-      scope: 'system' as EvidenceScope,
-      metadata: { title: row.title, termsMatched: terms.length },
-    })) : [];
+    let documents: EvidenceItem[] = [];
+    let hybrid: EvidencePack['hybrid'];
+    if (wantDocuments) {
+      const result = await hybridDocumentRowsPg(this.pool, toTsQuery(terms), query);
+      hybrid = result.hybrid;
+      documents = result.rows.map((row, index) => evidenceItem({
+        sourceType: 'document',
+        sourceId: row.sourceId,
+        sourceTitle: row.title,
+        locator: `${row.sourcePath}#${row.locator}`,
+        content: row.content,
+        retrievalMethod: row.via === 'vector' ? 'vector' : 'fts',
+        relevanceScore: Math.max(0.55, 0.94 - index * 0.06),
+        trustLevel: 'high',
+        scope: 'system' as EvidenceScope,
+        metadata: { title: row.title, termsMatched: terms.length, via: row.via },
+      }));
+    }
     const items = [...structured, ...documents];
     for (const item of items) await persistEvidencePg(this.pool, item);
     const crossValidation = crossValidate(items);
@@ -331,6 +304,7 @@ export class PgEvidenceService {
       documentCount: documents.length,
       temporaryCount: options.temporaryReference ? 1 : 0,
       privacy: { temporaryReferenceUsed: Boolean(options.temporaryReference), retained: false },
+      hybrid,
       learnerId: options.learnerId,
       sessionId: options.sessionId,
       createdAt: Date.now(),
