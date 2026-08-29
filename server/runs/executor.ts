@@ -88,7 +88,7 @@ async function emitEvent(
 
 /** 群聊冒泡（与旧 study 流气泡契约一致，供历史回放） */
 async function bubble(run: StudyRunRow, role: LearningAgentId, text: string, extra: Record<string, unknown> = {}): Promise<void> {
-  learningStore.saveChatMessage(run.learnerId, 'assistant', text, {
+  await learningStore.saveChatMessage(run.learnerId, 'assistant', text, {
     surface: 'study', kind: 'agent', runId: run.id, agentId: role, agentName: ROLE_LABELS[role], ...extra,
   });
 }
@@ -102,9 +102,10 @@ function evidenceDigest(pack: EvidencePack | null): unknown {
   }));
 }
 
-function pathNodeOf(run: StudyRunRow) {
+async function pathNodeOf(run: StudyRunRow) {
   if (!run.request.pathNodeId) return null;
-  return learningStore.getPathGraph(run.learnerId).nodes.find((node) => node.id === run.request.pathNodeId) ?? null;
+  const graph = await learningStore.getPathGraph(run.learnerId);
+  return graph.nodes.find((node) => node.id === run.request.pathNodeId) ?? null;
 }
 
 /** 脚手架强度按资源类型：讲义/实操/卡片/图谱高，习题中，挑战任务低（总规 §7.2） */
@@ -115,9 +116,9 @@ function scaffoldOfType(type: LearningResourceType): ScaffoldStrength {
 }
 
 /** 先修就绪度：当前节点的前置节点中已掌握比例；无前置记 1 */
-function prereqReadinessOf(run: StudyRunRow, nodeId: string | null | undefined): number {
+async function prereqReadinessOf(run: StudyRunRow, nodeId: string | null | undefined): Promise<number> {
   if (!nodeId) return 1;
-  const graph = learningStore.getPathGraph(run.learnerId);
+  const graph = await learningStore.getPathGraph(run.learnerId);
   const prereqIds = graph.edges
     .filter((edge) => edge.toNodeId === nodeId && /prereq|before|先行|前置/i.test(edge.relation))
     .map((edge) => edge.fromNodeId);
@@ -130,18 +131,18 @@ function prereqReadinessOf(run: StudyRunRow, nodeId: string | null | undefined):
 }
 
 /** 难度校准（D2 修复）：以 BKT 状态与先修就绪度计算，替换历史硬编码 0.42 */
-function calibrateForLearner(run: StudyRunRow, pathNode: ReturnType<typeof pathNodeOf>, type: LearningResourceType): DifficultyCalibration {
+async function calibrateForLearner(run: StudyRunRow, pathNode: Awaited<ReturnType<typeof pathNodeOf>>, type: LearningResourceType): Promise<DifficultyCalibration> {
   const knowledgePointId = normalizeKnowledgePointId(pathNode?.knowledgePointId ?? '') || 'industrial-diagnosis-foundation';
-  const state = learningStore.getSkillState(run.learnerId, knowledgePointId);
+  const state = await learningStore.getSkillState(run.learnerId, knowledgePointId);
   return calibrateDifficulty({
     pMastery: state?.pMastery ?? 0.15,
     confidence: state?.confidence ?? 0.1,
-    prereqReadiness: prereqReadinessOf(run, pathNode?.id),
+    prereqReadiness: await prereqReadinessOf(run, pathNode?.id),
     scaffold: scaffoldOfType(type),
   });
 }
 
-function mergeEvidencePacks(ctx: RunContext, query: string): EvidencePack {
+async function mergeEvidencePacks(ctx: RunContext, query: string): Promise<EvidencePack> {
   const packs = [ctx.ev_structured, ctx.ev_document].filter((item): item is EvidencePack => Boolean(item));
   if (packs.length === 0) {
     // 双路都无产出：合成空证据包，让门禁链以 unsupported 正常走完
@@ -176,15 +177,15 @@ function mergeEvidencePacks(ctx: RunContext, query: string): EvidencePack {
     documentCount: items.filter((item) => item.sourceType === 'document').length,
     crossValidation: crossValidate(items),
   };
-  evidenceService.persistEvidencePack(merged);
+  await evidenceService.persistEvidencePack(merged);
   return merged;
 }
 
 /* ----------------------------- 各节点实现 ----------------------------- */
 
 async function runAssessLearner(run: StudyRunRow, node: RunNodeSpec): Promise<string> {
-  const profile = learningStore.getProfile(run.learnerId);
-  const pathNode = pathNodeOf(run);
+  const profile = await learningStore.getProfile(run.learnerId);
+  const pathNode = await pathNodeOf(run);
   const taskLabel = run.request.task.slice(0, 60);
   let analysis = '';
   let requirements: string[] = [];
@@ -210,7 +211,7 @@ async function runAssessLearner(run: StudyRunRow, node: RunNodeSpec): Promise<st
 }
 
 async function retrieveEvidence(run: StudyRunRow, node: RunNodeSpec, plan: Array<'structured' | 'document'>): Promise<string> {
-  const pack = evidenceService.buildEvidencePack(run.request.task, {
+  const pack = await evidenceService.buildEvidencePack(run.request.task, {
     learnerId: run.learnerId,
     sessionId: `study-run-${run.id}`,
     retrievalPlan: plan,
@@ -229,7 +230,7 @@ async function retrieveEvidence(run: StudyRunRow, node: RunNodeSpec, plan: Array
 
 async function runAnalyzeDomain(run: StudyRunRow, node: RunNodeSpec): Promise<string> {
   const ctx = contextOf(run);
-  const merged = ctx.merged_pack ?? mergeEvidencePacks(ctx, run.request.task);
+  const merged = ctx.merged_pack ?? await mergeEvidencePacks(ctx, run.request.task);
   if (merged) await mergeRunContext(run.id, { merged_pack: merged });
   let points: string[] = [];
   let boundaries: string[] = [];
@@ -257,14 +258,14 @@ const RESOURCE_TYPE_LABELS: Record<string, string> = {
 
 async function runGenerateResource(run: StudyRunRow, node: RunNodeSpec, attempt: number): Promise<string> {
   const ctx = contextOf(run);
-  const merged = ctx.merged_pack ?? mergeEvidencePacks(ctx, run.request.task);
+  const merged = ctx.merged_pack ?? await mergeEvidencePacks(ctx, run.request.task);
   const assess = ctx.assess ?? { analysis: '', requirements: ['从学习者当前水平切入，不跳步'] };
   const domain = ctx.domain ?? { points: [], boundaries: [] };
-  const pathNode = pathNodeOf(run);
+  const pathNode = await pathNodeOf(run);
   const typeLabel = RESOURCE_TYPE_LABELS[run.request.resourceType] ?? '讲义';
   const isRevision = attempt > 1;
   const llmEligible = run.request.resourceType === 'lecture' || run.request.resourceType === 'practice_guide';
-  const calibration = calibrateForLearner(run, pathNode, run.request.resourceType);
+  const calibration = await calibrateForLearner(run, pathNode, run.request.resourceType);
 
   let generated: ResourceDocument | null = null;
   let note = '';
@@ -308,10 +309,10 @@ async function runGenerateResource(run: StudyRunRow, node: RunNodeSpec, attempt:
 async function runAuditClaims(run: StudyRunRow, node: RunNodeSpec): Promise<string> {
   const ctx = contextOf(run);
   const draft = ctx.draft;
-  const merged = ctx.merged_pack ?? mergeEvidencePacks(ctx, run.request.task);
+  const merged = ctx.merged_pack ?? await mergeEvidencePacks(ctx, run.request.task);
   if (!draft) throw new Error('缺少草稿，无法执行 Claim 审核');
   const result = auditResource(draft, merged);
-  learningStore.saveResourceAudit(draft.id, result.claims);
+  await learningStore.saveResourceAudit(draft.id, result.claims);
   await persistClaims(run, result.claims);
   await mergeRunContext(run.id, { audit: { claims: result.claims, summary: result.summary } });
   const supported = result.claims.filter((claim) => claim.verdict === 'supported').length;
@@ -478,10 +479,10 @@ async function runFinalizePublish(run: StudyRunRow): Promise<string> {
   let finalAssetId: string | null = null;
   if (released && draft && merged) {
     const audited: ResourceDocument = { ...draft, evidencePackId: merged.id, auditSummary: ctx.audit?.summary, auditStatus: 'passed' };
-    learningStore.saveAsset(run.learnerId, undefined, audited);
+    await learningStore.saveAsset(run.learnerId, undefined, audited);
     finalAssetId = audited.id;
   }
-  learningStore.saveChatMessage(run.learnerId, 'assistant', finalAssetId ? `已生成《${draft!.title}》` : `《${draft?.title ?? '资源'}》待复核，未入库`, {
+  await learningStore.saveChatMessage(run.learnerId, 'assistant', finalAssetId ? `已生成《${draft!.title}》` : `《${draft?.title ?? '资源'}》待复核，未入库`, {
     surface: 'study', kind: 'asset', runId: run.id,
     pathNodeId: run.request.pathNodeId, resourceType: run.request.resourceType,
     asset: finalAssetId
@@ -489,7 +490,7 @@ async function runFinalizePublish(run: StudyRunRow): Promise<string> {
       : { id: draft?.id ?? '', title: draft?.title ?? '资源', type: run.request.resourceType, auditStatus: 'manual_review_required', persisted: false },
     evidence: { count: merged?.items.length ?? 0, score: merged?.coverageScore ?? 0, crossValidation: ctx.audit?.summary.status ?? 'unsupported' },
   });
-  learningStore.recordLearningEvent(run.learnerId, 'study_run_completed', {
+  await learningStore.recordLearningEvent(run.learnerId, 'study_run_completed', {
     runId: run.id, pathNodeId: run.request.pathNodeId, resourceType: run.request.resourceType,
     persisted: Boolean(finalAssetId), evidenceCount: merged?.items.length ?? 0,
     claims: ctx.audit?.claims.length ?? 0, verdict: adjudication?.verdict ?? 'unsupported',

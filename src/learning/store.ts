@@ -870,7 +870,7 @@ export class LearningStore {
   }
 }
 
-function extractQuizQuestions(asset: ResourceDocument): QuizQuestion[] {
+export function extractQuizQuestions(asset: ResourceDocument): QuizQuestion[] {
   const questionBlock = asset.blocks.find((block) => block.type === 'question');
   const raw = questionBlock?.content;
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return [];
@@ -896,7 +896,7 @@ function extractQuizQuestions(asset: ResourceDocument): QuizQuestion[] {
   });
 }
 
-function normalizeResourceDocument(asset: ResourceDocument): ResourceDocument {
+export function normalizeResourceDocument(asset: ResourceDocument): ResourceDocument {
   if (asset.type !== 'tiered_quiz' || extractQuizQuestions(asset).length > 0) return asset;
   const questionBlock = asset.blocks.find((block) => block.type === 'question');
   if (!questionBlock) return asset;

@@ -28,8 +28,8 @@ import { createRunSubscriber } from './events.js';
 type RequireLearner = (req: express.Request, res: express.Response) => AuthenticatedLearner | null;
 
 /** 编排信号来自学习状态的确定性推导；BKT 上线后由置信度直接驱动（总规 §5、§7） */
-function derivePlannerSignals(learnerId: string): { profileUncertainty: number; knowledgeRisk: number; evidenceCoverageHint: 'sparse' | 'normal' | 'rich' } {
-  const profile = learningStore.getProfile(learnerId);
+async function derivePlannerSignals(learnerId: string): Promise<{ profileUncertainty: number; knowledgeRisk: number; evidenceCoverageHint: 'sparse' | 'normal' | 'rich' }> {
+  const profile = await learningStore.getProfile(learnerId);
   const knowledgeRisk = profile.accuracy === null || profile.accuracy === undefined
     ? 0.2
     : Math.max(0, Math.min(1, 1 - profile.accuracy));
@@ -42,14 +42,14 @@ export function createRunsRouter(requireLearner: RequireLearner): express.Router
   const router = express.Router();
 
   router.post('/', async (req, res) => {
-    const learner = requireLearner(req, res);
+    const learner = await requireLearner(req, res);
     if (!learner) return;
     try {
       const request = parseStudyRunRequest(req.body);
       const runId = `study-run-${randomUUID()}`;
-      const plan = planStudyRun(runId, request, derivePlannerSignals(learner.id));
+      const plan = planStudyRun(runId, request, await derivePlannerSignals(learner.id));
       const run = await createStudyRun({ runId, learnerId: learner.id, request, plan });
-      learningStore.saveChatMessage(learner.id, 'user', request.task, {
+      await learningStore.saveChatMessage(learner.id, 'user', request.task, {
         surface: 'study', pathNodeId: request.pathNodeId, resourceType: request.resourceType,
       });
       await appendRunEvent(runId, {
@@ -71,7 +71,7 @@ export function createRunsRouter(requireLearner: RequireLearner): express.Router
   });
 
   router.get('/:runId', async (req, res) => {
-    const learner = requireLearner(req, res);
+    const learner = await requireLearner(req, res);
     if (!learner) return;
     try {
       const run = await getRunForLearner(learner.id, req.params.runId);
@@ -106,7 +106,7 @@ export function createRunsRouter(requireLearner: RequireLearner): express.Router
   });
 
   router.get('/:runId/events', async (req, res) => {
-    const learner = requireLearner(req, res);
+    const learner = await requireLearner(req, res);
     if (!learner) return;
     try {
       const run = await getRunForLearner(learner.id, req.params.runId);
@@ -153,7 +153,7 @@ export function createRunsRouter(requireLearner: RequireLearner): express.Router
   });
 
   router.post('/:runId/cancel', async (req, res) => {
-    const learner = requireLearner(req, res);
+    const learner = await requireLearner(req, res);
     if (!learner) return;
     try {
       const run = await requestCancelRun(learner.id, req.params.runId);
@@ -171,7 +171,7 @@ export function createRunsRouter(requireLearner: RequireLearner): express.Router
 
   // 比赛证据包（总规 §8.3）：画像→诊断→DAG 事件→结论→EvidencePack→声明图→资源→反馈→画像变化
   router.get('/:runId/export', async (req, res) => {
-    const learner = requireLearner(req, res);
+    const learner = await requireLearner(req, res);
     if (!learner) return;
     try {
       const run = await getRunForLearner(learner.id, req.params.runId);
@@ -194,11 +194,11 @@ export function createRunsRouter(requireLearner: RequireLearner): express.Router
           { evidenceId: edge.evidenceId, supportLevel: edge.supportLevel },
         ]);
       }
-      const finalAsset = run.finalAssetId ? learningStore.getAsset(learner.id, run.finalAssetId) : null;
-      const feedback = finalAsset ? learningStore.getAssetFeedback(learner.id, finalAsset.id) : null;
-      const chatMessages = learningStore.listChatMessages(learner.id, 200, 'study')
+      const finalAsset = run.finalAssetId ? await learningStore.getAsset(learner.id, run.finalAssetId) : null;
+      const feedback = finalAsset ? await learningStore.getAssetFeedback(learner.id, finalAsset.id) : null;
+      const chatMessages = (await learningStore.listChatMessages(learner.id, 200, 'study'))
         .filter((message) => message.metadata['runId'] === run.id);
-      const onboarding = identityStore.getOnboarding(learner.id);
+      const onboarding = await identityStore.getOnboarding(learner.id);
 
       const payload = {
         exportedAt: new Date().toISOString(),
@@ -208,8 +208,8 @@ export function createRunsRouter(requireLearner: RequireLearner): express.Router
           onboarding,
         },
         initialLearnerState: {
-          skillStates: learningStore.getSkillStates(learner.id),
-          diagnostic: learningStore.getLatestDiagnosticSession(learner.id),
+          skillStates: await learningStore.getSkillStates(learner.id),
+          diagnostic: await learningStore.getLatestDiagnosticSession(learner.id),
         },
         request: run.request,
         plan: run.plan,

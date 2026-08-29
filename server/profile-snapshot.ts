@@ -7,8 +7,8 @@ import { multiModelClient, parseJson } from './study-runtime.js';
 import { identityStore, learningStore } from './study-context.js';
 
 export async function generateProfileSnapshot(learnerId: string, model: string | undefined, thinking: { temperature: number; maxTokens: number }) {
-  const current = learningStore.getProfile(learnerId);
-  const onboarding = identityStore.getOnboarding(learnerId);
+  const current = await learningStore.getProfile(learnerId);
+  const onboarding = await identityStore.getOnboarding(learnerId);
   const response = await multiModelClient.simple({
     messages: [
       {
@@ -28,6 +28,6 @@ export async function generateProfileSnapshot(learnerId: string, model: string |
     return { name: String(item['name'] || '学习维度'), score: Math.max(0, Math.min(1, Number(item['score']) || 0)), reason: String(item['reason'] || '') };
   }).filter((item) => item.name).slice(0, 5) : [];
   const summary = typeof parsed.summary === 'string' && parsed.summary.trim() ? parsed.summary.trim().slice(0, 160) : current.summary;
-  learningStore.saveProfileSnapshot(learnerId, { summary, keywords, radar });
+  await learningStore.saveProfileSnapshot(learnerId, { summary, keywords, radar });
   return learningStore.getProfile(learnerId);
 }

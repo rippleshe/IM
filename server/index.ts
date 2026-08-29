@@ -40,8 +40,10 @@ app.use(express.json({ limit: '50mb' }));
 app.use(express.static(path.join(path.dirname(fileURLToPath(import.meta.url)), 'public')));
 
 import { importMetroPt3Csv } from '../src/learning/metropt3.js';
+import { importMetroPt3CsvPg } from './db/pg-evidence.js';
 import { fallbackPathGraph, generateInitialPathGraph } from './initial-path.js';
-import { evidenceService, learningStore, identityStore, datasetDb } from './study-context.js';
+import { dataSource, evidenceService, learningStore, identityStore, datasetDb } from './study-context.js';
+import { getLearningDatabase } from './db/client.js';
 import { generateProfileSnapshot } from './profile-snapshot.js';
 import { AVATAR_IMAGE_MAX_CHARS } from '../src/learning/identity.js';
 import type { AuthenticatedLearner, OnboardingInput } from '../src/learning/identity.js';
@@ -91,8 +93,8 @@ function readCookie(header: string | undefined, name: string): string | undefine
   return header.split(';').map((value) => value.trim()).find((value) => value.startsWith(prefix))?.slice(prefix.length);
 }
 
-function getRequestLearner(req: express.Request): AuthenticatedLearner | null {
-  return identityStore.getSessionUser(readCookie(req.headers.cookie, AUTH_COOKIE_NAME));
+async function getRequestLearner(req: express.Request): Promise<AuthenticatedLearner | null> {
+  return await identityStore.getSessionUser(readCookie(req.headers.cookie, AUTH_COOKIE_NAME));
 }
 
 function setAuthCookie(res: express.Response, token: string, expiresAt: number): void {
@@ -114,8 +116,8 @@ function clearAuthCookie(res: express.Response): void {
   });
 }
 
-function requireLearner(req: express.Request, res: express.Response): AuthenticatedLearner | null {
-  const learner = getRequestLearner(req);
+async function requireLearner(req: express.Request, res: express.Response): Promise<AuthenticatedLearner | null> {
+  const learner = await getRequestLearner(req);
   if (!learner) {
     res.status(401).json({ success: false, error: '请先登录' });
     return null;
@@ -175,9 +177,9 @@ async function respondToLearningConversation(learnerId: string, prompt: string):
   profile: ReturnType<LearningStore['getProfile']>;
   activities: Array<{ agentId: LearningAgentId; name: string; action: string }>;
 }> {
-  const graph = learningStore.getPathGraph(learnerId);
-  const onboarding = identityStore.getOnboarding(learnerId);
-  const evidencePack = evidenceService.buildEvidencePack(prompt, { learnerId });
+  const graph = await learningStore.getPathGraph(learnerId);
+  const onboarding = await identityStore.getOnboarding(learnerId);
+  const evidencePack = await evidenceService.buildEvidencePack(prompt, { learnerId });
   const route = getAgentExecutionSettings('learning_planning', undefined, undefined);
   const activities: Array<{ agentId: LearningAgentId; name: string; action: string }> = [
     { agentId: 'learning_planning', name: '学情与路径智能体', action: '结合画像和当前路径理解你的请求' },
@@ -209,21 +211,21 @@ async function respondToLearningConversation(learnerId: string, prompt: string):
   } catch (error) {
     assistant = { reply: '暂时无法连接协同模型；当前路径没有被修改。你可以稍后重试。', revision: {} };
   }
-  const result = learningStore.applyPathRevision(learnerId, assistant.revision ?? {});
+  const result = await learningStore.applyPathRevision(learnerId, assistant.revision ?? {});
   activities.push({ agentId: 'cross_validation', name: '交叉验证智能体', action: result.changed ? '已检查新增节点与依赖关系，并写入路径' : '已核对当前路径，无需改动' });
   const profile = result.changed
     ? await withTimeout(generateProfileSnapshot(learnerId, route.model, route.thinking), 8_000, '画像更新超时').catch(() => learningStore.getProfile(learnerId))
-    : learningStore.getProfile(learnerId);
+    : await learningStore.getProfile(learnerId);
   return { assistant, pathChanged: result.changed, profile, activities };
 }
-app.get('/api/auth/me', (req, res) => {
-  res.json({ success: true, user: getRequestLearner(req) });
+app.get('/api/auth/me', async (req, res) => {
+  res.json({ success: true, user: await getRequestLearner(req) });
 });
 
-app.patch('/api/auth/avatar', (req, res) => {
-  const learner = requireLearner(req, res);
+app.patch('/api/auth/avatar', async (req, res) => {
+  const learner = await requireLearner(req, res);
   if (!learner) return;
-  const user = identityStore.updateAvatar(learner.id, typeof req.body?.avatarKey === 'string' ? req.body.avatarKey : '');
+  const user = await identityStore.updateAvatar(learner.id, typeof req.body?.avatarKey === 'string' ? req.body.avatarKey : '');
   if (!user) {
     res.status(404).json({ success: false, error: '未找到当前用户' });
     return;
@@ -232,8 +234,8 @@ app.patch('/api/auth/avatar', (req, res) => {
 });
 
 /** 用户自传头像：请求体 { image: dataURL | null }，服务端校验类型与大小上限。 */
-app.patch('/api/auth/avatar-image', (req, res) => {
-  const learner = requireLearner(req, res);
+app.patch('/api/auth/avatar-image', async (req, res) => {
+  const learner = await requireLearner(req, res);
   if (!learner) return;
   const raw = req.body?.image;
   if (raw !== null && (typeof raw !== 'string' || !raw.startsWith('data:image/'))) {
@@ -244,7 +246,7 @@ app.patch('/api/auth/avatar-image', (req, res) => {
     res.status(413).json({ success: false, error: '头像图片过大，请换一张小一些的图片' });
     return;
   }
-  const user = identityStore.updateAvatarImage(learner.id, raw === null ? null : raw);
+  const user = await identityStore.updateAvatarImage(learner.id, raw === null ? null : raw);
   if (!user) {
     res.status(404).json({ success: false, error: '未找到当前用户' });
     return;
@@ -257,27 +259,27 @@ app.use('/api/learning', (req, res, next) => {
   next();
 });
 
-app.get('/api/learning/chat', (req, res) => {
-  const learner = requireLearner(req, res);
+app.get('/api/learning/chat', async (req, res) => {
+  const learner = await requireLearner(req, res);
   if (!learner) return;
   const surface = req.query.surface === 'study' ? 'study' : 'path';
   res.json({
     success: true,
-    messages: learningStore.listChatMessages(learner.id, 80, surface),
+    messages: await learningStore.listChatMessages(learner.id, 80, surface),
   });
 });
 
 app.post('/api/learning/chat', async (req, res) => {
-  const learner = requireLearner(req, res);
+  const learner = await requireLearner(req, res);
   if (!learner) return;
   const content = typeof req.body?.content === 'string' ? req.body.content.trim() : '';
   if (!content) {
     res.status(400).json({ success: false, error: '请输入问题或路径调整请求' });
     return;
   }
-  const userMessage = learningStore.saveChatMessage(learner.id, 'user', content);
+  const userMessage = await learningStore.saveChatMessage(learner.id, 'user', content);
   const outcome = await respondToLearningConversation(learner.id, content);
-  const assistantMessage = learningStore.saveChatMessage(learner.id, 'assistant', outcome.assistant.reply, {
+  const assistantMessage = await learningStore.saveChatMessage(learner.id, 'assistant', outcome.assistant.reply, {
     activities: outcome.activities,
     pathChanged: outcome.pathChanged,
   });
@@ -286,7 +288,7 @@ app.post('/api/learning/chat', async (req, res) => {
     userMessage,
     assistantMessage,
     pathChanged: outcome.pathChanged,
-    path: learningStore.getPathGraph(learner.id),
+    path: await learningStore.getPathGraph(learner.id),
     profile: outcome.profile,
   });
 });
@@ -298,8 +300,8 @@ app.use("/api/learning/runs", createRunsRouter(requireLearner));
 // ---------- 初始诊断（总规 §7.3）：12 题固定题集，作答驱动 BKT 初始状态 ----------
 import { DIAGNOSTIC_QUESTIONS, scoreDiagnostic } from '../src/learning/diagnostic.js';
 
-app.get('/api/learning/diagnostic', (req, res) => {
-  const learner = requireLearner(req, res);
+app.get('/api/learning/diagnostic', async (req, res) => {
+  const learner = await requireLearner(req, res);
   if (!learner) return;
   // 答案与解析不下发，判分只发生在服务端
   res.json({
@@ -308,12 +310,12 @@ app.get('/api/learning/diagnostic', (req, res) => {
       id: question.id, code: question.code, dimension: question.dimension,
       level: question.level, prompt: question.prompt, options: question.options,
     })),
-    latest: learningStore.getLatestDiagnosticSession(learner.id),
+    latest: await learningStore.getLatestDiagnosticSession(learner.id),
   });
 });
 
-app.post('/api/learning/diagnostic-attempts', (req, res) => {
-  const learner = requireLearner(req, res);
+app.post('/api/learning/diagnostic-attempts', async (req, res) => {
+  const learner = await requireLearner(req, res);
   if (!learner) return;
   const answers = Array.isArray(req.body?.answers) ? req.body.answers : [];
   if (answers.length === 0) {
@@ -326,9 +328,9 @@ app.post('/api/learning/diagnostic-attempts', (req, res) => {
     return;
   }
   for (const observation of result.byKnowledgePoint) {
-    learningStore.applySkillObservation(learner.id, observation.knowledgePointId, observation.correct, 'diagnostic');
+    await learningStore.applySkillObservation(learner.id, observation.knowledgePointId, observation.correct, 'diagnostic');
   }
-  const sessionId = learningStore.saveDiagnosticSession(
+  const sessionId = await learningStore.saveDiagnosticSession(
     learner.id,
     result,
     result.items.map((item) => ({
@@ -347,17 +349,17 @@ app.post('/api/learning/diagnostic-attempts', (req, res) => {
       yourAnswer: item.answerId, correctAnswer: item.question.answerId,
       correct: item.correct, explanation: item.question.explanation,
     })),
-    profile: learningStore.getProfile(learner.id),
+    profile: await learningStore.getProfile(learner.id),
   });
 });
-app.post('/api/auth/register', (req, res) => {
+app.post('/api/auth/register', async (req, res) => {
   try {
-    const user = identityStore.register({
+    const user = await identityStore.register({
       loginName: typeof req.body?.loginName === 'string' ? req.body.loginName : '',
       displayName: typeof req.body?.displayName === 'string' ? req.body.displayName : '',
       password: typeof req.body?.password === 'string' ? req.body.password : '',
     });
-    const session = identityStore.createSession(user.id);
+    const session = await identityStore.createSession(user.id);
     setAuthCookie(res, session.token, session.expiresAt);
     res.status(201).json({ success: true, user });
   } catch (error) {
@@ -365,8 +367,8 @@ app.post('/api/auth/register', (req, res) => {
   }
 });
 
-app.post('/api/auth/login', (req, res) => {
-  const user = identityStore.authenticate(
+app.post('/api/auth/login', async (req, res) => {
+  const user = await identityStore.authenticate(
     typeof req.body?.loginName === 'string' ? req.body.loginName : '',
     typeof req.body?.password === 'string' ? req.body.password : '',
   );
@@ -374,19 +376,19 @@ app.post('/api/auth/login', (req, res) => {
     res.status(401).json({ success: false, error: '账号或密码不正确' });
     return;
   }
-  const session = identityStore.createSession(user.id);
+  const session = await identityStore.createSession(user.id);
   setAuthCookie(res, session.token, session.expiresAt);
   res.json({ success: true, user });
 });
 
-app.post('/api/auth/logout', (req, res) => {
-  identityStore.revokeSession(readCookie(req.headers.cookie, AUTH_COOKIE_NAME));
+app.post('/api/auth/logout', async (req, res) => {
+  await identityStore.revokeSession(readCookie(req.headers.cookie, AUTH_COOKIE_NAME));
   clearAuthCookie(res);
   res.json({ success: true });
 });
 
 app.post('/api/auth/onboarding', async (req, res) => {
-  const learner = requireLearner(req, res);
+  const learner = await requireLearner(req, res);
   if (!learner) return;
   try {
     const input: OnboardingInput = {
@@ -396,8 +398,8 @@ app.post('/api/auth/onboarding', async (req, res) => {
       weeklyHours: typeof req.body?.weeklyHours === 'number' ? req.body.weeklyHours : null,
       selfDescription: typeof req.body?.selfDescription === 'string' ? req.body.selfDescription : '',
     };
-    const onboarding = identityStore.saveOnboarding(learner.id, input);
-    learningStore.recordLearningEvent(learner.id, 'onboarding_completed', {
+    const onboarding = await identityStore.saveOnboarding(learner.id, input);
+    await learningStore.recordLearningEvent(learner.id, 'onboarding_completed', {
       role: onboarding.role,
       programmingFoundation: onboarding.programmingFoundation,
       goal: onboarding.goal,
@@ -415,7 +417,7 @@ app.post('/api/auth/onboarding', async (req, res) => {
       console.warn('Initial path generation fell back:', error instanceof Error ? error.message : String(error));
       pathGraph = fallbackPathGraph(onboarding.goal);
     }
-    const path = learningStore.replacePathGraph(learner.id, pathGraph.nodes, pathGraph.edges);
+    const path = await learningStore.replacePathGraph(learner.id, pathGraph.nodes, pathGraph.edges);
     let profile;
     try {
       profile = await withTimeout(
@@ -425,7 +427,7 @@ app.post('/api/auth/onboarding', async (req, res) => {
       );
     } catch (error) {
       console.warn('Initial profile generation skipped:', error instanceof Error ? error.message : String(error));
-      profile = learningStore.getProfile(learner.id);
+      profile = await learningStore.getProfile(learner.id);
     }
     res.json({ success: true, user: { ...learner, onboardingCompleted: true }, onboarding, path, profile });
   } catch (error) {
@@ -433,14 +435,14 @@ app.post('/api/auth/onboarding', async (req, res) => {
   }
 });
 
-app.get('/api/learning/path-graph', (req, res) => {
-  const learner = requireLearner(req, res);
+app.get('/api/learning/path-graph', async (req, res) => {
+  const learner = await requireLearner(req, res);
   if (!learner) return;
-  res.json({ success: true, path: learningStore.getPathGraph(learner.id) });
+  res.json({ success: true, path: await learningStore.getPathGraph(learner.id) });
 });
 
-app.patch('/api/learning/path-graph/nodes/:nodeId', (req, res) => {
-  const learner = requireLearner(req, res);
+app.patch('/api/learning/path-graph/nodes/:nodeId', async (req, res) => {
+  const learner = await requireLearner(req, res);
   if (!learner) return;
   const userStatus = ['not_started', 'learning', 'completed'].includes(req.body?.userStatus)
     ? req.body.userStatus as 'not_started' | 'learning' | 'completed'
@@ -450,7 +452,7 @@ app.patch('/api/learning/path-graph/nodes/:nodeId', (req, res) => {
     res.status(400).json({ success: false, error: '没有可更新的节点状态' });
     return;
   }
-  const node = learningStore.setPathNodeStatus(learner.id, req.params.nodeId, { userStatus, mastered });
+  const node = await learningStore.setPathNodeStatus(learner.id, req.params.nodeId, { userStatus, mastered });
   if (!node) {
     res.status(404).json({ success: false, error: '未找到该路径节点' });
     return;
@@ -458,15 +460,15 @@ app.patch('/api/learning/path-graph/nodes/:nodeId', (req, res) => {
   res.json({ success: true, node });
 });
 
-app.post('/api/learning/assets/:assetId/feedback', (req, res) => {
-  const learner = requireLearner(req, res);
+app.post('/api/learning/assets/:assetId/feedback', async (req, res) => {
+  const learner = await requireLearner(req, res);
   if (!learner) return;
-  const isOwnAsset = learningStore.listAssets(learner.id).some((asset) => asset.id === req.params.assetId);
+  const isOwnAsset = await learningStore.listAssets(learner.id).some((asset) => asset.id === req.params.assetId);
   if (!isOwnAsset) {
     res.status(404).json({ success: false, error: '未找到该学习资产' });
     return;
   }
-  learningStore.saveAssetFeedback(learner.id, req.params.assetId, {
+  await learningStore.saveAssetFeedback(learner.id, req.params.assetId, {
     completed: typeof req.body?.completed === 'boolean' ? req.body.completed : undefined,
     mastered: typeof req.body?.mastered === 'boolean' ? req.body.mastered : undefined,
     masteryLevel: ['high', 'medium', 'low'].includes(req.body?.masteryLevel) ? req.body.masteryLevel : req.body?.masteryLevel === null ? null : undefined,
@@ -474,13 +476,13 @@ app.post('/api/learning/assets/:assetId/feedback', (req, res) => {
     userRating: typeof req.body?.userRating === 'number' ? req.body.userRating : undefined,
     note: typeof req.body?.note === 'string' ? req.body.note : undefined,
   });
-  res.json({ success: true, profile: learningStore.getProfile(learner.id) });
+  res.json({ success: true, profile: await learningStore.getProfile(learner.id) });
 });
 
-app.get('/api/learning/assets/:assetId/reader', (req, res) => {
-  const learner = requireLearner(req, res);
+app.get('/api/learning/assets/:assetId/reader', async (req, res) => {
+  const learner = await requireLearner(req, res);
   if (!learner) return;
-  const asset = learningStore.getAsset(learner.id, req.params.assetId);
+  const asset = await learningStore.getAsset(learner.id, req.params.assetId);
   if (!asset) {
     res.status(404).json({ success: false, error: '未找到该学习资产' });
     return;
@@ -488,26 +490,26 @@ app.get('/api/learning/assets/:assetId/reader', (req, res) => {
   res.json({
     success: true,
     asset,
-    feedback: learningStore.getAssetFeedback(learner.id, asset.id),
-    pageNotes: learningStore.listAssetPageNotes(learner.id, asset.id),
-    quizAttempts: asset.type === 'tiered_quiz' ? learningStore.listQuizAttempts(learner.id, asset.id) : [],
+    feedback: await learningStore.getAssetFeedback(learner.id, asset.id),
+    pageNotes: await learningStore.listAssetPageNotes(learner.id, asset.id),
+    quizAttempts: asset.type === 'tiered_quiz' ? await learningStore.listQuizAttempts(learner.id, asset.id) : [],
   });
 });
 
-app.put('/api/learning/assets/:assetId/pages/:pageKey/note', (req, res) => {
-  const learner = requireLearner(req, res);
+app.put('/api/learning/assets/:assetId/pages/:pageKey/note', async (req, res) => {
+  const learner = await requireLearner(req, res);
   if (!learner) return;
-  if (!learningStore.getAsset(learner.id, req.params.assetId)) {
+  if (!await learningStore.getAsset(learner.id, req.params.assetId)) {
     res.status(404).json({ success: false, error: '未找到该学习资产' });
     return;
   }
   const content = typeof req.body?.content === 'string' ? req.body.content : '';
-  const note = learningStore.saveAssetPageNote(learner.id, req.params.assetId, req.params.pageKey, content);
+  const note = await learningStore.saveAssetPageNote(learner.id, req.params.assetId, req.params.pageKey, content);
   res.json({ success: true, note });
 });
 
-app.post('/api/learning/assets/:assetId/quiz-attempts', (req, res) => {
-  const learner = requireLearner(req, res);
+app.post('/api/learning/assets/:assetId/quiz-attempts', async (req, res) => {
+  const learner = await requireLearner(req, res);
   if (!learner) return;
   const questionId = typeof req.body?.questionId === 'string' ? req.body.questionId : '';
   const answerId = typeof req.body?.answerId === 'string' ? req.body.answerId : '';
@@ -517,27 +519,27 @@ app.post('/api/learning/assets/:assetId/quiz-attempts', (req, res) => {
     return;
   }
   try {
-    const result = learningStore.submitQuizAttempt(learner.id, req.params.assetId, questionId, answerId, durationMs);
-    res.json({ success: true, ...result, profile: learningStore.getProfile(learner.id) });
+    const result = await learningStore.submitQuizAttempt(learner.id, req.params.assetId, questionId, answerId, durationMs);
+    res.json({ success: true, ...result, profile: await learningStore.getProfile(learner.id) });
   } catch (error) {
     res.status(400).json({ success: false, error: error instanceof Error ? error.message : '提交答案失败' });
   }
 });
 
-app.delete('/api/learning/assets/:assetId', (req, res) => {
-  const learner = requireLearner(req, res);
+app.delete('/api/learning/assets/:assetId', async (req, res) => {
+  const learner = await requireLearner(req, res);
   if (!learner) return;
-  const deleted = learningStore.deleteAsset(learner.id, req.params.assetId);
+  const deleted = await learningStore.deleteAsset(learner.id, req.params.assetId);
   if (!deleted) {
     res.status(404).json({ success: false, error: '未找到该学习资产' });
     return;
   }
-  res.json({ success: true, profile: learningStore.getProfile(learner.id) });
+  res.json({ success: true, profile: await learningStore.getProfile(learner.id) });
 });
 
-app.get('/api/learning/catalog', (_req, res) => {
+app.get('/api/learning/catalog', async (_req, res) => {
   try {
-    res.json({ success: true, dataset: evidenceService.getCatalog() });
+    res.json({ success: true, dataset: await evidenceService.getCatalog() });
   } catch (error) {
     res.status(500).json({ success: false, error: error instanceof Error ? error.message : String(error) });
   }
@@ -548,11 +550,11 @@ app.use('/api/settings', (req, res, next) => {
   next();
 });
 
-app.get('/api/settings', (_req, res) => {
+app.get('/api/settings', async (_req, res) => {
   res.json(getSettingsPayload());
 });
 
-app.post('/api/settings/providers', (req, res) => {
+app.post('/api/settings/providers', async (req, res) => {
   const body = req.body ?? {};
   const id = typeof body.id === 'string' ? body.id.trim().toLowerCase() : '';
   const displayName = typeof body.displayName === 'string' ? body.displayName.trim() : '';
@@ -603,7 +605,7 @@ app.post('/api/settings/providers', (req, res) => {
   res.json(getSettingsPayload());
 });
 
-app.post('/api/settings/agent-routing', (req, res) => {
+app.post('/api/settings/agent-routing', async (req, res) => {
   const submitted = req.body?.agentRouting;
   if (!submitted || typeof submitted !== 'object') {
     res.status(400).json({ success: false, error: '协同编排格式无效' });
@@ -632,7 +634,7 @@ app.post('/api/settings/agent-routing', (req, res) => {
   res.json(getSettingsPayload());
 });
 
-app.post('/api/settings/default-execution', (req, res) => {
+app.post('/api/settings/default-execution', async (req, res) => {
   const modelId = typeof req.body?.modelId === 'string' ? req.body.modelId.trim() : '';
   const thinkingDepth = req.body?.thinkingDepth;
   if (!['low', 'medium', 'high', 'max'].includes(thinkingDepth)) {
@@ -652,7 +654,7 @@ app.post('/api/settings/default-execution', (req, res) => {
   res.json(getSettingsPayload());
 });
 
-app.post('/api/settings/asset-policy', (req, res) => {
+app.post('/api/settings/asset-policy', async (req, res) => {
   const submitted = req.body?.autoAssetTypes;
   if (!Array.isArray(submitted)) {
     res.status(400).json({ success: false, error: '学习资产设置无效' });
@@ -668,18 +670,18 @@ app.post('/api/settings/asset-policy', (req, res) => {
   res.json(getSettingsPayload());
 });
 
-app.get('/api/settings/privacy-audit', (req, res) => {
+app.get('/api/settings/privacy-audit', async (req, res) => {
   const limit = typeof req.query.limit === 'string' ? Number(req.query.limit) : 8;
-  res.json({ success: true, events: learningStore.listPrivacyAuditEvents(Number.isFinite(limit) ? limit : 8) });
+  res.json({ success: true, events: await learningStore.listPrivacyAuditEvents(Number.isFinite(limit) ? limit : 8) });
 });
 
-app.delete('/api/settings/privacy-audit', (_req, res) => {
-  const deleted = learningStore.clearPrivacyAuditEvents();
+app.delete('/api/settings/privacy-audit', async (_req, res) => {
+  const deleted = await learningStore.clearPrivacyAuditEvents();
   res.json({ success: true, deleted });
 });
 
-app.post('/api/learning/evidence', (req, res) => {
-  const learner = requireLearner(req, res);
+app.post('/api/learning/evidence', async (req, res) => {
+  const learner = await requireLearner(req, res);
   if (!learner) return;
   const query = typeof req.body?.query === 'string' ? req.body.query.trim() : '';
   if (!query) {
@@ -688,26 +690,26 @@ app.post('/api/learning/evidence', (req, res) => {
   }
   try {
     const sessionId = typeof req.body?.sessionId === 'string' ? req.body.sessionId : undefined;
-    res.json({ success: true, evidencePack: evidenceService.buildEvidencePack(query, { learnerId: learner.id, sessionId }) });
+    res.json({ success: true, evidencePack: await evidenceService.buildEvidencePack(query, { learnerId: learner.id, sessionId }) });
   } catch (error) {
     res.status(500).json({ success: false, error: error instanceof Error ? error.message : String(error) });
   }
 });
 
-app.get('/api/learning/assets', (req, res) => {
-  const learner = requireLearner(req, res);
+app.get('/api/learning/assets', async (req, res) => {
+  const learner = await requireLearner(req, res);
   if (!learner) return;
-  res.json({ success: true, learnerId: learner.id, assets: learningStore.listAssets(learner.id) });
+  res.json({ success: true, learnerId: learner.id, assets: await learningStore.listAssets(learner.id) });
 });
 
-app.get('/api/learning/profile', (req, res) => {
-  const learner = requireLearner(req, res);
+app.get('/api/learning/profile', async (req, res) => {
+  const learner = await requireLearner(req, res);
   if (!learner) return;
-  res.json({ success: true, profile: learningStore.getProfile(learner.id) });
+  res.json({ success: true, profile: await learningStore.getProfile(learner.id) });
 });
 
 app.post('/api/learning/profile/regenerate', async (req, res) => {
-  const learner = requireLearner(req, res);
+  const learner = await requireLearner(req, res);
   if (!learner) return;
   try {
     const thinking = getThinkingSettings(req.body?.thinkingDepth);
@@ -718,17 +720,17 @@ app.post('/api/learning/profile/regenerate', async (req, res) => {
   }
 });
 
-app.get('/api/learning/evidence', (req, res) => {
-  const learner = requireLearner(req, res);
+app.get('/api/learning/evidence', async (req, res) => {
+  const learner = await requireLearner(req, res);
   if (!learner) return;
   const limit = typeof req.query.limit === 'string' ? Number(req.query.limit) : 20;
-  res.json({ success: true, evidence: learningStore.listEvidence(learner.id, Number.isFinite(limit) ? limit : 20) });
+  res.json({ success: true, evidence: await learningStore.listEvidence(learner.id, Number.isFinite(limit) ? limit : 20) });
 });
 
-app.get('/api/learning/assets/:assetId/export', (req, res) => {
-  const learner = requireLearner(req, res);
+app.get('/api/learning/assets/:assetId/export', async (req, res) => {
+  const learner = await requireLearner(req, res);
   if (!learner) return;
-  const resource = learningStore.getAsset(learner.id, req.params.assetId);
+  const resource = await learningStore.getAsset(learner.id, req.params.assetId);
   if (!resource) {
     res.status(404).json({ success: false, error: '未找到该学习资产' });
     return;
@@ -753,7 +755,13 @@ async function startServer(): Promise<void> {
     process.env.IM_TRAINING_AGENT_METROPT_CSV
       || path.join(process.cwd(), 'data', 'datasets', 'metropt', 'MetroPT3(AirCompressor).csv'),
   );
-  if (existsSync(metroCsvPath)) {
+  if (dataSource === 'postgres') {
+    // PG 数据源：空表且有官方 CSV 时流式导入；已有数据（迁移或历史导入）则跳过
+    const result = await importMetroPt3CsvPg(getLearningDatabase().pool, metroCsvPath);
+    if (result.skipped) console.log(`MetroPT-3 时序数据已就绪：${result.imported.toLocaleString()} 行（复用 PostgreSQL 既有数据）`);
+    else if (result.imported > 0) console.log(`MetroPT-3 时序数据已导入 PostgreSQL：${result.imported.toLocaleString()} 行`);
+    else console.log('MetroPT-3 完整时序数据尚未安装；需要时运行 pnpm data:metropt。');
+  } else if (datasetDb && existsSync(metroCsvPath)) {
     const result = await importMetroPt3Csv(datasetDb, metroCsvPath);
     console.log(`MetroPT-3 时序数据已就绪：${result.imported.toLocaleString()} 行${result.skipped ? '（复用已有数据库）' : ''}`);
   } else {

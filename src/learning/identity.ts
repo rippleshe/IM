@@ -133,6 +133,14 @@ export class IdentityStore {
     return this.getById(learnerId);
   }
 
+  getByLoginName(loginName: string): AuthenticatedLearner | null {
+    const row = this.db.prepare(`
+      SELECT id, login_name AS loginName, display_name AS displayName, avatar_key AS avatarKey,
+        avatar_image AS avatarImage, onboarding_completed AS onboardingCompleted FROM users WHERE login_name = ?
+    `).get(normalizeLoginName(loginName)) as Omit<AuthenticatedLearner, 'avatarKey' | 'onboardingCompleted'> & { avatarKey: string; onboardingCompleted: number } | undefined;
+    return row ? { ...row, avatarKey: normalizeAvatarKey(row.avatarKey), onboardingCompleted: Boolean(row.onboardingCompleted) } : null;
+  }
+
   getById(learnerId: string): AuthenticatedLearner | null {
     const row = this.db.prepare(`
       SELECT id, login_name AS loginName, display_name AS displayName, avatar_key AS avatarKey,
@@ -169,7 +177,7 @@ export class IdentityStore {
   }
 }
 
-function normalizeLoginName(value: string): string {
+export function normalizeLoginName(value: string): string {
   const result = value.trim().toLowerCase();
   if (!/^[a-z0-9._-]{3,48}$/.test(result)) throw new Error('账号需为 3 至 48 位字母、数字、点、下划线或连字符');
   return result;
@@ -181,7 +189,7 @@ function normalizeDisplayName(value: string, fallback: string): string {
   return result;
 }
 
-function validatePassword(value: string): void {
+export function validatePassword(value: string): void {
   if (value.length < 8 || value.length > 128) throw new Error('密码长度需为 8 至 128 位');
 }
 
@@ -197,20 +205,20 @@ function normalizeOnboarding(input: OnboardingInput): OnboardingInput {
   return { role, programmingFoundation, goal, weeklyHours, selfDescription };
 }
 
-function hashPassword(password: string, salt: string): string {
+export function hashPassword(password: string, salt: string): string {
   return scryptSync(password, salt, 64).toString('base64');
 }
 
-function verifyPassword(password: string, salt: string, expected: string): boolean {
+export function verifyPassword(password: string, salt: string, expected: string): boolean {
   const actual = Buffer.from(hashPassword(password, salt));
   const expectedBuffer = Buffer.from(expected);
   return actual.length === expectedBuffer.length && timingSafeEqual(actual, expectedBuffer);
 }
 
-function hashToken(token: string): string {
+export function hashToken(token: string): string {
   return createHash('sha256').update(token).digest('base64url');
 }
 
-function normalizeAvatarKey(value: string): AvatarKey {
+export function normalizeAvatarKey(value: string): AvatarKey {
   return (AVATAR_KEYS as readonly string[]).includes(value) ? value as AvatarKey : 'graphite';
 }

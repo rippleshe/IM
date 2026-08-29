@@ -78,7 +78,7 @@ interface EvidenceBuildOptions {
   retrievalPlan?: Array<'structured' | 'document'>;
 }
 
-function normalizeSearchTerms(query: string): string[] {
+export function normalizeSearchTerms(query: string): string[] {
   const knownChinese = Object.keys(TERM_ALIASES).filter((term) => query.includes(term));
   const english = Array.from(query.matchAll(/[A-Za-z][A-Za-z0-9_ -]{1,40}/g))
     .map((match) => match[0].trim())
