@@ -128,9 +128,15 @@ async function main(): Promise<void> {
       },
     };
     if (live) {
-      // live 模式：创建真实运行并等待终态，取 Claim 裁决结果计算幻觉率
+      // live 模式：创建真实运行并等待终态，取 Claim 裁决结果计算幻觉率与证据边覆盖率
       const liveResult = await runLiveCase(caseItem);
       result.hallucinationRate = liveResult?.hallucinationRate ?? null;
+      if (liveResult?.coverage !== null && liveResult?.coverage !== undefined) {
+        result.coverage = liveResult.coverage;
+        result.detail['coverageSource'] = 'evidence_edge';
+      } else {
+        result.detail['coverageSource'] = 'knowledge_base_keyword';
+      }
       result.detail['runId'] = liveResult?.runId ?? null;
     }
     results.push(result);
@@ -147,6 +153,10 @@ async function main(): Promise<void> {
   const summary = {
     startedAt: new Date().toISOString(),
     mode: live ? 'live' : 'offline',
+    // 如实区分（升级计划 §F）：离线规则结果 / 本次 live 结果；未跑全量 live 时报告必须写明
+    resultScope: live
+      ? (results.length >= 60 ? 'full_live_60' : `stratified_live_${results.length} + offline_full_60`)
+      : 'offline_rule_60',
     cases: results.length,
     metrics: {
       difficultyAccuracy: Math.round(difficultyAccuracy * 1000) / 1000,
@@ -205,9 +215,39 @@ async function main(): Promise<void> {
   process.exit(0);
 }
 
-interface LiveRunResult { runId: string; hallucinationRate: number | null }
+interface LiveRunResult { runId: string; hallucinationRate: number | null; coverage: number | null }
 
-/** live 模式走真实链路：POST /api/learning/runs → 轮询终态 → 读 claims 计算幻觉率 */
+/**
+ * 核心知识覆盖率官方口径（升级计划 §F）：有有效 evidence edge 支持的必备知识点 / 黄金必备知识点。
+ * 判定：资源中绑定该知识点的块，其证据引用至少一条被 supported Claim 使用——
+ * 不是"资源文本包含关键词"（修 G9）。
+ */
+async function liveRunCoverage(runId: string, requiredKnowledgePoints: string[]): Promise<number | null> {
+  const database = getLearningDatabase();
+  const assetRow = (await database.pool.query(
+    `SELECT content_json AS "contentJson" FROM learning_assets WHERE id = (SELECT final_asset_id FROM study_runs WHERE id = $1)`,
+    [runId],
+  )).rows[0] as { contentJson: { blocks?: Array<{ knowledgePointIds?: string[]; evidenceIds?: string[] }> } } | undefined;
+  const blocks = assetRow?.contentJson?.blocks ?? [];
+  const evidenceVerdicts = (await database.pool.query(
+    `SELECT ce.evidence_id AS "evidenceId", c.verdict
+     FROM claim_evidence ce JOIN claims c ON c.id = ce.claim_id
+     WHERE c.resource_id = $1 AND c.verdict = 'supported'`,
+    [runId],
+  )).rows as Array<{ evidenceId: string; verdict: string }>;
+  const supportedEvidence = new Set(evidenceVerdicts.map((row) => row.evidenceId));
+  if (requiredKnowledgePoints.length === 0) return null;
+  let hit = 0;
+  for (const kp of requiredKnowledgePoints) {
+    const covered = blocks.some((block) =>
+      Array.isArray(block.knowledgePointIds) && block.knowledgePointIds.includes(kp)
+      && Array.isArray(block.evidenceIds) && block.evidenceIds.some((evidenceId) => supportedEvidence.has(evidenceId)));
+    if (covered) hit += 1;
+  }
+  return Math.round((hit / requiredKnowledgePoints.length) * 1000) / 1000;
+}
+
+/** live 模式走真实链路：POST /api/learning/runs → 轮询终态 → 读 claims 计算幻觉率与证据边覆盖率 */
 async function runLiveCase(caseItem: EvaluationCase): Promise<LiveRunResult | null> {
   const apiBase = process.env['EVALUATE_API_BASE'] ?? 'http://localhost:3001';
   // 演示账号登录（demo:seed 已建）
@@ -239,13 +279,14 @@ async function runLiveCase(caseItem: EvaluationCase): Promise<LiveRunResult | nu
     if (data.run?.status === 'succeeded' || data.run?.status === 'failed' || data.run?.status === 'cancelled') break;
   }
   const claimsRows = await databaseClaimsForRun(runId);
-  return { runId, hallucinationRate: hallucinationRate(claimsRows) };
+  const coverage = await liveRunCoverage(runId, caseItem.requiredKnowledgePoints);
+  return { runId, hallucinationRate: hallucinationRate(claimsRows), coverage };
 }
 
-async function databaseClaimsForRun(runId: string): Promise<Array<{ verdict: string }>> {
+async function databaseClaimsForRun(runId: string): Promise<Array<{ verdict: string; claimType: string | null }>> {
   const database = getLearningDatabase();
-  const result = await database.db.execute(sql`SELECT verdict FROM claims WHERE resource_id = ${runId}`);
-  return result.rows as Array<{ verdict: string }>;
+  const result = await database.db.execute(sql`SELECT verdict, claim_type AS "claimType" FROM claims WHERE resource_id = ${runId}`);
+  return result.rows as Array<{ verdict: string; claimType: string | null }>;
 }
 
 main().catch((error) => {

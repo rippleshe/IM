@@ -47,11 +47,11 @@ interface AblationReport {
 }
 
 const PERSONA_SIGNALS: Record<string, PlannerSignals> = {
-  'learner-foundation': { profileUncertainty: 0.75, knowledgeRisk: 0.58, evidenceCoverageHint: 'normal' },
-  'learner-advanced': { profileUncertainty: 0.35, knowledgeRisk: 0.18, evidenceCoverageHint: 'rich' },
-  'learner-maintenance': { profileUncertainty: 0.55, knowledgeRisk: 0.32, evidenceCoverageHint: 'normal' },
+  'learner-foundation': { profileUncertainty: 0.75, knowledgeRisk: 0.58, taskRisk: 0.2, evidenceCoverageHint: 'normal' },
+  'learner-advanced': { profileUncertainty: 0.35, knowledgeRisk: 0.18, taskRisk: 0.1, evidenceCoverageHint: 'rich' },
+  'learner-maintenance': { profileUncertainty: 0.55, knowledgeRisk: 0.32, taskRisk: 0.15, evidenceCoverageHint: 'normal' },
 };
-const NEUTRAL: PlannerSignals = { profileUncertainty: 0.5, knowledgeRisk: 0, evidenceCoverageHint: 'normal' };
+const NEUTRAL: PlannerSignals = { profileUncertainty: 0.5, knowledgeRisk: 0, taskRisk: 0, evidenceCoverageHint: 'normal' };
 
 function planFingerprint(plan: { riskLevel: string; strict: boolean; challengeFocus: string[] }): string {
   return `${plan.riskLevel}|${plan.strict}|${[...plan.challengeFocus].sort().join(',')}`;
@@ -101,28 +101,43 @@ async function main(): Promise<void> {
   report.A1_dynamic_vs_fixed.pass =
     report.A1_dynamic_vs_fixed.dynamicDistinct >= 2 && report.A1_dynamic_vs_fixed.fixedDistinct === 1;
 
-  // ---------- A2：门禁消融（基于真实运行历史） ----------
+  // ---------- A2：门禁消融（基于真实运行历史；升级计划 G10：初稿 vs 终稿按轮次口径） ----------
   const runRows = (await database.pool.query(
     `SELECT r.id, r.final_asset_id,
-       (SELECT COUNT(*)::int FROM claims c WHERE c.resource_id = r.id) AS claim_total,
-       (SELECT COUNT(*)::int FROM claims c WHERE c.resource_id = r.id AND c.verdict = 'unsupported') AS unsupported_total,
        (SELECT MAX(a.round) FROM audit_decisions a WHERE a.run_id = r.id) AS max_round
      FROM study_runs r
      WHERE r.status = 'succeeded' AND r.final_asset_id IS NOT NULL
      ORDER BY r.created_at DESC LIMIT 20`,
-  )).rows as Array<{ id: string; claim_total: number; unsupported_total: number; max_round: number }>;
+  )).rows as Array<{ id: string; final_asset_id: string | null; max_round: number }>;
   report.A2_gate_ablation.runsAnalyzed = runRows.length;
   if (runRows.length > 0) {
-    const totalClaims = runRows.reduce((sum, row) => sum + Number(row.claim_total), 0);
-    const totalUnsupported = runRows.reduce((sum, row) => sum + Number(row.unsupported_total), 0);
-    const revised = runRows.filter((row) => Number(row.max_round) > 1).length;
-    report.A2_gate_ablation.draftHallucinationRate = null;
-    report.A2_gate_ablation.releasedHallucinationRate = totalClaims > 0 ? Math.round((totalUnsupported / totalClaims) * 1000) / 1000 : null;
-    report.A2_gate_ablation.revisedRuns = revised;
-    report.A2_gate_ablation.note = totalUnsupported === 0
-      ? `${runRows.length} 次发布的资源终轮 unsupported 声明为 0（发布幻觉率 <5% 达标）；修订触发 ${revised} 次。初稿幻觉率需 --live 全量评测逐轮快照，见评测报告。`
-      : `发布资源存在 ${totalUnsupported} 条 unsupported（${totalClaims} 条声明），须回查门禁。`;
-    report.A2_gate_ablation.pass = totalUnsupported / Math.max(1, totalClaims) < 0.05;
+    // 按轮次统计：attempt 1 = 初稿，最大 attempt = 终稿；non_factual 不入分母
+    const attemptRows = (await database.pool.query(
+      `SELECT resource_id AS "runId", COALESCE(attempt, 1) AS attempt,
+         COUNT(*) FILTER (WHERE COALESCE(claim_type, 'risk_advice') <> 'non_factual')::int AS auditable,
+         COUNT(*) FILTER (WHERE verdict = 'unsupported' AND COALESCE(claim_type, 'risk_advice') <> 'non_factual')::int AS unsupported
+       FROM claims
+       WHERE resource_id = ANY($1)
+       GROUP BY resource_id, COALESCE(attempt, 1)
+       ORDER BY resource_id, attempt`,
+      [runRows.map((row) => row.id)],
+    )).rows as Array<{ runId: string; attempt: number; auditable: number; unsupported: number }>;
+    const rateAt = (runId: string, attempt: number): number | null => {
+      const row = attemptRows.find((item) => item.runId === runId && Number(item.attempt) === attempt);
+      if (!row || Number(row.auditable) === 0) return null;
+      return Math.round((Number(row.unsupported) / Number(row.auditable)) * 1000) / 1000;
+    };
+    const draftRates = runRows.map((row) => rateAt(row.id, 1)).filter((rate): rate is number => rate !== null);
+    const finalRates = runRows.map((row) => rateAt(row.id, Number(row.max_round) || 1)).filter((rate): rate is number => rate !== null);
+    const mean = (values: number[]): number | null => values.length === 0 ? null : Math.round((values.reduce((sum, value) => sum + value, 0) / values.length) * 1000) / 1000;
+    report.A2_gate_ablation.draftHallucinationRate = mean(draftRates);
+    report.A2_gate_ablation.releasedHallucinationRate = mean(finalRates);
+    report.A2_gate_ablation.revisedRuns = runRows.filter((row) => Number(row.max_round) > 1).length;
+    const gateGain = report.A2_gate_ablation.draftHallucinationRate !== null && report.A2_gate_ablation.releasedHallucinationRate !== null
+      ? report.A2_gate_ablation.draftHallucinationRate - report.A2_gate_ablation.releasedHallucinationRate
+      : null;
+    report.A2_gate_ablation.note = `按轮次口径分析 ${runRows.length} 次已发布运行：初稿幻觉率 ${report.A2_gate_ablation.draftHallucinationRate === null ? 'N/A（空分母）' : `${(report.A2_gate_ablation.draftHallucinationRate * 100).toFixed(1)}%`}、终稿幻觉率 ${report.A2_gate_ablation.releasedHallucinationRate === null ? 'N/A' : `${(report.A2_gate_ablation.releasedHallucinationRate * 100).toFixed(1)}%`}、门禁净增益 ${gateGain === null ? 'N/A' : `${(gateGain * 100).toFixed(1)}%`}；修订触发 ${report.A2_gate_ablation.revisedRuns} 次。历史样本无修订时增益以故障注入 fixture 与 live 分层案例补证。`;
+    report.A2_gate_ablation.pass = (report.A2_gate_ablation.releasedHallucinationRate ?? 1) < 0.05;
   } else {
     report.A2_gate_ablation.note = '暂无已发布运行历史，无法统计；请先运行 pnpm evaluate --live 或页面协同生成。';
     report.A2_gate_ablation.pass = false;

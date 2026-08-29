@@ -6,8 +6,10 @@
  * - 节点依赖以 run.plan 为准（custom 裁剪后依赖已闭合），中间产物存 context_json。
  */
 import { randomUUID } from 'node:crypto';
+import { and, eq } from 'drizzle-orm';
 import type { Job } from 'bullmq';
 import { auditResource, type ClaimAuditRecord } from '../../src/learning/audit.js';
+import { verifyClaims } from '../../src/learning/claim-verification.js';
 import { crossValidate } from '../../src/learning/evidence.js';
 import { calibrateDifficulty, type DifficultyCalibration, type ScaffoldStrength } from '../../src/learning/difficulty.js';
 import { normalizeKnowledgePointId } from '../../src/learning/store.js';
@@ -24,7 +26,24 @@ import {
   privacyAuditEvents,
   studyRunNodes,
 } from '../db/schema.js';
+import { NODE_ACTOR_KEY } from './artifacts.js';
 import { enqueueRunNode } from './queue.js';
+import {
+  agentProducer,
+  artifactIdOf,
+  computeExecutionManifestHash,
+  listRunArtifacts,
+  persistArtifact,
+  RULE_PRODUCER,
+  setNodePrimaryArtifact,
+  sha256,
+  TOOL_PRODUCER,
+  type ArtifactProducer,
+  type ArtifactType,
+  type PublicRationale,
+} from './artifacts.js';
+import { saveRunSnapshot } from './snapshots.js';
+import { deriveVerificationPolicy, policySummary, taskFactRisk } from './policy.js';
 import {
   appendRunEvent,
   finishRun,
@@ -34,7 +53,9 @@ import {
   markRunRunning,
   mergeRunContext,
   setNodeStatus,
+  setRunExecutionManifestHash,
   setRunRevisionRound,
+  setRunVerificationPolicy,
   type StudyRunNodeRow,
   type StudyRunRow,
 } from './service.js';
@@ -49,8 +70,9 @@ interface RunContext {
   domain?: { points: string[]; boundaries: string[] };
   draft?: ResourceDocument;
   audit?: { claims: ClaimAuditRecord[]; summary: EvidencePack['crossValidation'] };
-  adjudication?: { verdict: string; released: boolean; round: number };
+  adjudication?: { verdict: string; released: boolean; round: number; outcome?: 'released' | 'revised' | 'rejected' };
   revision_failed?: Array<{ text: string; critique: string }>;
+  counterevidence?: Array<{ request: string; packId: string | null; found: number; note: string }>;
 }
 
 function contextOf(run: StudyRunRow): RunContext {
@@ -100,6 +122,46 @@ function evidenceDigest(pack: EvidencePack | null): unknown {
     locator: item.locator,
     content: item.content.slice(0, 240),
   }));
+}
+
+/** 节点主产物持久化（VACP §4.4）：成功路径收尾调用；失败节点不产生主产物 */
+async function persistNodeArtifact(
+  run: StudyRunRow,
+  node: RunNodeSpec,
+  attempt: number,
+  artifactType: ArtifactType,
+  payload: Record<string, unknown>,
+  rationale: PublicRationale,
+  upstreamKeys: RunNodeKey[],
+  producer: ArtifactProducer,
+): Promise<string> {
+  const inputRefs = [...(await upstreamArtifactRefs(run.id, upstreamKeys))];
+  const artifact = await persistArtifact({
+    runId: run.id,
+    learnerId: run.learnerId,
+    nodeKey: node.key,
+    attempt,
+    artifactType,
+    inputRefs,
+    payload,
+    publicRationale: rationale,
+    producer,
+  });
+  await setNodePrimaryArtifact(run.id, node.key, attempt, artifact.id);
+  return artifact.id;
+}
+
+/** 上游产物引用（升级计划 §4.1）：下游节点通过产物 ID 引用上游，不复制自由文本 */
+async function upstreamArtifactRefs(runId: string, nodeKeys: RunNodeKey[]): Promise<string[]> {
+  if (nodeKeys.length === 0) return [];
+  const artifacts = await listRunArtifacts(runId);
+  const byNode = new Map<string, string>();
+  for (const artifact of artifacts) {
+    byNode.set(artifact.nodeKey, artifact.id);
+  }
+  return nodeKeys
+    .map((key) => byNode.get(key))
+    .filter((id): id is string => Boolean(id));
 }
 
 async function pathNodeOf(run: StudyRunRow) {
@@ -183,15 +245,18 @@ async function mergeEvidencePacks(ctx: RunContext, query: string): Promise<Evide
 
 /* ----------------------------- 各节点实现 ----------------------------- */
 
-async function runAssessLearner(run: StudyRunRow, node: RunNodeSpec): Promise<string> {
+async function runAssessLearner(run: StudyRunRow, node: RunNodeSpec, attempt: number): Promise<string> {
   const profile = await learningStore.getProfile(run.learnerId);
   const pathNode = await pathNodeOf(run);
   const taskLabel = run.request.task.slice(0, 60);
   let analysis = '';
   let requirements: string[] = [];
+  let usedAgent = false;
+  let systemPrompt = '';
   try {
+    systemPrompt = '你是学习协同中的“学情与路径智能体”。只输出 JSON：{"analysis":"不超过120字的第一人称分析：你看到了什么学习状态，因此本次资源如何定位","requirements":["3到5条对本次资源的具体设计要求"]}。禁止虚构任何数据或作答记录。';
     const raw = await callAgent('learning_planning',
-      '你是学习协同中的“学情与路径智能体”。只输出 JSON：{"analysis":"不超过120字的第一人称分析：你看到了什么学习状态，因此本次资源如何定位","requirements":["3到5条对本次资源的具体设计要求"]}。禁止虚构任何数据或作答记录。',
+      systemPrompt,
       JSON.stringify({
         node: pathNode ? { title: pathNode.title, description: pathNode.description, recommendation: pathNode.recommendation } : null,
         profile: { accuracy: profile.accuracy, studyMinutes: profile.studyMinutes, assetsCount: profile.assetsCount, skills: profile.skills.slice(0, 6) },
@@ -200,59 +265,165 @@ async function runAssessLearner(run: StudyRunRow, node: RunNodeSpec): Promise<st
     const parsed = parseJson<{ analysis?: unknown; requirements?: unknown }>(raw) ?? {};
     analysis = typeof parsed.analysis === 'string' ? parsed.analysis.slice(0, 300) : '';
     requirements = Array.isArray(parsed.requirements) ? parsed.requirements.map((item) => String(item).slice(0, 80)).filter(Boolean).slice(0, 5) : [];
+    usedAgent = analysis.length > 0 && requirements.length > 0;
   } catch { /* 回退确定性文案 */ }
-  if (!analysis || requirements.length === 0) {
+  if (!usedAgent) {
     analysis = `我先核对了你的学习状态：累计学习 ${profile.studyMinutes} 分钟，正确率 ${profile.accuracy === null || profile.accuracy === undefined ? '暂无' : `${Math.round(profile.accuracy * 100)}%`}。本次任务围绕「${taskLabel}」展开：先把概念讲准，再配合真实数据摘录。`;
     requirements = ['从学习者当前水平切入，不跳步', '引用证据中的数据并保留定位', '明确结论边界与不确定处'];
   }
   await mergeRunContext(run.id, { assess: { analysis, requirements } });
+  await persistNodeArtifact(run, node, attempt, 'learner_snapshot', {
+    profile: { accuracy: profile.accuracy, studyMinutes: profile.studyMinutes, assetsCount: profile.assetsCount },
+    skills: profile.skills.slice(0, 12),
+    pathNode: pathNode ? { id: pathNode.id, title: pathNode.title, knowledgePointId: pathNode.knowledgePointId, recommendation: pathNode.recommendation } : null,
+    analysis,
+    requirements,
+  }, {
+    observations: [
+      `累计学习 ${profile.studyMinutes} 分钟`,
+      `历史正确率 ${profile.accuracy === null || profile.accuracy === undefined ? '暂无' : `${Math.round(profile.accuracy * 100)}%`}`,
+      pathNode ? `目标节点「${pathNode.title}」` : '未绑定路径节点',
+    ],
+    basisRefs: [run.request.pathNodeId ?? 'learner-profile'],
+    decision: analysis.slice(0, 200),
+    uncertainty: usedAgent ? [] : ['学情分析由确定性规则兜底生成'],
+    nextAction: `为「${taskLabel}」生成${RESOURCE_TYPE_LABELS[run.request.resourceType] ?? '讲义'}前先完成证据检索`,
+  }, [], usedAgent
+    ? agentProducer(systemPrompt, getAgentExecutionSettings('learning_planning', undefined, undefined))
+    : RULE_PRODUCER);
   await bubble(run, node.role, `${analysis}\n设计要求：\n${requirements.map((item) => `- ${item}`).join('\n')}`);
   return analysis.slice(0, 120);
 }
 
-async function retrieveEvidence(run: StudyRunRow, node: RunNodeSpec, plan: Array<'structured' | 'document'>): Promise<string> {
+async function retrieveEvidence(run: StudyRunRow, node: RunNodeSpec, attempt: number, plan: Array<'structured' | 'document'>): Promise<string> {
   const pack = await evidenceService.buildEvidencePack(run.request.task, {
     learnerId: run.learnerId,
     sessionId: `study-run-${run.id}`,
     retrievalPlan: plan,
   });
   await mergeRunContext(run.id, plan.includes('structured') ? { ev_structured: pack } : { ev_document: pack });
+  const degraded = Boolean(pack.hybrid?.degraded);
   if (plan.includes('structured')) {
     await bubble(run, node.role,
       `完成结构化检索：取回 ${pack.items.length} 条数据证据，可回溯定位如：${pack.items[0]?.locator ?? '无'}。`);
-    return `结构化证据 ${pack.items.length} 条`;
+  } else {
+    // 混合检索降级上报（总规 §7.5）：向量路不可用时如实展示，不静默
+    if (degraded) {
+      const reasonText = pack.hybrid?.reason === 'embed_failed' ? '查询向量生成失败' : pack.hybrid?.reason === 'vector_query_failed' ? '向量查询异常' : '库内暂无向量';
+      await emitEvent(run, node, 'node.progress', `混合检索降级：${reasonText}，已回退全文检索。`, { hybrid: pack.hybrid });
+      await bubble(run, node.role, `注意：向量检索暂不可用（${reasonText}），文档证据已降级为全文检索，不影响门禁流程。`);
+    }
+    await bubble(run, node.role, pack.items.length > 0
+      ? `完成文档检索：按相关度命中 ${pack.items.length} 份资料，最相关《${pack.items[0]?.sourceTitle ?? ''}》${pack.items[0]?.locator ? `（${pack.items[0].locator}）` : ''}。`
+      : '文档检索未命中可用资料，将提示生成端只依赖结构化数据并保守表达。');
   }
-  // 混合检索降级上报（总规 §7.5）：向量路不可用时如实展示，不静默
-  if (pack.hybrid?.degraded) {
-    const reasonText = pack.hybrid.reason === 'embed_failed' ? '查询向量生成失败' : pack.hybrid.reason === 'vector_query_failed' ? '向量查询异常' : '库内暂无向量';
-    await emitEvent(run, node, 'node.progress', `混合检索降级：${reasonText}，已回退全文检索。`, { hybrid: pack.hybrid });
-    await bubble(run, node.role, `注意：向量检索暂不可用（${reasonText}），文档证据已降级为全文检索，不影响门禁流程。`);
-  }
-  await bubble(run, node.role, pack.items.length > 0
-    ? `完成文档检索：按相关度命中 ${pack.items.length} 份资料，最相关《${pack.items[0]?.sourceTitle ?? ''}》${pack.items[0]?.locator ? `（${pack.items[0].locator}）` : ''}。`
-    : '文档检索未命中可用资料，将提示生成端只依赖结构化数据并保守表达。');
-  return `文档证据 ${pack.items.length} 条`;
+  await persistNodeArtifact(run, node, attempt, 'evidence_set', {
+    packId: pack.id,
+    query: pack.query,
+    retrievalPlan: pack.retrievalPlan,
+    itemCount: pack.items.length,
+    coverageScore: pack.coverageScore,
+    crossValidation: pack.crossValidation,
+    hybrid: pack.hybrid ?? null,
+    items: pack.items.slice(0, 12).map((item) => ({
+      id: item.id,
+      sourceType: item.sourceType,
+      sourceId: item.sourceId,
+      sourceTitle: item.sourceTitle ?? null,
+      locator: item.locator,
+      trustLevel: item.trustLevel,
+      retrievalMethod: item.retrievalMethod,
+      relevanceScore: item.relevanceScore,
+      content: item.content.slice(0, 500),
+    })),
+  }, {
+    observations: [
+      `${plan.includes('structured') ? '结构化' : '文档'}检索取回 ${pack.items.length} 条证据`,
+      `证据覆盖度 ${pack.coverageScore}`,
+      degraded ? '向量检索降级为全文检索' : '混合检索两路可用',
+    ],
+    basisRefs: pack.items.slice(0, 6).map((item) => item.id),
+    decision: pack.items.length > 0
+      ? `以 ${pack.items[0]?.locator ?? ''} 等来源作为本任务证据集`
+      : '证据为空，后续节点必须保守表达并走最严门禁',
+    uncertainty: pack.items.length === 0 ? ['未命中任何可用证据'] : [],
+    nextAction: plan.includes('structured') ? '并行文档检索继续' : '证据移交领域分析与生成端',
+  }, [], TOOL_PRODUCER);
+  return `${plan.includes('structured') ? '结构化' : '文档'}证据 ${pack.items.length} 条`;
 }
 
-async function runAnalyzeDomain(run: StudyRunRow, node: RunNodeSpec): Promise<string> {
+async function runAnalyzeDomain(run: StudyRunRow, node: RunNodeSpec, attempt: number): Promise<string> {
   const ctx = contextOf(run);
   const merged = ctx.merged_pack ?? await mergeEvidencePacks(ctx, run.request.task);
   if (merged) await mergeRunContext(run.id, { merged_pack: merged });
   let points: string[] = [];
   let boundaries: string[] = [];
+  let usedAgent = false;
+  let systemPrompt = '';
   try {
+    systemPrompt = '你是“领域诊断智能体”，负责设备数据分析领域的专业准确性。只输出 JSON：{"points":["3到5条讲解要点"],"boundaries":["2到3条必须强调的专业边界或不确定性提醒"]}。要点与边界必须能在给定证据中找到依据，禁止编造阈值或数据。';
     const raw = await callAgent('domain_expert',
-      '你是“领域诊断智能体”，负责设备数据分析领域的专业准确性。只输出 JSON：{"points":["3到5条讲解要点"],"boundaries":["2到3条必须强调的专业边界或不确定性提醒"]}。要点与边界必须能在给定证据中找到依据，禁止编造阈值或数据。',
+      systemPrompt,
       JSON.stringify({ task: run.request.task, evidence: evidenceDigest(merged) }));
     const parsed = parseJson<{ points?: unknown; boundaries?: unknown }>(raw) ?? {};
     points = Array.isArray(parsed.points) ? parsed.points.map((item) => String(item).slice(0, 100)).filter(Boolean).slice(0, 5) : [];
     boundaries = Array.isArray(parsed.boundaries) ? parsed.boundaries.map((item) => String(item).slice(0, 100)).filter(Boolean).slice(0, 3) : [];
+    usedAgent = points.length > 0;
   } catch { /* 回退确定性文案 */ }
-  if (points.length === 0) {
+  if (!usedAgent) {
     points = ['先解释关键字段含义与观察方法', '用证据中的数据示例说明判断依据'];
     boundaries = ['数据异常只支持风险判断，不等于确定故障', '结论需保留现场复核建议'];
   }
   await mergeRunContext(run.id, { domain: { points, boundaries } });
+  // VACP（升级计划 §4.7 两阶段决策·第二阶段）：按实际证据产物修正审核策略
+  const targetKp = normalizeKnowledgePointId((await pathNodeOf(run))?.knowledgePointId ?? '');
+  const targetState = await learningStore.getSkillState(run.learnerId, targetKp || 'industrial-diagnosis-foundation');
+  const policy = deriveVerificationPolicy({
+    structuredPack: ctx.ev_structured ?? null,
+    documentPack: ctx.ev_document ?? null,
+    resourceType: run.request.resourceType,
+    taskRisk: taskFactRisk(run.request).score,
+    learnerConfidence: targetState?.confidence ?? 0.1,
+    strictAdjudication: run.plan.strictAdjudication,
+  });
+  if (policy.amended) {
+    await setRunVerificationPolicy(run.id, policy as unknown as Record<string, unknown>);
+    await persistArtifact({
+      runId: run.id,
+      learnerId: run.learnerId,
+      nodeKey: 'audit.claims',
+      attempt: 1,
+      artifactType: 'design_constraints',
+      inputRefs: await upstreamArtifactRefs(run.id, ['retrieve.structured', 'retrieve.document']),
+      payload: { phase: 'post_retrieval_policy', policy },
+      publicRationale: {
+        observations: [policySummary(policy)],
+        basisRefs: [`pack:${ctx.ev_structured?.id ?? 'none'}`, `pack:${ctx.ev_document?.id ?? 'none'}`],
+        decision: policy.strength === 'strict' ? '审核与裁决按 strict 策略执行' : '审核门禁保持齐全，附加约束已启用',
+        uncertainty: [],
+        nextAction: '生成端与门禁端按修正后策略执行',
+      },
+      producer: RULE_PRODUCER,
+    });
+    await emitEvent(run, node, 'plan.amended', `审核策略按实际证据修正：${policySummary(policy)}`, {
+      policy,
+    });
+  }
+  await persistNodeArtifact(run, node, attempt, 'domain_brief', {
+    task: run.request.task.slice(0, 200),
+    points,
+    boundaries,
+    evidencePackId: merged?.id ?? null,
+    evidenceCount: merged?.items.length ?? 0,
+  }, {
+    observations: [`基于 ${merged?.items.length ?? 0} 条证据进行领域分析`],
+    basisRefs: (merged?.items ?? []).slice(0, 6).map((item) => item.id),
+    decision: `给出 ${points.length} 条讲解要点与 ${boundaries.length} 条专业边界`,
+    uncertainty: usedAgent ? [] : ['领域分析由确定性规则兜底生成'],
+    nextAction: '要点与边界移交资源生成端',
+  }, ['retrieve.structured', 'retrieve.document'], usedAgent
+    ? agentProducer(systemPrompt, getAgentExecutionSettings('domain_expert', undefined, undefined))
+    : RULE_PRODUCER);
   await bubble(run, node.role, `讲解要点：\n${points.map((item) => `- ${item}`).join('\n')}\n专业边界：\n${boundaries.map((item) => `- ${item}`).join('\n')}`);
   return `${points.length} 个要点、${boundaries.length} 条边界`;
 }
@@ -275,15 +446,22 @@ async function runGenerateResource(run: StudyRunRow, node: RunNodeSpec, attempt:
 
   let generated: ResourceDocument | null = null;
   let note = '';
+  let usedLlm = false;
+  let generationPrompt = '';
+  // 检索后策略（升级计划 §4.7）：证据稀疏时禁止强事实表达，门禁不放松
+  const forbidStrongClaims = run.verificationPolicy?.['forbidStrongFactualClaims'] === true;
+  const sparseConstraint = forbidStrongClaims
+    ? '当前证据覆盖不足（sparse）：禁止输出任何具体数字、阈值或确定性结论，全部改为定性表述并明确标注证据边界。'
+    : '';
   if (llmEligible) {
-    const prompt = isRevision
+    generationPrompt = (isRevision
       ? `你是“个性化资源生成智能体”。审核退回了${typeLabel}初稿中无法与证据核对的内容。只输出修订后的 JSON：{"title":"资源标题","objectives":["2到3条学习目标"],"sections":[{"heading":"小节标题","text":"150到260字的正文"}]}。要求：保持其余内容不变；被退回的表述要么改成与证据一致的数字，要么删除数字改为定性描述；仍禁止编造证据之外的阈值。`
-      : `你是“个性化资源生成智能体”，为学习者生成${typeLabel}。只输出 JSON：{"title":"资源标题","objectives":["2到3条学习目标"],"sections":[{"heading":"小节标题","text":"150到260字的正文"}]}，sections 给 2 到 4 个。要求：融合给定证据；引用数字必须与证据一致；面向初学者；禁止编造证据之外的阈值或结论。`;
+      : `你是“个性化资源生成智能体”，为学习者生成${typeLabel}。只输出 JSON：{"title":"资源标题","objectives":["2到3条学习目标"],"sections":[{"heading":"小节标题","text":"150到260字的正文"}]}，sections 给 2 到 4 个。要求：融合给定证据；引用数字必须与证据一致；面向初学者；禁止编造证据之外的阈值或结论。`) + (sparseConstraint ? `\n${sparseConstraint}` : '');
     const payload = isRevision
       ? { failedClaims: ctx.revision_failed ?? [], designRequirements: assess.requirements, evidence: evidenceDigest(merged) }
       : { designRequirements: assess.requirements, domainPoints: domain.points, domainBoundaries: domain.boundaries, evidence: evidenceDigest(merged) };
     try {
-      const raw = await callAgent('resource_generation', prompt, JSON.stringify(payload), 2400);
+      const raw = await callAgent('resource_generation', generationPrompt, JSON.stringify(payload), 2400);
       const parsed = parseJson<{ title?: unknown; objectives?: unknown; sections?: unknown }>(raw);
       const sections = parsed && Array.isArray(parsed.sections) ? parsed.sections.flatMap((item) => {
         const section = item as { heading?: unknown; text?: unknown };
@@ -295,6 +473,7 @@ async function runGenerateResource(run: StudyRunRow, node: RunNodeSpec, attempt:
           objectives: Array.isArray(parsed.objectives) ? parsed.objectives.map((item) => String(item)) : [],
           sections,
         }, { calibration });
+        usedLlm = generated !== null;
       }
     } catch { /* 模板兜底 */ }
     if (!generated) {
@@ -305,36 +484,99 @@ async function runGenerateResource(run: StudyRunRow, node: RunNodeSpec, attempt:
     generated = buildResourceDraft(`study-${run.id}-${attempt}`, run.request.task, run.request.resourceType, merged, pathNode?.knowledgePointId, { calibration });
     note = '该资源类型使用结构化模板生成，证据引用保持可回溯。';
   }
+  if (forbidStrongClaims) {
+    note = note ? `${note}证据稀疏：已按策略要求保守表达。` : '证据稀疏：已按策略要求保守表达。';
+  }
   const resource = generated;
   await mergeRunContext(run.id, { draft: resource });
+  await persistNodeArtifact(run, node, attempt, 'resource_draft', resource as unknown as Record<string, unknown>, {
+    observations: [
+      `${isRevision ? `第 ${attempt} 轮修订` : '初稿'}：${resource.blocks.length} 个内容块`,
+      `难度校准目标 ${calibration.targetDifficulty}、预计成功率 ${calibration.expectedSuccessRate}`,
+      `绑定证据 ${resource.evidenceIds.length} 条`,
+    ],
+    basisRefs: resource.evidenceIds.slice(0, 8),
+    decision: `生成《${resource.title}》并提交 Claim 审核`,
+    uncertainty: note ? [note] : [],
+    nextAction: '草稿移交 claim_auditor 逐条核对',
+  }, ['assess.learner', 'retrieve.structured', 'retrieve.document', 'analyze.domain'], usedLlm
+    ? agentProducer(generationPrompt, getAgentExecutionSettings('resource_generation', undefined, undefined))
+    : RULE_PRODUCER);
   await bubble(run, node.role,
     `${isRevision ? `第 ${attempt} 轮修订完成` : '初稿完成'}：《${resource.title}》，共 ${resource.blocks.length} 个内容块（含代码示例与数据摘录）。${note || '已融入证据引用，交由审核。'}`);
   return `草稿《${resource.title}》共 ${resource.blocks.length} 块`;
 }
 
-async function runAuditClaims(run: StudyRunRow, node: RunNodeSpec): Promise<string> {
+async function runAuditClaims(run: StudyRunRow, node: RunNodeSpec, attempt: number): Promise<string> {
   const ctx = contextOf(run);
   const draft = ctx.draft;
   const merged = ctx.merged_pack ?? await mergeEvidencePacks(ctx, run.request.task);
   if (!draft) throw new Error('缺少草稿，无法执行 Claim 审核');
   const result = auditResource(draft, merged);
-  await learningStore.saveResourceAudit(draft.id, result.claims);
-  await persistClaims(run, result.claims);
-  await mergeRunContext(run.id, { audit: { claims: result.claims, summary: result.summary } });
-  const supported = result.claims.filter((claim) => claim.verdict === 'supported').length;
-  const review = result.claims.filter((claim) => claim.verdict === 'review').length;
-  const unsupported = result.claims.filter((claim) => claim.verdict === 'unsupported').length;
+  // 里程碑 D：确定性核验（数值/字段含义/越界因果/引用越界），结论只能比基础审核更严
+  const datasetFields = await loadDatasetFields();
+  const verifiedClaims = verifyClaims(result.claims, merged, { datasetFields });
+  const auditedResult = { ...result, claims: verifiedClaims };
+  await learningStore.saveResourceAudit(draft.id, auditedResult.claims);
+  const draftArtifactId = artifactIdOf(run.id, 'generate.resource', attempt, 'resource_draft');
+  await persistClaims(run, auditedResult.claims, attempt, draftArtifactId);
+  await mergeRunContext(run.id, { audit: { claims: auditedResult.claims, summary: auditedResult.summary } });
+  const supported = auditedResult.claims.filter((claim) => claim.verdict === 'supported').length;
+  const review = auditedResult.claims.filter((claim) => claim.verdict === 'review').length;
+  const unsupported = auditedResult.claims.filter((claim) => claim.verdict === 'unsupported').length;
+  const nonFactual = auditedResult.claims.filter((claim) => claim.claimType === 'non_factual').length;
+  await persistNodeArtifact(run, node, attempt, 'claim_audit', {
+    draftArtifactId,
+    draftId: draft.id,
+    claims: auditedResult.claims,
+    summary: auditedResult.summary,
+    verification: { datasetFieldCount: datasetFields.length, nonFactualExcludedFromDenominator: nonFactual },
+  }, {
+    observations: [
+      `逐条核对 ${auditedResult.claims.length} 条内容声明（数值/字段含义/方法步骤/因果/风险建议）`,
+      `来源交叉验证 ${auditedResult.summary.status}`,
+      nonFactual > 0 ? `${nonFactual} 条非事实教学表达不计入幻觉率分母` : '无非事实教学表达',
+    ],
+    basisRefs: [draftArtifactId, ...(merged?.items ?? []).slice(0, 6).map((item) => item.id)],
+    decision: `支持 ${supported}、待复核 ${review}、无证据支持 ${unsupported}`,
+    uncertainty: review > 0 ? [`${review} 条数字或单位待复核`] : [],
+    nextAction: unsupported + review > 0 ? '移交反方质询重点核查未通过表述' : '移交反方质询确认',
+  }, ['generate.resource', 'retrieve.structured', 'retrieve.document'], RULE_PRODUCER);
   await bubble(run, node.role,
-    `逐条核对 ${result.claims.length} 条内容声明：支持 ${supported}、待复核 ${review}、无证据支持 ${unsupported}。来源交叉验证：${result.summary.status === 'corroborated' ? '结构化数据与领域文档互证通过' : '来源单一，需保守表达'}。`);
-  return `Claim 审核 ${result.claims.length} 条（支持 ${supported}/待复核 ${review}/无证据 ${unsupported}）`;
+    `逐条核对 ${auditedResult.claims.length} 条内容声明：支持 ${supported}、待复核 ${review}、无证据支持 ${unsupported}${nonFactual > 0 ? `（另有 ${nonFactual} 条非事实教学表达不计入分母）` : ''}。来源交叉验证：${auditedResult.summary.status === 'corroborated' ? '结构化数据与领域文档互证通过' : '来源单一，需保守表达'}。`);
+  return `Claim 审核 ${auditedResult.claims.length} 条（支持 ${supported}/待复核 ${review}/无证据 ${unsupported}）`;
 }
 
-async function persistClaims(run: StudyRunRow, items: ClaimAuditRecord[]): Promise<void> {
+/** 字段字典（PG dataset_fields）：字段含义 Claim 核验依据 */
+async function loadDatasetFields(): Promise<Array<{ fieldName: string; meaning: string }>> {
+  const rows = await runDb().execute(
+    `SELECT field_name AS "fieldName", meaning FROM dataset_fields LIMIT 200`,
+  );
+  return (rows.rows as Array<{ fieldName: string; meaning: string }>).map((row) => ({
+    fieldName: row.fieldName,
+    meaning: row.meaning,
+  }));
+}
+
+async function persistClaims(run: StudyRunRow, items: ClaimAuditRecord[], attempt: number, draftArtifactId: string): Promise<void> {
   if (items.length === 0) return;
+  // supersedes（升级计划 §4.5）：与上一轮同 logicalKey 的声明建立替代关系
+  const previousRows = attempt > 1
+    ? (await runDb().select({ id: claimsTable.id, logicalKey: claimsTable.logicalKey })
+        .from(claimsTable)
+        .where(and(eq(claimsTable.resourceId, run.id), eq(claimsTable.attempt, attempt - 1))))
+    : [];
+  const previousByKey = new Map(previousRows.map((row) => [row.logicalKey ?? '', row.id]));
   await runDb().insert(claimsTable).values(items.map((claim) => ({
     id: `${run.id}:${claim.id}`,
     resourceId: run.id,
     learnerId: run.learnerId,
+    runId: run.id,
+    attempt,
+    draftArtifactId,
+    claimType: claim.claimType ?? null,
+    logicalKey: claim.logicalKey ?? null,
+    supersedesClaimId: previousByKey.get(claim.logicalKey ?? '') ?? null,
     text: claim.text.slice(0, 2000),
     verdict: claim.verdict,
     critique: claim.critique.slice(0, 1000),
@@ -352,13 +594,15 @@ async function persistClaims(run: StudyRunRow, items: ClaimAuditRecord[]): Promi
 }
 
 type DebateIssueInput = {
-  issueType: 'no_evidence' | 'conflict' | 'out_of_scope_causality' | 'difficulty_mismatch';
+  issueType: 'no_evidence' | 'conflict' | 'out_of_scope_causality' | 'difficulty_mismatch' | 'counterevidence_request';
   targetClaimId: string | null;
   argument: string;
   source: 'rule' | 'critic';
 };
 
 /** 独立批评 Agent（总规 §5.2 升级）：LLM 从反方立场逐条审查草稿；失败返回空，规则兜底不受影响 */
+const CRITIC_SYSTEM_PROMPT = '你是独立批评智能体（反方），只负责挑错，不负责修改。只输出 JSON：{"issues":[{"issueType":"no_evidence|conflict|out_of_scope_causality|difficulty_mismatch|counterevidence_request","targetClaimId":"对应声明的 id 或 null","argument":"不超过80字的具体批评或反证检索请求"}]}。审查维度：no_evidence=声明在证据里找不到支持；conflict=声明数字或结论与证据冲突；out_of_scope_causality=把数据异常写成了越界的确定性因果；difficulty_mismatch=内容难度与学习者状态不匹配；counterevidence_request=请求在已有知识库和数据中检索可能推翻该声明的反证（argument 写明检索词）。只在确有问题时列出，最多 4 条，没有问题就输出空数组。';
+
 async function criticAgentIssues(run: StudyRunRow, audit: NonNullable<RunContext['audit']>): Promise<DebateIssueInput[]> {
   const ctx = contextOf(run);
   const draft = ctx.draft;
@@ -367,7 +611,7 @@ async function criticAgentIssues(run: StudyRunRow, audit: NonNullable<RunContext
   const focus = run.plan.challengeFocus;
   try {
     const raw = await callAgent('cross_validation',
-      '你是独立批评智能体（反方），只负责挑错，不负责修改。只输出 JSON：{"issues":[{"issueType":"no_evidence|conflict|out_of_scope_causality|difficulty_mismatch","targetClaimId":"对应声明的 id 或 null","argument":"不超过80字的具体批评"}]}。审查维度：no_evidence=声明在证据里找不到支持；conflict=声明数字或结论与证据冲突；out_of_scope_causality=把数据异常写成了越界的确定性因果；difficulty_mismatch=内容难度与学习者状态不匹配。只在确有问题时列出，最多 4 条，没有问题就输出空数组。',
+      CRITIC_SYSTEM_PROMPT,
       JSON.stringify({
         claims: audit.claims.map((claim) => ({ id: claim.id, text: claim.text.slice(0, 160), verdict: claim.verdict })),
         draftExcerpt: draft.blocks
@@ -381,7 +625,7 @@ async function criticAgentIssues(run: StudyRunRow, audit: NonNullable<RunContext
       }), 1200);
     const parsed = parseJson<{ issues?: unknown }>(raw) ?? {};
     if (!Array.isArray(parsed.issues)) return [];
-    const allowed = new Set(['no_evidence', 'conflict', 'out_of_scope_causality', 'difficulty_mismatch']);
+    const allowed = new Set(['no_evidence', 'conflict', 'out_of_scope_causality', 'difficulty_mismatch', 'counterevidence_request']);
     return parsed.issues.flatMap((item): Array<DebateIssueInput> => {
       const issue = item as { issueType?: unknown; targetClaimId?: unknown; argument?: unknown };
       if (!allowed.has(String(issue.issueType))) return [];
@@ -397,7 +641,7 @@ async function criticAgentIssues(run: StudyRunRow, audit: NonNullable<RunContext
   }
 }
 
-async function runDebateChallenge(run: StudyRunRow, node: RunNodeSpec): Promise<string> {
+async function runDebateChallenge(run: StudyRunRow, node: RunNodeSpec, attempt: number): Promise<string> {
   const ctx = contextOf(run);
   const audit = ctx.audit;
   if (!audit) throw new Error('缺少审核结果，无法发起反方质询');
@@ -421,6 +665,46 @@ async function runDebateChallenge(run: StudyRunRow, node: RunNodeSpec): Promise<
   const criticIssues = (await criticAgentIssues(run, audit))
     .filter((issue) => !ruleKeys.has(`${issue.issueType}:${issue.targetClaimId ?? ''}`));
   issues.push(...criticIssues);
+  // 里程碑 D 第 7 条：counterevidence_request → 在已有知识库和数据中执行反证检索，不联网
+  const counterevidence: Array<{ request: string; packId: string | null; found: number; note: string }> = [];
+  for (const issue of issues.filter((item) => item.issueType === 'counterevidence_request').slice(0, 2)) {
+    try {
+      const pack = await evidenceService.buildEvidencePack(issue.argument, {
+        learnerId: run.learnerId,
+        sessionId: `study-run-${run.id}`,
+        retrievalPlan: ['document'],
+      });
+      counterevidence.push({
+        request: issue.argument.slice(0, 120),
+        packId: pack.id,
+        found: pack.items.length,
+        note: pack.items.length > 0 ? `命中 ${pack.items.length} 条潜在反证，已并入合并证据包` : '未命中反证，声明暂时站得住',
+      });
+      if (pack.items.length > 0) {
+        const current = contextOf(run).merged_pack;
+        if (current) {
+          const items = [...current.items];
+          for (const item of pack.items) {
+            if (!items.some((existing) => existing.id === item.id)) items.push(item);
+          }
+          await mergeRunContext(run.id, {
+            merged_pack: { ...current, items, documentCount: items.filter((item) => item.sourceType === 'document').length, crossValidation: crossValidate(items) },
+            counterevidence,
+          });
+        } else {
+          await mergeRunContext(run.id, { counterevidence });
+        }
+      }
+    } catch (error) {
+      counterevidence.push({
+        request: issue.argument.slice(0, 120),
+        packId: null,
+        found: -1,
+        note: `反证检索失败：${error instanceof Error ? error.message.slice(0, 80) : '未知错误'}`,
+      });
+      await mergeRunContext(run.id, { counterevidence });
+    }
+  }
   if (issues.length > 0) {
     await runDb().insert(debateIssues).values(issues.map((issue) => ({
       id: `${run.id}:issue-${randomUUID()}`,
@@ -434,6 +718,26 @@ async function runDebateChallenge(run: StudyRunRow, node: RunNodeSpec): Promise<
       createdAt: Date.now(),
     })));
   }
+  await persistNodeArtifact(run, node, attempt, 'challenge_set', {
+    focus,
+    issueCount: issues.length,
+    issues,
+    counterevidence,
+  }, {
+    observations: [
+      `质询提出 ${issues.length} 个议题（规则 ${issues.length - criticIssues.length} 条、批评 Agent 补充 ${criticIssues.length} 条）`,
+      counterevidence.length > 0
+        ? `执行 ${counterevidence.length} 次反证检索（仅用已有知识库与数据）：${counterevidence.map((item) => item.note).join('；')}`
+        : '无需反证检索',
+      '批评端只读取草稿、Claim 与证据，不读取生成端分析理由',
+    ],
+    basisRefs: issues.filter((issue) => issue.targetClaimId).slice(0, 6).map((issue) => `${run.id}:${issue.targetClaimId}`),
+    decision: issues.length > 0 ? '将未通过与越界表述提交从严裁决' : '未发现需拦截的表述，提交裁决确认',
+    uncertainty: counterevidence.filter((item) => item.found < 0).map((item) => item.note),
+    nextAction: '移交 evidence_judge 裁决',
+  }, ['audit.claims', 'generate.resource'], criticIssues.length > 0
+    ? agentProducer(CRITIC_SYSTEM_PROMPT, getAgentExecutionSettings('cross_validation', undefined, undefined))
+    : RULE_PRODUCER);
   await bubble(run, node.role,
     issues.length > 0
       ? `质询提出 ${issues.length} 个议题（规则 ${issues.length - criticIssues.length} 条、批评 Agent 补充 ${criticIssues.length} 条：无证据 ${issues.filter((issue) => issue.issueType === 'no_evidence').length}、冲突 ${issues.filter((issue) => issue.issueType === 'conflict').length}、越界因果 ${issues.filter((issue) => issue.issueType === 'out_of_scope_causality').length}、难度适配 ${issues.filter((issue) => issue.issueType === 'difficulty_mismatch').length}）。无法核对或越界的表述将被从严裁决。`
@@ -444,15 +748,19 @@ async function runDebateChallenge(run: StudyRunRow, node: RunNodeSpec): Promise<
 const VERDICT_SEVERITY: Record<string, number> = { supported: 0, partial: 1, conflict: 2, unsupported: 3 };
 
 /** 裁决 Agent（总规 §5.2 升级）：LLM 独立给出整体判决；失败返回 null，规则兜底不受影响 */
+const JUDGE_SYSTEM_PROMPT = '你是证据裁决智能体（裁判），在反方质询后给出整体判决。只输出 JSON：{"verdict":"supported|partial|conflict|unsupported","rationale":"不超过80字的公开判决理由"}。判据：全部实质性声明都有证据支持且来源互证=supported；存在待复核表述=partial；证据之间存在冲突=conflict；存在无证据支持的实质性结论=unsupported。你的判决只能基于给定材料。';
+
 async function adjudicatorAgentVerdict(run: StudyRunRow, audit: NonNullable<RunContext['audit']>): Promise<{ verdict: 'supported' | 'partial' | 'conflict' | 'unsupported'; rationale: string } | null> {
   try {
     const raw = await callAgent('cross_validation',
-      '你是证据裁决智能体（裁判），在反方质询后给出整体判决。只输出 JSON：{"verdict":"supported|partial|conflict|unsupported","rationale":"不超过80字的公开判决理由"}。判据：全部实质性声明都有证据支持且来源互证=supported；存在待复核表述=partial；证据之间存在冲突=conflict；存在无证据支持的实质性结论=unsupported。你的判决只能基于给定材料。',
+      JUDGE_SYSTEM_PROMPT,
       JSON.stringify({
         claims: audit.claims.map((claim) => ({ id: claim.id, text: claim.text.slice(0, 140), verdict: claim.verdict })),
         crossValidation: audit.summary,
         challengeFocus: run.plan.challengeFocus,
         strictAdjudication: run.plan.strictAdjudication,
+        // 裁决端只读结构化材料：反证检索结果（不读取生成端对话或理由）
+        counterevidence: contextOf(run).counterevidence ?? [],
       }), 800);
     const parsed = parseJson<{ verdict?: unknown; rationale?: unknown }>(raw) ?? {};
     const verdict = String(parsed.verdict);
@@ -470,8 +778,10 @@ async function runAdjudicate(run: StudyRunRow, node: RunNodeSpec, attempt: numbe
   const ctx = contextOf(run);
   const audit = ctx.audit;
   if (!audit) throw new Error('缺少审核结果，无法裁决');
-  const unsupported = audit.claims.filter((claim) => claim.verdict === 'unsupported').length;
-  const review = audit.claims.filter((claim) => claim.verdict === 'review').length;
+  // 幻觉率分母口径：non_factual 教学表达不参与裁决计数
+  const auditable = audit.claims.filter((claim) => claim.claimType !== 'non_factual');
+  const unsupported = auditable.filter((claim) => claim.verdict === 'unsupported').length;
+  const review = auditable.filter((claim) => claim.verdict === 'review').length;
   const summaryStatus = audit.summary.status;
   const ruleVerdict = unsupported > 0
     ? 'unsupported'
@@ -483,7 +793,10 @@ async function runAdjudicate(run: StudyRunRow, node: RunNodeSpec, attempt: numbe
   const verdict = agent && (VERDICT_SEVERITY[agent.verdict] ?? 0) > (VERDICT_SEVERITY[ruleVerdict] ?? 0)
     ? agent.verdict
     : ruleVerdict;
-  const strict = run.plan.strictAdjudication;
+  const strict = run.plan.strictAdjudication
+    // 检索后策略修正（升级计划 §4.7）：数据与文档结论冲突或策略 strict 时从严
+    || run.verificationPolicy?.['conflictMode'] === true
+    || run.verificationPolicy?.['strength'] === 'strict';
   const released = verdict === 'supported' || (verdict === 'partial' && !strict);
   await runDb().insert(auditDecisions).values({
     id: `${run.id}:decision-${randomUUID()}`,
@@ -491,11 +804,40 @@ async function runAdjudicate(run: StudyRunRow, node: RunNodeSpec, attempt: numbe
     resourceId: run.id,
     round: attempt,
     verdict,
-    rationale: `规则裁决 ${ruleVerdict}；裁决 Agent ${agent ? agent.verdict : '不可用（回退规则）'}；${agent ? agent.rationale : ''}支持 ${audit.claims.length - review - unsupported}/${audit.claims.length}，待复核 ${review}，无证据 ${unsupported}；交叉验证 ${summaryStatus}${strict ? '；知识风险高，partial 亦不放行' : ''}`.slice(0, 900),
+    rationale: `规则裁决 ${ruleVerdict}；裁决 Agent ${agent ? agent.verdict : '不可用（回退规则）'}；${agent ? agent.rationale : ''}支持 ${auditable.length - review - unsupported}/${auditable.length}，待复核 ${review}，无证据 ${unsupported}；交叉验证 ${summaryStatus}${strict ? '；知识风险高，partial 亦不放行' : ''}`.slice(0, 900),
     released,
     createdAt: Date.now(),
   });
-  await mergeRunContext(run.id, { adjudication: { verdict, released, round: attempt } });
+  const adjudicationOutcome: 'released' | 'revised' | 'rejected' = released
+    ? 'released'
+    : attempt <= REVISION_BUDGET ? 'revised' : 'rejected';
+  await mergeRunContext(run.id, { adjudication: { verdict, released, round: attempt, outcome: adjudicationOutcome } });
+  if (adjudicationOutcome === 'revised') {
+    // 修订轮绕过当前链的下游：旧 attempt 的 privacy/finalize 不再执行（修：修订环被调度器跳过的历史缺陷）
+    await skipStaleChainNodes(run, [attempt]);
+  }
+  await persistNodeArtifact(run, node, attempt, 'adjudication', {
+    verdict,
+    ruleVerdict,
+    agentVerdict: agent ? agent.verdict : null,
+    agentAvailable: agent !== null,
+    released,
+    round: attempt,
+    strictAdjudication: strict,
+    counts: { total: auditable.length, supported: auditable.length - review - unsupported, review, unsupported },
+    crossValidation: summaryStatus,
+  }, {
+    observations: [
+      `规则裁决 ${ruleVerdict}；裁决 Agent ${agent ? agent.verdict : '不可用，回退规则'}`,
+      `支持 ${audit.claims.length - review - unsupported}/${audit.claims.length}、待复核 ${review}、无证据 ${unsupported}`,
+    ],
+    basisRefs: [artifactIdOf(run.id, 'audit.claims', attempt, 'claim_audit'), artifactIdOf(run.id, 'debate.challenge', attempt, 'challenge_set')],
+    decision: `第 ${attempt} 轮裁决 ${verdict}，${released ? '通过发布门禁' : '不通过发布门禁'}`,
+    uncertainty: agent ? [] : ['裁决 Agent 不可用，仅按确定性规则裁决'],
+    nextAction: released ? '移交隐私合规与发布收尾' : attempt <= REVISION_BUDGET ? '退回生成端修订' : '标记人工复核，不发布',
+  }, [], agent
+    ? agentProducer(JUDGE_SYSTEM_PROMPT, getAgentExecutionSettings('cross_validation', undefined, undefined))
+    : RULE_PRODUCER);
   await bubble(run, node.role,
     `第 ${attempt} 轮裁决：${verdict}（规则 ${ruleVerdict}${agent ? `；裁决 Agent ${agent.verdict}` : '；裁决 Agent 不可用，按规则执行'}）。${released ? '通过发布门禁。' : '未通过发布门禁。'}`);
 
@@ -504,13 +846,13 @@ async function runAdjudicate(run: StudyRunRow, node: RunNodeSpec, attempt: numbe
       const nextAttempt = attempt + 1;
       await setRunRevisionRound(run.id, attempt);
       await mergeRunContext(run.id, {
-        revision_failed: audit.claims
+        revision_failed: auditable
           .filter((claim) => claim.verdict !== 'supported')
           .map((claim) => ({ text: claim.text.slice(0, 160), critique: claim.critique })),
       });
       await createRevisionNodes(run, nextAttempt);
       await emitEvent(run, node, 'run.revision', `第 ${attempt} 轮未通过，退回生成端修订（第 ${nextAttempt} 轮）。`, { verdict, nextAttempt });
-      await bubble(run, node.role, `已退回资源生成智能体修订 ${audit.claims.filter((claim) => claim.verdict !== 'supported').length} 处内容。`);
+      await bubble(run, node.role, `已退回资源生成智能体修订 ${auditable.filter((claim) => claim.verdict !== 'supported').length} 处内容。`);
       await enqueueRunNode(run.id, 'generate.resource', nextAttempt);
       return 'revised';
     }
@@ -521,7 +863,18 @@ async function runAdjudicate(run: StudyRunRow, node: RunNodeSpec, attempt: numbe
   return 'released';
 }
 
-/** 修订轮：为生成及其下游门禁创建 attempt+1 的节点行 */
+/** 修订/放行后，把不再执行的 privacy/finalize 行如实标记 skipped（保持 DAG 视图诚实） */
+async function skipStaleChainNodes(run: StudyRunRow, attempts: number[], keys: RunNodeKey[] = ['privacy.compliance', 'finalize.publish']): Promise<void> {
+  if (attempts.length === 0) return;
+  const rows = await listRunNodes(run.id);
+  for (const row of rows) {
+    if (keys.includes(row.nodeKey) && attempts.includes(row.attempt) && (row.status === 'pending' || row.status === 'running')) {
+      await setNodeStatus(run.id, row.nodeKey, row.attempt, 'skipped', { errorMessage: '修订轮绕过本轮下游' });
+    }
+  }
+}
+
+/** 修订轮：为生成及其下游门禁创建 attempt+1 的节点行（新轮次新产物，不覆盖旧轮） */
 async function createRevisionNodes(run: StudyRunRow, nextAttempt: number): Promise<void> {
   const chain: RunNodeKey[] = ['generate.resource', 'audit.claims', 'debate.challenge', 'adjudicate.verdict', 'privacy.compliance', 'finalize.publish'];
   await runDb().insert(studyRunNodes).values(chain.map((key) => ({
@@ -529,13 +882,14 @@ async function createRevisionNodes(run: StudyRunRow, nextAttempt: number): Promi
     runId: run.id,
     nodeKey: key,
     role: run.plan.nodes.find((node) => node.key === key)?.role ?? ('cross_validation' as LearningAgentId),
+    actorKey: NODE_ACTOR_KEY[key],
     attempt: nextAttempt,
     status: 'pending' as const,
     mandatory: true,
   }))).onConflictDoNothing();
 }
 
-async function runPrivacyCompliance(run: StudyRunRow, node: RunNodeSpec): Promise<string> {
+async function runPrivacyCompliance(run: StudyRunRow, node: RunNodeSpec, attempt: number): Promise<string> {
   const reference = run.request.temporaryReference;
   if (reference) {
     const { createHash } = await import('node:crypto');
@@ -552,13 +906,28 @@ async function runPrivacyCompliance(run: StudyRunRow, node: RunNodeSpec): Promis
       createdAt: Date.now(),
     });
   }
+  // VACP：临时上传正文不得进入 artifact，只保存文件名、字节数、散列与审计结论
+  await persistNodeArtifact(run, node, attempt, 'privacy_decision', {
+    temporaryReferenceUsed: Boolean(reference),
+    fileName: reference ? reference.name.slice(0, 160) : null,
+    byteCount: reference ? Buffer.byteLength(reference.content, 'utf8') : 0,
+    contentHash: reference ? sha256(reference.content) : null,
+    retained: false,
+    bodyStored: false,
+  }, {
+    observations: [reference ? `使用了上传的临时参考《${reference.name.slice(0, 60)}》` : '未检测到上传资料'],
+    basisRefs: [],
+    decision: reference ? '临时参考仅用于当前任务，原文不保存、不入知识库' : '无隐私边界问题',
+    uncertainty: [],
+    nextAction: '移交发布收尾',
+  }, ['adjudicate.verdict'], RULE_PRODUCER);
   await bubble(run, node.role, reference
     ? `本次使用了上传的临时参考《${reference.name}》：仅用于当前任务，不写入知识库、不进入画像，原文不保存。`
     : '未检测到上传资料，无隐私边界问题。');
   return reference ? '临时参考已审计，正文未保存' : '无隐私边界问题';
 }
 
-async function runFinalizePublish(run: StudyRunRow): Promise<string> {
+async function runFinalizePublish(run: StudyRunRow, node: RunNodeSpec, attempt: number): Promise<string> {
   const ctx = contextOf(run);
   const draft = ctx.draft;
   const merged = ctx.merged_pack;
@@ -570,6 +939,34 @@ async function runFinalizePublish(run: StudyRunRow): Promise<string> {
     await learningStore.saveAsset(run.learnerId, undefined, audited);
     finalAssetId = audited.id;
   }
+  await persistNodeArtifact(run, node, attempt, 'publication_decision', {
+    released,
+    finalAssetId,
+    verdict: adjudication?.verdict ?? 'unsupported',
+    revisionRound: attempt,
+    evidenceCount: merged?.items.length ?? 0,
+    claimCount: ctx.audit?.claims.length ?? 0,
+  }, {
+    observations: [
+      `发布门禁结果：${released ? '通过' : '未通过'}`,
+      `裁决结论 ${adjudication?.verdict ?? 'unsupported'}`,
+    ],
+    basisRefs: [
+      artifactIdOf(run.id, 'adjudicate.verdict', attempt, 'adjudication'),
+      artifactIdOf(run.id, 'privacy.compliance', attempt, 'privacy_decision'),
+    ],
+    decision: finalAssetId ? `《${draft!.title}》已通过全部门禁并入库` : '资源未通过发布门禁，不入库',
+    uncertainty: finalAssetId ? [] : ['门禁未通过：资源标记 manual_review_required'],
+    nextAction: finalAssetId ? '等待学习者阅读与作答反馈' : '建议补充更具体的任务关键词后重试',
+  }, ['adjudicate.verdict', 'privacy.compliance', 'generate.resource'], RULE_PRODUCER);
+  // VACP：运行收尾固化全部产物散列清单与 generation_end 学情快照
+  await setRunExecutionManifestHash(run.id, await computeExecutionManifestHash(run.id));
+  await saveRunSnapshot({
+    runId: run.id,
+    learnerId: run.learnerId,
+    snapshotType: 'generation_end',
+    pathNodeId: run.request.pathNodeId,
+  });
   await learningStore.saveChatMessage(run.learnerId, 'assistant', finalAssetId ? `已生成《${draft!.title}》` : `《${draft?.title ?? '资源'}》待复核，未入库`, {
     surface: 'study', kind: 'asset', runId: run.id,
     pathNodeId: run.request.pathNodeId, resourceType: run.request.resourceType,
@@ -595,16 +992,16 @@ async function runFinalizePublish(run: StudyRunRow): Promise<string> {
 
 async function executeNode(run: StudyRunRow, node: RunNodeSpec, attempt: number): Promise<string> {
   switch (node.key) {
-    case 'assess.learner': return runAssessLearner(run, node);
-    case 'retrieve.structured': return retrieveEvidence(run, node, ['structured']);
-    case 'retrieve.document': return retrieveEvidence(run, node, ['document']);
-    case 'analyze.domain': return runAnalyzeDomain(run, node);
+    case 'assess.learner': return runAssessLearner(run, node, attempt);
+    case 'retrieve.structured': return retrieveEvidence(run, node, attempt, ['structured']);
+    case 'retrieve.document': return retrieveEvidence(run, node, attempt, ['document']);
+    case 'analyze.domain': return runAnalyzeDomain(run, node, attempt);
     case 'generate.resource': return runGenerateResource(run, node, attempt);
-    case 'audit.claims': return runAuditClaims(run, node);
-    case 'debate.challenge': return runDebateChallenge(run, node);
+    case 'audit.claims': return runAuditClaims(run, node, attempt);
+    case 'debate.challenge': return runDebateChallenge(run, node, attempt);
     case 'adjudicate.verdict': return runAdjudicate(run, node, attempt).then((outcome) => `裁决 ${outcome}`);
-    case 'privacy.compliance': return runPrivacyCompliance(run, node);
-    case 'finalize.publish': return runFinalizePublish(run);
+    case 'privacy.compliance': return runPrivacyCompliance(run, node, attempt);
+    case 'finalize.publish': return runFinalizePublish(run, node, attempt);
     default: {
       const unknown: never = node.key;
       throw new Error(`未知节点：${unknown}`);
@@ -719,12 +1116,43 @@ export async function processStudyRunNode(job: Job<{ runId: string; nodeKey: str
 
   if (nodeKey === 'adjudicate.verdict') {
     const ctx = contextOf(fresh);
-    if (ctx.adjudication?.released) {
+    const outcome = ctx.adjudication?.outcome;
+    if (outcome === 'revised') {
+      // 修订轮已由裁决节点直接入队 generate.resource@nextAttempt；这里不得
+      // skipRemaining（历史缺陷：修订链刚建即被跳过，运行被错误收尾为 succeeded）
+      return;
+    }
+    if (ctx.adjudication?.released || outcome === undefined) {
+      if (attempt > 1) {
+        // 修订轮放行后清理此前轮次遗留的下游节点行
+        await skipStaleChainNodes(fresh, Array.from({ length: attempt - 1 }, (_, index) => index + 1));
+      }
       await enqueueRunNode(runId, 'privacy.compliance', attempt);
     } else {
-      await skipRemaining(fresh, '裁决未放行');
+      // 修订预算用尽：同样固化发布决定与收尾快照（fail closed 也要有完整审计链）
+      await persistArtifact({
+        runId,
+        learnerId: fresh.learnerId,
+        nodeKey: 'finalize.publish',
+        attempt,
+        artifactType: 'publication_decision',
+        inputRefs: await upstreamArtifactRefs(runId, ['adjudicate.verdict']),
+        payload: { released: false, finalAssetId: null, verdict: ctx.adjudication?.verdict ?? 'unsupported', revisionRound: attempt, reason: 'revision_budget_exhausted' },
+        publicRationale: {
+          observations: [`修订预算（${REVISION_BUDGET} 轮）已用尽`],
+          basisRefs: [artifactIdOf(runId, 'adjudicate.verdict', attempt, 'adjudication')],
+          decision: '资源不发布，进入人工复核',
+          uncertainty: [],
+          nextAction: '建议补充更具体的任务关键词后重试',
+        },
+        producer: RULE_PRODUCER,
+      });
+      await setNodePrimaryArtifact(runId, 'finalize.publish', attempt, artifactIdOf(runId, 'finalize.publish', attempt, 'publication_decision'));
+      await setRunExecutionManifestHash(runId, await computeExecutionManifestHash(runId));
+      await saveRunSnapshot({ runId, learnerId: fresh.learnerId, snapshotType: 'generation_end', pathNodeId: fresh.request.pathNodeId });
+      await skipRemaining(fresh, '修订预算已用尽，未放行');
       await finishRun(runId, 'succeeded');
-      await emitEvent(fresh, null, 'run.succeeded', '协同完成：资源未通过发布门禁，未入库。', { verdict: ctx.adjudication?.verdict ?? 'unsupported' });
+      await emitEvent(fresh, null, 'run.succeeded', '协同完成：修订预算用尽，资源未通过发布门禁，未入库。', { verdict: ctx.adjudication?.verdict ?? 'unsupported' });
     }
     return;
   }

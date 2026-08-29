@@ -8,6 +8,8 @@ import { sql } from 'drizzle-orm';
 import { createLearningDatabase, type LearningDatabase } from '../db/client.js';
 import { runEvents, studyRunNodes, studyRuns } from '../db/schema.js';
 import { publishRunEvent } from './events.js';
+import { NODE_ACTOR_KEY } from './artifacts.js';
+import { saveRunSnapshot } from './snapshots.js';
 import {
   type LearningAgentId,
   type RunEvent,
@@ -43,6 +45,8 @@ export interface StudyRunRow {
   riskLevel: string;
   cancelRequested: boolean;
   finalAssetId: string | null;
+  /** 检索后策略修正结果（升级计划 §4.7），未修正时为 null */
+  verificationPolicy: Record<string, unknown> | null;
   createdAt: number;
   startedAt: number | null;
   finishedAt: number | null;
@@ -53,9 +57,11 @@ export interface StudyRunNodeRow {
   runId: string;
   nodeKey: RunNodeKey;
   role: LearningAgentId;
+  actorKey: string | null;
   attempt: number;
   status: 'pending' | 'running' | 'succeeded' | 'failed' | 'skipped' | 'cancelled';
   mandatory: boolean;
+  primaryArtifactId: string | null;
   startedAt: number | null;
   finishedAt: number | null;
   resultSummary: string | null;
@@ -74,6 +80,7 @@ function rowToRun(row: typeof studyRuns.$inferSelect): StudyRunRow {
     riskLevel: row.riskLevel,
     cancelRequested: row.cancelRequested,
     finalAssetId: row.finalAssetId,
+    verificationPolicy: (row.verificationPolicyJson as Record<string, unknown> | null) ?? null,
     createdAt: row.createdAt,
     startedAt: row.startedAt,
     finishedAt: row.finishedAt,
@@ -86,9 +93,11 @@ function rowToNode(row: typeof studyRunNodes.$inferSelect): StudyRunNodeRow {
     runId: row.runId,
     nodeKey: row.nodeKey as RunNodeKey,
     role: row.role as LearningAgentId,
+    actorKey: row.actorKey,
     attempt: row.attempt,
     status: row.status as StudyRunNodeRow['status'],
     mandatory: row.mandatory,
+    primaryArtifactId: row.primaryArtifactId,
     startedAt: row.startedAt,
     finishedAt: row.finishedAt,
     resultSummary: row.resultSummary,
@@ -123,11 +132,21 @@ export async function createStudyRun(input: {
       runId: input.runId,
       nodeKey: node.key,
       role: node.role,
+      actorKey: NODE_ACTOR_KEY[node.key],
       attempt: 1,
       status: 'pending' as const,
       mandatory: node.mandatory,
     })));
   }
+  // VACP（升级计划 G7）：run_start 学情快照立即固化，导出初稿画像取自这里
+  const snapshot = await saveRunSnapshot({
+    runId: input.runId,
+    learnerId: input.learnerId,
+    snapshotType: 'run_start',
+    pathNodeId: input.request.pathNodeId,
+  });
+  await db().db.update(studyRuns).set({ startSnapshotId: snapshot.id })
+    .where(eq(studyRuns.id, input.runId));
   return (await getRunById(input.runId))!;
 }
 
@@ -204,6 +223,16 @@ export async function finishRun(runId: string, status: Extract<RunStatus, 'succe
 
 export async function setRunRevisionRound(runId: string, round: number): Promise<void> {
   await db().db.update(studyRuns).set({ revisionRound: round }).where(eq(studyRuns.id, runId));
+}
+
+/** 检索后策略修正（升级计划 §4.7）：写入 verification_policy_json */
+export async function setRunVerificationPolicy(runId: string, policy: Record<string, unknown>): Promise<void> {
+  await db().db.update(studyRuns).set({ verificationPolicyJson: policy }).where(eq(studyRuns.id, runId));
+}
+
+/** 发布收尾时固化全部 artifact 散列清单（升级计划 §5.1 execution manifest） */
+export async function setRunExecutionManifestHash(runId: string, manifestHash: string): Promise<void> {
+  await db().db.update(studyRuns).set({ executionManifestHash: manifestHash }).where(eq(studyRuns.id, runId));
 }
 
 /** jsonb 顶层键原子合并；并行节点写不同顶层键即可避免覆盖 */

@@ -413,13 +413,20 @@ export const studyRuns = pgTable('study_runs', {
   idempotencyKey: text('idempotency_key'),
   requestJson: jsonb('request_json').notNull(),
   planJson: jsonb('plan_json').notNull(),
-  /** 节点间传递的中间产物（证据摘要、生成草稿、审核结果），支持 Worker 重启后恢复 */
+  /** 节点间传递的执行缓存（证据摘要、生成草稿、审核结果），仅用于恢复执行；
+   * 不可变审计记录以 collaboration_artifacts 为唯一来源（升级计划 §4.1） */
   contextJson: jsonb('context_json'),
   status: text('status').notNull().default('queued'),
   revisionRound: integer('revision_round').notNull().default(0),
   riskLevel: text('risk_level').notNull().default('low'),
   cancelRequested: boolean('cancel_requested').notNull().default(false),
   finalAssetId: text('final_asset_id'),
+  /** 运行开始时的学情快照（VACP：导出初稿画像必须取自运行起点，升级计划 G7） */
+  startSnapshotId: text('start_snapshot_id'),
+  /** 检索后策略修正（升级计划 §4.7）：deriveVerificationPolicy 输出 */
+  verificationPolicyJson: jsonb('verification_policy_json'),
+  /** 全部 artifact 内容散列的执行清单（离线完整性校验依据） */
+  executionManifestHash: text('execution_manifest_hash'),
   createdAt: ms('created_at').notNull(),
   startedAt: ms('started_at'),
   finishedAt: ms('finished_at'),
@@ -433,9 +440,13 @@ export const studyRunNodes = pgTable('study_run_nodes', {
   runId: text('run_id').notNull(),
   nodeKey: text('node_key').notNull(),
   role: text('role').notNull(),
+  /** VACP 执行者键：区分真实工作职责（升级计划 §4.3），历史行可为空 */
+  actorKey: text('actor_key'),
   attempt: integer('attempt').notNull().default(1),
   status: text('status').notNull().default('pending'),
   mandatory: boolean('mandatory').notNull().default(false),
+  /** 该节点成功前的主产物引用（collaboration_artifacts.id） */
+  primaryArtifactId: text('primary_artifact_id'),
   startedAt: ms('started_at'),
   finishedAt: ms('finished_at'),
   resultSummary: text('result_summary'),
@@ -500,12 +511,26 @@ export const claims = pgTable('claims', {
   id: text('id').primaryKey(),
   resourceId: text('resource_id').notNull(),
   learnerId: text('learner_id'),
+  /** 所属运行与修订轮次（升级计划 G2：按 attempt 区分初稿/修订稿 Claim） */
+  runId: text('run_id'),
+  attempt: integer('attempt'),
+  /** 生成该轮 Claim 的草稿产物（collaboration_artifacts.id） */
+  draftArtifactId: text('draft_artifact_id'),
+  /** Claim 类型：数值/字段含义/方法步骤/因果判断/风险建议/非事实教学表达 */
+  claimType: text('claim_type'),
+  /** 同一逻辑声明跨修订轮的稳定键 */
+  logicalKey: text('logical_key'),
+  /** 本轮修订取代的前一轮 Claim */
+  supersedesClaimId: text('supersedes_claim_id'),
   text: text('text').notNull(),
   verdict: text('verdict').notNull(),
   critique: text('critique').notNull().default(''),
   factualScore: doublePrecision('factual_score').notNull().default(0),
   createdAt: ms('created_at').notNull(),
-}, (t) => [index('idx_claims_resource').on(t.resourceId)]);
+}, (t) => [
+  index('idx_claims_resource').on(t.resourceId),
+  index('idx_claims_run_attempt').on(t.runId, t.attempt),
+]);
 
 export const claimEvidence = pgTable('claim_evidence', {
   claimId: text('claim_id').notNull(),
@@ -526,7 +551,7 @@ export const debateIssues = pgTable('debate_issues', {
   status: text('status').notNull().default('raised'),
   createdAt: ms('created_at').notNull(),
 }, (t) => [
-  check('ck_debate_issue_type', sql`${t.issueType} in ('no_evidence','conflict','out_of_scope_causality','difficulty_mismatch')`),
+  check('ck_debate_issue_type', sql`${t.issueType} in ('no_evidence','conflict','out_of_scope_causality','difficulty_mismatch','counterevidence_request')`),
   check('ck_debate_issue_status', sql`${t.status} in ('raised','accepted','rejected','resolved')`),
   index('idx_debate_issues_run').on(t.runId),
 ]);
@@ -544,6 +569,83 @@ export const auditDecisions = pgTable('audit_decisions', {
 }, (t) => [
   check('ck_audit_verdict', sql`${t.verdict} in ('supported','partial','conflict','unsupported')`),
   index('idx_audit_decisions_run').on(t.runId, t.round),
+]);
+
+/* ------------------------------------------------------------------ */
+/* 8b. VACP 可验证协同协议（升级计划 §4.1、§5.1）                          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 不可变协同产物：每个节点成功前先持久化主产物，修订轮产生新产物不覆盖旧产物。
+ * context_json 只作执行缓存；审计、回放与离线校验以本表为唯一来源。
+ */
+export const collaborationArtifacts = pgTable('collaboration_artifacts', {
+  id: text('id').primaryKey(),
+  runId: text('run_id').notNull(),
+  learnerId: text('learner_id').notNull(),
+  nodeKey: text('node_key').notNull(),
+  actorKey: text('actor_key').notNull(),
+  attempt: integer('attempt').notNull().default(1),
+  artifactType: text('artifact_type').notNull(),
+  inputRefsJson: jsonb('input_refs_json').notNull().default([]),
+  payloadJson: jsonb('payload_json').notNull(),
+  publicRationaleJson: jsonb('public_rationale_json').notNull(),
+  producerJson: jsonb('producer_json').notNull(),
+  contentHash: text('content_hash').notNull(),
+  createdAt: ms('created_at').notNull(),
+}, (t) => [
+  unique('uq_artifact_node_attempt').on(t.runId, t.nodeKey, t.attempt, t.artifactType, t.actorKey),
+  index('idx_artifacts_run').on(t.runId, t.attempt, t.createdAt),
+  index('idx_artifacts_learner').on(t.learnerId),
+  check('ck_artifact_type', sql`${t.artifactType} in
+    ('learner_snapshot','design_constraints','evidence_set','domain_brief','resource_draft',
+     'claim_audit','challenge_set','adjudication','privacy_decision','publication_decision','learning_decision')`),
+]);
+
+/**
+ * 学情状态快照：run_start（创建时）、generation_end（生成收尾）、feedback_update（反馈后）。
+ * 导出的 initialLearnerState 必须取自 run_start 快照，不得导出时现查（升级计划 G7）。
+ */
+export const runStateSnapshots = pgTable('run_state_snapshots', {
+  id: text('id').primaryKey(),
+  runId: text('run_id').notNull(),
+  learnerId: text('learner_id').notNull(),
+  snapshotType: text('snapshot_type').notNull(),
+  pathNodeId: text('path_node_id'),
+  skillStatesJson: jsonb('skill_states_json').notNull(),
+  profileSummaryJson: jsonb('profile_summary_json').notNull(),
+  sourceEventId: text('source_event_id'),
+  contentHash: text('content_hash').notNull(),
+  createdAt: ms('created_at').notNull(),
+}, (t) => [
+  unique('uq_snapshot_run_type').on(t.runId, t.snapshotType),
+  index('idx_snapshots_learner').on(t.learnerId, t.createdAt),
+  check('ck_snapshot_type', sql`${t.snapshotType} in ('run_start','generation_end','feedback_update')`),
+]);
+
+/**
+ * 反馈驱动的持久化学习决策（升级计划 里程碑 E / G12）：
+ * 每次作答/反馈后的下一步动作，可追溯到触发事件、输入快照与 BKT 前后值。
+ */
+export const learningDecisions = pgTable('learning_decisions', {
+  id: text('id').primaryKey(),
+  learnerId: text('learner_id').notNull(),
+  runId: text('run_id'),
+  assetId: text('asset_id'),
+  knowledgePointId: text('knowledge_point_id').notNull(),
+  /** quiz_attempt | asset_feedback | guidance_session */
+  triggerType: text('trigger_type').notNull(),
+  /** 输入学情快照（run_state_snapshots.feedback_update） */
+  inputSnapshotId: text('input_snapshot_id'),
+  /** remediate | continue | advance | collect_more_evidence */
+  decision: text('decision').notNull(),
+  recommendedResourceType: text('recommended_resource_type'),
+  rationaleJson: jsonb('rationale_json').notNull(),
+  createdAt: ms('created_at').notNull(),
+}, (t) => [
+  check('ck_decision_kind', sql`${t.decision} in ('remediate','continue','advance','collect_more_evidence')`),
+  index('idx_decisions_learner').on(t.learnerId, t.createdAt),
+  index('idx_decisions_kp').on(t.learnerId, t.knowledgePointId, t.createdAt),
 ]);
 
 /* ------------------------------------------------------------------ */

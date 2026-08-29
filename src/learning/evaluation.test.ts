@@ -4,6 +4,7 @@ import {
   buildEvaluationCases,
   coverageRate,
   difficultyMatches,
+  draftFinalHallucinationRates,
   hallucinationRate,
 } from './evaluation.js';
 import { calibrateDifficulty } from './difficulty.js';
@@ -46,11 +47,29 @@ describe('evaluation（docs/挑战杯技术开发总规.md §8.2）', () => {
     }
   });
 
-  it('覆盖率与幻觉率指标计算正确', () => {
+  it('覆盖率与幻觉率指标计算正确（升级计划 §F 官方口径）', () => {
     expect(coverageRate(['a', 'b'], ['a', 'b', 'c'])).toBeCloseTo(2 / 3);
     expect(coverageRate([], ['a'])).toBe(0);
     expect(coverageRate(['x'], [])).toBe(1);
     expect(hallucinationRate([{ verdict: 'supported' }, { verdict: 'unsupported' }])).toBeCloseTo(0.5);
-    expect(hallucinationRate([{ verdict: 'review' }])).toBeNull(); // 无可审计声明
+    // 官方口径：可审计事实 Claim 全部进分母（review 是待核验的事实声明，不是非事实）
+    expect(hallucinationRate([{ verdict: 'review' }])).toBe(0);
+    expect(hallucinationRate([{ verdict: 'review' }, { verdict: 'unsupported' }])).toBeCloseTo(0.5);
+    // 空分母 → N/A（null），不得当作 0
+    expect(hallucinationRate([])).toBeNull();
+    // non_factual 教学表达不入分母
+    expect(hallucinationRate([{ verdict: 'supported', claimType: 'non_factual' }])).toBeNull();
+    expect(hallucinationRate([
+      { verdict: 'unsupported', claimType: 'numeric' },
+      { verdict: 'supported', claimType: 'non_factual' },
+    ])).toBe(1);
+    // 初稿/终稿对照与门禁净增益（修 G10）
+    expect(draftFinalHallucinationRates([
+      { attempt: 1, verdict: 'unsupported', claimType: 'numeric' },
+      { attempt: 1, verdict: 'supported', claimType: 'numeric' },
+      { attempt: 2, verdict: 'supported', claimType: 'numeric' },
+      { attempt: 2, verdict: 'supported', claimType: 'numeric' },
+    ])).toEqual({ draft: 0.5, final: 0, gain: 0.5 });
+    expect(draftFinalHallucinationRates([])).toEqual({ draft: null, final: null, gain: null });
   });
 });

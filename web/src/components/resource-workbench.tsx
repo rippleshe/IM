@@ -119,9 +119,30 @@ type ResourceWorkbenchProps = {
   apiBase: string;
   user: AuthenticatedUser;
   onLogout: () => void;
-  onNavigate: (view: "path" | "study" | "resources") => void;
+  onNavigate: (view: "path" | "study" | "resources" | "validation") => void;
   onUserChange?: (user: AuthenticatedUser) => void;
 };
+
+/** 里程碑 G（资源页小改）：从产物化资源 ID 解析来源运行（study-<runId>-<attempt>） */
+function runIdOfAsset(assetId: string): string | null {
+  if (!assetId.startsWith("study-study-run-")) return null;
+  const rest = assetId.slice("study-".length);
+  const lastDash = rest.lastIndexOf("-");
+  return lastDash > 0 ? rest.slice(0, lastDash) : null;
+}
+
+/** 可信溯源条：由哪次 run 生成、通过何种裁决、难度为何匹配；可跳转验证页 */
+function ProvenanceStrip({ asset, onOpenValidation }: { asset: ResourceAsset; onOpenValidation: (runId: string) => void }) {
+  const runId = runIdOfAsset(asset.id);
+  return <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b bg-muted/20 px-5 py-2 text-[11px]">
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+      <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] text-emerald-700">{asset.auditStatus === "passed" ? "门禁通过入库" : "未通过门禁"}</span>
+      <span className="text-muted-foreground">难度 {asset.difficulty.toFixed(2)}（按掌握度校准）</span>
+      {runId ? <span className="font-mono text-[10px] text-muted-foreground">{runId}</span> : <span className="text-[10px] text-muted-foreground">历史资源</span>}
+    </div>
+    {runId ? <button type="button" onClick={() => onOpenValidation(runId)} className="rounded-lg border px-2.5 py-1 text-[11px] font-medium hover:bg-muted">查看验证记录</button> : null}
+  </div>;
+}
 
 export function ResourceWorkbench({ apiBase, user, onLogout, onNavigate, onUserChange }: ResourceWorkbenchProps) {
   const [assets, setAssets] = useState<ResourceAsset[]>([]);
@@ -202,7 +223,7 @@ export function ResourceWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
   return <main className={`flex h-screen min-h-0 flex-col overflow-hidden bg-background ${resizing ? "select-none" : ""}`}>
     <header className="flex h-16 shrink-0 items-center justify-between border-b px-5 sm:px-7">
       <div className="flex items-center gap-2.5"><AvatarBubble user={user} size="h-9 w-9 text-xs" /><span><span className="block text-sm font-semibold tracking-tight">IM-Training-Agent</span><span className="block text-[11px] text-muted-foreground">{user.displayName}</span></span></div>
-      <nav aria-label="学习空间" className="flex items-center rounded-lg border bg-muted/40 p-1 text-sm"><button type="button" onClick={() => setSettingsOpen(true)} className="rounded-md px-3 py-1.5 text-muted-foreground hover:text-foreground">设置</button><button type="button" onClick={() => setProfileOpen(true)} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">画像</button><button type="button" onClick={() => onNavigate("path")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">路径</button><button type="button" onClick={() => onNavigate("study")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">学习</button><button type="button" className="rounded-md bg-background px-4 py-1.5 font-medium shadow-sm">资源</button></nav>
+      <nav aria-label="学习空间" className="flex items-center rounded-lg border bg-muted/40 p-1 text-sm"><button type="button" onClick={() => setSettingsOpen(true)} className="rounded-md px-3 py-1.5 text-muted-foreground hover:text-foreground">设置</button><button type="button" onClick={() => setProfileOpen(true)} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">画像</button><button type="button" onClick={() => onNavigate("path")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">路径</button><button type="button" onClick={() => onNavigate("study")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">学习</button><button type="button" className="rounded-md bg-background px-4 py-1.5 font-medium shadow-sm">资源</button><button type="button" onClick={() => onNavigate("validation")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">验证</button></nav>
       <button type="button" onClick={logout} className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-2 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"><LogOut className="h-3.5 w-3.5" />退出</button>
     </header>
 
@@ -217,6 +238,10 @@ export function ResourceWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
 
       <section className="flex min-w-[460px] flex-1 flex-col overflow-hidden bg-card" aria-label="资源阅读与作答">
         {notice ? <div className="shrink-0 border-b border-destructive/20 bg-destructive/5 px-5 py-2 text-xs text-destructive">{notice}</div> : null}
+        {selectedAsset ? <ProvenanceStrip asset={selectedAsset} onOpenValidation={(runId) => {
+          try { window.localStorage.setItem("im-training-agent:validation-prefill", JSON.stringify({ runId })); } catch { /* 忽略 */ }
+          onNavigate("validation");
+        }} /> : null}
         {reader?.asset.type === "lecture" ? <LectureReader reader={reader} onExport={exportAsset} /> : reader?.asset.type === "tiered_quiz" ? <QuizReader apiBase={apiBase} reader={reader} onReaderChange={setReader} /> : reader ? <GenericReader apiBase={apiBase} reader={reader} onReaderChange={setReader} onExport={exportAsset} /> : loading ? <div className="flex h-full items-center justify-center text-sm text-muted-foreground">正在读取资源</div> : <EmptyReader label={typeLabel(activeType)} />}
       </section>
 

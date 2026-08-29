@@ -6,10 +6,11 @@ import { DiagnosticFlow } from "@/components/diagnostic-flow";
 import { LearningPathWorkbench } from "@/components/learning-path-workbench";
 import { LearningWorkbench } from "@/components/learning-workbench";
 import { ResourceWorkbench } from "@/components/resource-workbench";
+import { ValidationWorkbench } from "@/components/validation-workbench";
 
 const API_BASE = "http://localhost:3001";
 
-type LearningView = "path" | "study" | "resources";
+type LearningView = "path" | "study" | "resources" | "validation";
 
 export default function LearningApp() {
   const [user, setUser] = useState<AuthenticatedUser | null>(null);
@@ -53,5 +54,6 @@ export default function LearningApp() {
 
   if (view === "study") return <LearningWorkbench {...sharedProps} />;
   if (view === "resources") return <ResourceWorkbench {...sharedProps} />;
+  if (view === "validation") return <ValidationWorkbench {...sharedProps} />;
   return <LearningPathWorkbench {...sharedProps} />;
 }

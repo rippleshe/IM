@@ -44,6 +44,7 @@ import { importMetroPt3Csv } from '../src/learning/metropt3.js';
 import { importMetroPt3CsvPg } from './db/pg-evidence.js';
 import { fallbackPathGraph, generateInitialPathGraph } from './initial-path.js';
 import { dataSource, evidenceService, learningStore, identityStore, datasetDb } from './study-context.js';
+import { assetAttemptStats, latestBktUpdate, listDecisions, prereqGapFor, recordLearningDecision } from './decision-service.js';
 import { getLearningDatabase } from './db/client.js';
 import { generateProfileSnapshot } from './profile-snapshot.js';
 import { buildProfileInsights } from './profile-insights.js';
@@ -516,7 +517,41 @@ app.post('/api/learning/assets/:assetId/feedback', async (req, res) => {
     userRating: typeof req.body?.userRating === 'number' ? req.body.userRating : undefined,
     note: typeof req.body?.note === 'string' ? req.body.note : undefined,
   });
+  // 里程碑 E（G12）：掌握/难度反馈 → 持久化下一步学习决策
+  const asset = await learningStore.getAsset(learner.id, req.params.assetId);
+  const knowledgePointId = asset?.knowledgePointIds?.[0] ?? '';
+  const masteryLevel = ['high', 'medium', 'low'].includes(req.body?.masteryLevel) ? req.body.masteryLevel as 'high' | 'medium' | 'low' : null;
+  if (knowledgePointId && masteryLevel) {
+    const state = await learningStore.getSkillState(learner.id, knowledgePointId);
+    if (dataSource === 'postgres') {
+      await recordLearningDecision({
+        learnerId: learner.id,
+        knowledgePointId,
+        triggerType: 'asset_feedback',
+        assetId: req.params.assetId,
+        bktBefore: { pMastery: state?.pMastery ?? 0.15, confidence: state?.confidence ?? 0.1 },
+        bktAfter: { pMastery: state?.pMastery ?? 0.15, confidence: state?.confidence ?? 0.1 },
+        masteryFeedback: masteryLevel,
+        difficultyRating: typeof req.body?.difficultyRating === 'number' ? req.body.difficultyRating : null,
+        resourceDifficulty: asset?.difficulty ?? null,
+        expectedSuccessRate: asset?.difficultyCalibration?.expectedSuccessRate ?? null,
+        prereqGap: await prereqGapFor(learner.id, knowledgePointId),
+      });
+    }
+  }
   res.json({ success: true, profile: await learningStore.getProfile(learner.id) });
+});
+
+/** 里程碑 E：最近反馈驱动的下一步学习决策（只返回本 learner） */
+app.get('/api/learning/decisions', async (req, res) => {
+  const learner = await requireLearner(req, res);
+  if (!learner) return;
+  if (dataSource !== 'postgres') {
+    res.json({ success: true, decisions: [] });
+    return;
+  }
+  const limit = Number.parseInt(String(req.query['limit'] ?? ''), 10);
+  res.json({ success: true, decisions: await listDecisions(learner.id, Number.isFinite(limit) ? Math.min(Math.max(limit, 1), 50) : 20) });
 });
 
 app.get('/api/learning/assets/:assetId/reader', async (req, res) => {
@@ -560,6 +595,33 @@ app.post('/api/learning/assets/:assetId/quiz-attempts', async (req, res) => {
   }
   try {
     const result = await learningStore.submitQuizAttempt(learner.id, req.params.assetId, questionId, answerId, durationMs);
+    // 里程碑 E（G12）：作答 → BKT 前后值 → 持久化下一步学习决策
+    if (dataSource === 'postgres') {
+      const knowledgePointId = result.question && 'knowledgePointId' in result.question
+        ? String((result.question as { knowledgePointId?: unknown }).knowledgePointId ?? '')
+        : '';
+      const asset = await learningStore.getAsset(learner.id, req.params.assetId);
+      const kp = knowledgePointId || asset?.knowledgePointIds?.[0] || 'industrial-diagnosis-foundation';
+      const [bktUpdate, stats] = await Promise.all([
+        latestBktUpdate(learner.id, kp),
+        assetAttemptStats(learner.id, req.params.assetId),
+      ]);
+      const state = await learningStore.getSkillState(learner.id, kp);
+      await recordLearningDecision({
+        learnerId: learner.id,
+        knowledgePointId: kp,
+        triggerType: 'quiz_attempt',
+        assetId: req.params.assetId,
+        bktBefore: bktUpdate?.before ?? { pMastery: state?.pMastery ?? 0.15, confidence: state?.confidence ?? 0.1 },
+        bktAfter: bktUpdate?.after ?? { pMastery: state?.pMastery ?? 0.15, confidence: state?.confidence ?? 0.1 },
+        attemptCount: stats.attemptCount,
+        correctCount: stats.correctCount,
+        difficultyRating: null,
+        resourceDifficulty: asset?.difficulty ?? null,
+        expectedSuccessRate: asset?.difficultyCalibration?.expectedSuccessRate ?? null,
+        prereqGap: await prereqGapFor(learner.id, kp),
+      });
+    }
     res.json({ success: true, ...result, profile: await learningStore.getProfile(learner.id) });
   } catch (error) {
     res.status(400).json({ success: false, error: error instanceof Error ? error.message : '提交答案失败' });

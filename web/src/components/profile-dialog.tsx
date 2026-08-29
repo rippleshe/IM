@@ -69,6 +69,17 @@ export function AvatarBubble({ user, size = "h-14 w-14 text-base" }: { user: Aut
   return <span className={`${size} ${AVATAR_FALLBACK[user.avatarKey]} flex shrink-0 items-center justify-center rounded-full font-semibold`}>{user.displayName.slice(0, 1).toUpperCase()}</span>;
 }
 
+type LearningDecisionSummary = {
+  id: string;
+  knowledgePointId: string;
+  triggerType: string;
+  decision: string;
+  recommendedResourceType: string | null;
+  recommendationLevel: string;
+  rationale: { observations?: string[]; reasons?: string[]; bktBefore?: { pMastery: number; confidence: number }; bktAfter?: { pMastery: number; confidence: number } };
+  createdAt: number;
+};
+
 /** 学习画像弹窗：三页顶栏共用。展示画像描述/关键词/能力雷达/学习指标，支持上传与移除自定义头像。 */
 export function ProfileDialog({ apiBase, user, headerRight, extraMetrics = [], onUserChange, onClose }: ProfileDialogProps) {
   const [profile, setProfile] = useState<LearningProfile | null>(null);
@@ -76,8 +87,8 @@ export function ProfileDialog({ apiBase, user, headerRight, extraMetrics = [], o
   const [regenerating, setRegenerating] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [notice, setNotice] = useState("");
+  const [recentChange, setRecentChange] = useState<LearningDecisionSummary | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-
   useEffect(() => {
     let active = true;
     fetch(`${apiBase}/api/learning/profile`, { credentials: "include" })
@@ -85,6 +96,11 @@ export function ProfileDialog({ apiBase, user, headerRight, extraMetrics = [], o
       .then((data) => { if (active && data.success && data.profile) setProfile(data.profile); })
       .catch(() => undefined)
       .finally(() => { if (active) setLoading(false); });
+    // 里程碑 G：最近一次状态变化（BKT before/after + 触发来源）
+    fetch(`${apiBase}/api/learning/decisions?limit=1`, { credentials: "include" })
+      .then((response) => response.json() as Promise<{ decisions?: LearningDecisionSummary[] }>)
+      .then((data) => { if (active) setRecentChange(data.decisions?.[0] ?? null); })
+      .catch(() => undefined);
     return () => { active = false; };
   }, [apiBase]);
 
@@ -223,6 +239,25 @@ export function ProfileDialog({ apiBase, user, headerRight, extraMetrics = [], o
                   <span className="w-24 shrink-0 text-right text-[10px] text-muted-foreground">掌握 {Math.round(point.pMastery * 100)}% · 先修 {Math.round(point.prereqReadiness * 100)}%</span>
                 </div>
               </div>)}
+            </div>
+            <p className="mt-1.5 text-[10px] leading-4 text-muted-foreground">难度与预计成功率为模型预测值；实际正确率以作答记录为准（下方知识盲区与掌握度来自真实作答）。</p>
+          </div>
+        )}
+
+        {recentChange && (
+          <div className="mt-5">
+            <div className="text-xs font-medium text-muted-foreground">最近一次状态变化（反馈驱动，可追溯）</div>
+            <div className="mt-2 rounded-xl border p-3 text-xs">
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-semibold">{recentChange.triggerType === "quiz_attempt" ? "习题作答" : recentChange.triggerType === "asset_feedback" ? "资源掌握反馈" : "启发式追问"}</span>
+                <span className="text-[10px] text-muted-foreground">{new Intl.DateTimeFormat("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).format(recentChange.createdAt)}</span>
+              </div>
+              {recentChange.rationale?.bktBefore && recentChange.rationale?.bktAfter ? <p className="mt-1.5 leading-5 text-muted-foreground">
+                掌握概率 {recentChange.rationale.bktBefore.pMastery.toFixed(2)} → {recentChange.rationale.bktAfter.pMastery.toFixed(2)}
+                · 置信度 {recentChange.rationale.bktBefore.confidence.toFixed(2)} → {recentChange.rationale.bktAfter.confidence.toFixed(2)}
+              </p> : null}
+              {recentChange.rationale?.reasons?.length ? <p className="mt-1 leading-5 text-muted-foreground">{recentChange.rationale.reasons.join("；")}</p> : null}
+              <p className="mt-1.5">下一步：{recentChange.decision === "remediate" ? "补强学习" : recentChange.decision === "advance" ? "进阶挑战" : recentChange.decision === "continue" ? "同级继续" : "先追问澄清"}</p>
             </div>
           </div>
         )}

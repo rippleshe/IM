@@ -167,10 +167,26 @@ export function coverageRate(supportedKnowledgePoints: Iterable<string>, require
   return hit / requiredSet.size;
 }
 
-/** 幻觉率：无证据支持的事实声明 / 可审计事实声明（总规 §8.2，阈值 <5%） */
-export function hallucinationRate(claims: Array<{ verdict: string }>): number | null {
-  const auditable = claims.filter((claim) => claim.verdict !== 'review').length;
-  if (auditable === 0) return null;
-  const unsupported = claims.filter((claim) => claim.verdict === 'unsupported').length;
-  return unsupported / auditable;
+/**
+ * 幻觉率（升级计划 §F 官方口径）：unsupported 事实声明 / 可审计事实声明。
+ * non_factual 教学表达不入分母；空分母返回 null（N/A），不能当作 0。
+ */
+export function hallucinationRate(claims: Array<{ verdict: string; claimType?: string | null }>): number | null {
+  const auditable = claims.filter((claim) => (claim.claimType ?? 'risk_advice') !== 'non_factual');
+  if (auditable.length === 0) return null;
+  const unsupported = auditable.filter((claim) => claim.verdict === 'unsupported').length;
+  return Math.round((unsupported / auditable.length) * 1000) / 1000;
+}
+
+/** 初稿幻觉率（attempt 1）与终稿幻觉率（最大 attempt）对照；无轮次数据时如实返回 null */
+export function draftFinalHallucinationRates(
+  claims: Array<{ attempt?: number | null; verdict: string; claimType?: string | null }>,
+): { draft: number | null; final: number | null; gain: number | null } {
+  const attempts = [...new Set(claims.map((claim) => claim.attempt ?? 1))].sort((a, b) => a - b);
+  if (attempts.length === 0) return { draft: null, final: null, gain: null };
+  const rateAt = (attempt: number): number | null =>
+    hallucinationRate(claims.filter((claim) => (claim.attempt ?? 1) === attempt));
+  const draft = rateAt(attempts[0]!);
+  const final = rateAt(attempts.at(-1)!);
+  return { draft, final, gain: draft !== null && final !== null ? Math.round((draft - final) * 1000) / 1000 : null };
 }

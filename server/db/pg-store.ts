@@ -34,10 +34,12 @@ import {
   type LearningPathRevisionInput,
   type LearnerProfileView,
   type LearnerRadarItem,
+  type PathNodeRecommendation,
   type PrivacyAuditEventView,
   type QuizAttemptView,
   type QuizSubmissionResult,
 } from '../../src/learning/store.js';
+import { decisionToRecommendationLevel } from '../../src/learning/decision.js';
 import { bktUpdate, createBktState, type BktState } from '../../src/learning/bkt.js';
 import type { ClaimAuditRecord } from '../../src/learning/audit.js';
 import type { ResourceDocument } from '../../src/learning/types.js';
@@ -553,6 +555,7 @@ export class PgLearningStore {
   private async getRecommendationEvidence(learnerId: string): Promise<{
     skills: Map<string, { mastery: number; attemptCount: number; correctCount: number }>;
     feedbackLevels: Map<string, 'high' | 'medium' | 'low'>;
+    decisions: Map<string, { decision: string; level: string; reason: string; resourceType: string | null; createdAt: number }>;
   }> {
     const skillRows = (await this.pool.query(
       `SELECT knowledge_point_id AS "knowledgePointId", p_mastery AS "mastery", attempt_count AS "attemptCount", correct_count AS "correctCount"
@@ -581,18 +584,47 @@ export class PgLearningStore {
       const key = normalizeKnowledgePointId(firstKnowledgePointId);
       if (key && !feedbackLevels.has(key)) feedbackLevels.set(key, row.masteryLevel as 'high' | 'medium' | 'low');
     }
-    return { skills, feedbackLevels };
+    // 里程碑 E（G12）：路径节点建议优先读取最近的持久化决策，缺失时回退即时计算
+    const decisionRows = (await this.pool.query(
+      `SELECT DISTINCT ON (knowledge_point_id)
+         knowledge_point_id AS "knowledgePointId", decision, recommended_resource_type AS "resourceType",
+         rationale_json AS rationale, created_at AS "createdAt"
+       FROM learning_decisions WHERE learner_id = $1
+       ORDER BY knowledge_point_id, created_at DESC`, [learnerId],
+    )).rows as Array<{ knowledgePointId: string; decision: string; resourceType: string | null; rationale: { reasons?: string[] }; createdAt: number | string }>;
+    const decisions = new Map<string, { decision: string; level: string; reason: string; resourceType: string | null; createdAt: number }>();
+    for (const row of decisionRows) {
+      decisions.set(normalizeKnowledgePointId(row.knowledgePointId), {
+        decision: row.decision,
+        level: decisionToRecommendationLevel(row.decision as never),
+        reason: (row.rationale?.reasons ?? []).join('；') || '来自最近一次学习反馈决策',
+        resourceType: row.resourceType,
+        createdAt: Number(row.createdAt),
+      });
+    }
+    return { skills, feedbackLevels, decisions };
   }
 
   private recommendationForNode(
     node: { knowledgePointId: string },
-    evidence: { skills: Map<string, { mastery: number; attemptCount: number; correctCount: number }>; feedbackLevels: Map<string, 'high' | 'medium' | 'low'> },
+    evidence: {
+      skills: Map<string, { mastery: number; attemptCount: number; correctCount: number }>;
+      feedbackLevels: Map<string, 'high' | 'medium' | 'low'>;
+      decisions: Map<string, { decision: string; level: string; reason: string; resourceType: string | null; createdAt: number }>;
+    },
   ) {
     const key = normalizeKnowledgePointId(node.knowledgePointId);
-    return computeNodeRecommendation({
+    const persisted = evidence.decisions.get(key);
+    const computed = computeNodeRecommendation({
       skill: evidence.skills.get(key) ?? null,
       feedbackLevel: evidence.feedbackLevels.get(key) ?? null,
     });
+    if (!persisted) return computed;
+    return {
+      ...computed,
+      level: persisted.level as PathNodeRecommendation['level'],
+      reason: `${persisted.reason}（${computed.reason}）`.slice(0, 240),
+    };
   }
 
   async applyPathRevision(learnerId: string, revision: LearningPathRevisionInput): Promise<{ path: LearningPathGraphView; changed: boolean }> {

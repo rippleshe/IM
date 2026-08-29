@@ -72,7 +72,10 @@
     "worker": "tsx server/worker.ts",
     "start": "node dist/server.js",
     "db:bootstrap": "tsx scripts/db-bootstrap.ts",
-    "ablation": "tsx scripts/ablation.ts"
+    "ablation": "tsx scripts/ablation.ts",
+    "verify:export": "tsx scripts/verify-run-export.ts",
+    "replay:run": "tsx scripts/replay-run.ts",
+    "gold:export": "tsx scripts/export-gold-labels.ts"
   },
   "keywords": [
     "multi-agent",

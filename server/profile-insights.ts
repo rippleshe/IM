@@ -166,3 +166,159 @@ export async function buildProfileInsights(learnerId: string): Promise<ProfileIn
 
   return { blindSpots, difficultyCurve, resourceMatch, latestDiagnostic };
 }
+
+/* --------------------- 运行前学情信号（升级计划 §4.7 两阶段决策第一阶段） --------------------- */
+
+export interface RunLearnerSignals {
+  /** 画像不确定度 = 1 - 目标知识点与先修点加权平均 confidence（不再用"有没有历史"估算） */
+  profileUncertainty: number;
+  /** 知识风险 = 0.5×近期错误率 + 0.3×先修缺口 + 0.2×掌握不确定性 */
+  knowledgeRisk: number;
+  weightedConfidence: number;
+  recentErrorRate: number;
+  prereqGap: number;
+  masteryUncertainty: number;
+  hasAnswerHistory: boolean;
+  /** 信号来源（公开依据，写入 design_constraints artifact 的 basisRefs） */
+  basis: string[];
+}
+
+interface SignalSkillState {
+  pMastery: number;
+  confidence: number;
+  attemptCount: number;
+  correctCount: number;
+}
+
+/**
+ * 学情信号纯函数：输入目标知识点状态、先修状态与画像正确率，输出可解释信号。
+ * 全部数值可回溯到 learner_skill_states / bkt_updates。
+ */
+export function computeRunLearnerSignals(input: {
+  profileAccuracy: number | null;
+  hasStudyHistory: boolean;
+  targetState: SignalSkillState | null;
+  prereqStates: SignalSkillState[];
+  prereqTotal: number;
+}): RunLearnerSignals {
+  const targetConfidence = input.targetState?.confidence ?? 0.1;
+  const prereqConfidence = input.prereqStates.length > 0
+    ? input.prereqStates.reduce((sum, state) => sum + state.confidence, 0) / input.prereqStates.length
+    : null;
+  // 先修点按整体权重 0.4 分摊，无先修时目标知识点权重全占
+  const weightedConfidence = prereqConfidence === null
+    ? targetConfidence
+    : 0.6 * targetConfidence + 0.4 * prereqConfidence;
+  const profileUncertainty = 1 - Math.min(1, Math.max(0, weightedConfidence));
+
+  const hasAnswerHistory = (input.targetState?.attemptCount ?? 0) > 0
+    || input.prereqStates.some((state) => state.attemptCount > 0)
+    || input.profileAccuracy !== null;
+  const targetAttempts = input.targetState?.attemptCount ?? 0;
+  const recentErrorRate = targetAttempts >= 3
+    ? 1 - (input.targetState!.correctCount / targetAttempts)
+    : input.profileAccuracy !== null
+      ? 1 - input.profileAccuracy
+      : 0.3;
+
+  const prereqGap = input.prereqTotal === 0
+    ? 0
+    : 1 - (input.prereqStates.filter((state) => state.pMastery >= 0.6).length / input.prereqTotal);
+  const masteryPool = [input.targetState, ...input.prereqStates].filter(Boolean) as SignalSkillState[];
+  const masteryUncertainty = masteryPool.length === 0
+    ? 0.5
+    : 1 - masteryPool.reduce((sum, state) => sum + state.pMastery, 0) / masteryPool.length;
+  const knowledgeRisk = Math.min(1, 0.5 * recentErrorRate + 0.3 * prereqGap + 0.2 * masteryUncertainty);
+
+  return {
+    profileUncertainty: Number(profileUncertainty.toFixed(3)),
+    knowledgeRisk: Number(knowledgeRisk.toFixed(3)),
+    weightedConfidence: Number(weightedConfidence.toFixed(3)),
+    recentErrorRate: Number(recentErrorRate.toFixed(3)),
+    prereqGap: Number(prereqGap.toFixed(3)),
+    masteryUncertainty: Number(masteryUncertainty.toFixed(3)),
+    hasAnswerHistory,
+    basis: [],
+  };
+}
+
+/** 从路径图计算目标节点的先修闭包（沿前置边向上 BFS，深度上限 4） */
+export function prereqClosureOf(
+  graph: { nodes: Array<{ id: string; knowledgePointId: string }>; edges: Array<{ fromNodeId: string; toNodeId: string; relation: string }> },
+  pathNodeId: string,
+): { nodeIds: string[]; knowledgePointIds: string[] } {
+  const byId = new Map(graph.nodes.map((node) => [node.id, node]));
+  const prereqParents = new Map<string, string[]>();
+  for (const edge of graph.edges) {
+    if (/prereq|before|先行|前置/i.test(edge.relation)) {
+      prereqParents.set(edge.toNodeId, [...(prereqParents.get(edge.toNodeId) ?? []), edge.fromNodeId]);
+    }
+  }
+  const visited = new Set<string>();
+  const queue: Array<{ id: string; depth: number }> = [{ id: pathNodeId, depth: 0 }];
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    if (current.depth >= 4) continue;
+    for (const parentId of prereqParents.get(current.id) ?? []) {
+      if (visited.has(parentId) || !byId.has(parentId)) continue;
+      visited.add(parentId);
+      queue.push({ id: parentId, depth: current.depth + 1 });
+    }
+  }
+  return {
+    nodeIds: [...visited],
+    knowledgePointIds: [...visited]
+      .map((id) => byId.get(id)?.knowledgePointId)
+      .filter((id): id is string => Boolean(id)),
+  };
+}
+
+/**
+ * 运行前学情信号（API 侧封装）：目标知识点 + 先修闭包的真实 BKT 状态。
+ * 替换旧版"有无学习历史"的粗粒度估算（升级计划 G5）。
+ */
+export async function computePlannerKnowledgeSignals(learnerId: string, pathNodeId: string | null): Promise<RunLearnerSignals & { targetKnowledgePointId: string | null; basis: string[] }> {
+  if (!pathNodeId) {
+    const skills = await learningStore.getSkillStates(learnerId);
+    const profile = await learningStore.getProfile(learnerId);
+    const signals = computeRunLearnerSignals({
+      profileAccuracy: profile.accuracy ?? null,
+      hasStudyHistory: profile.studyMinutes > 0 || profile.assetsCount > 0,
+      targetState: skills[0] ?? null,
+      prereqStates: [],
+      prereqTotal: 0,
+    });
+    return {
+      ...signals,
+      targetKnowledgePointId: skills[0]?.knowledgePointId ?? null,
+      basis: skills[0] ? [`skill:${skills[0].knowledgePointId}`] : ['skill:none'],
+    };
+  }
+  const [graph, skills, profile] = await Promise.all([
+    learningStore.getPathGraph(learnerId),
+    learningStore.getSkillStates(learnerId),
+    learningStore.getProfile(learnerId),
+  ]);
+  const targetNode = graph.nodes.find((node) => node.id === pathNodeId) ?? null;
+  const closure = targetNode
+    ? prereqClosureOf(graph, targetNode.id)
+    : { nodeIds: [], knowledgePointIds: [] };
+  const stateByKp = new Map(skills.map((state) => [state.knowledgePointId, state]));
+  const targetKp = targetNode?.knowledgePointId ?? null;
+  const targetState = targetKp ? stateByKp.get(targetKp) ?? null : null;
+  const prereqStates = closure.knowledgePointIds
+    .map((kp) => stateByKp.get(kp))
+    .filter((state): state is NonNullable<typeof state> => Boolean(state));
+  const signals = computeRunLearnerSignals({
+    profileAccuracy: profile.accuracy ?? null,
+    hasStudyHistory: profile.studyMinutes > 0 || profile.assetsCount > 0,
+    targetState,
+    prereqStates,
+    prereqTotal: closure.knowledgePointIds.length,
+  });
+  const basis = [
+    targetState ? `skill:${targetKp}` : `skill:${targetKp ?? 'none'}:missing`,
+    ...prereqStates.map((state) => `skill:${state.knowledgePointId}`),
+  ];
+  return { ...signals, targetKnowledgePointId: targetKp, basis };
+}

@@ -1,5 +1,105 @@
 # 阅读进度
 
+## 2026-08-30 提交材料按用户要求收敛：12 份 → 7 份
+
+- 对照赛题「作品提交形式」重新梳理必要集：材料文档（设计实现方案/作品介绍/视频）、软件模块（源代码/部署说明/单元测试用例）、测试数据（知识库切片 + 三画像数据包）。
+- 删除 6 份非必要文档（多智能体可信协同协议 / 幻觉治理与知识溯源说明 / 数据合规与隐私说明 / 领域迁移指南 / 用户使用手册 / 答辩问答准备），其内容压缩并入《作品设计实现方案》对应章节；《提交检查清单》并入 submission/README.md。
+- 重命名：部署与故障排查说明 → 部署说明；演示视频脚本与分镜 → 演示视频脚本。
+- 新增：单元测试说明.md（对应赛题"单元测试用例"要求，指向仓库内 23 文件/163 用例）、README.md（提交物 ↔ 仓库对应物映射 + 项目迭代后需刷新的提交物清单 + 精简核对）。
+- 升级计划文档中里程碑 H 的文档清单同步更新为 7 份；无孤儿引用。
+- 最终状态：typecheck 0 错、22 文件 / 163 测试全过。
+
+## 2026-08-29 里程碑 H 完成：比赛材料与提交包（+ 全计划收尾）
+
+- `docs/submission/` 12 份文档全部落盘：作品设计实现方案、作品介绍、多智能体可信协同协议（VACP）、幻觉治理与知识溯源说明、评测方案与结果报告、数据合规与隐私说明、部署与故障排查说明、用户使用手册、领域迁移指南、演示视频脚本与分镜、答辩问答准备、提交检查清单。
+- 三画像提交数据包重新生成（新协议口径）：foundation / advanced / maintenance 各一次真实运行并导出 `data/exports/{persona}-run-export.json`（374KB / 365KB / 455KB）；三包全部通过 `pnpm verify:export` 八项完整性校验（产物散列、DAG 闭合、事件 seq、inputRefs、Claim—Evidence、裁决只紧不松、发布 fail-closed、敏感字段）+ manifest 在线对照一致。
+- 最硬的门禁增益证据：maintenance 包离线回放 `pnpm replay:run` —— 初稿幻觉率 25.0% → 终稿 0.0%（门禁净增益 25 个百分点），三轮回放与在线裁决完全一致；foundation/advanced 各含 1 次修订后放行。
+- 新增运行列表端点 GET /api/learning/runs（验证页运行选择区，learner 隔离）。
+- 最终回归：typecheck 0 错误、23 文件 / 163 测试全过、web tsc + 生产构建通过；api(3001)/worker/web(3000) 运行中。
+- 完成定义（升级计划 §8.4）对照：11 项中 10 项达成；第 7/8 项中的"60 案例全量 live"按计划自身约束需用户授权调用量后执行 `pnpm evaluate --live`（报告口径已支持分层 + 如实标注），当前以"离线全量 + 分层 live + 存量运行 + 离线回放"四层证据如实呈现。
+- 全程流量约束遵守：未下载任何依赖/数据/模型；live 模型调用仅限产品正常运行的协同生成（3 画像数据包 + 冒烟验证），`IM_TRAINING_AGENT_ALLOW_LIVE_EVAL` 评测开关保持 false。
+
+## 2026-08-29 里程碑 G 完成：前端验证页与三工作台轻量增强
+
+- 新增 `web/src/components/validation-workbench.tsx`（验证页）：运行选择区（GET /runs 列表）、可信摘要（证据数/事实声明/终稿无证据/待复核/修订轮数/发布结论）、协同链（按节点折叠展示 actor、公开结论、输入引用、产物散列、生产者）、声明证据表（claimTrace 聚组表格：类型/轮次/终稿结论/证据定位/质询议题）、前后对照（各修订轮计数与裁决）、离线校验（POST /verify 七项 checks + 回放对照）、导出入口；支持 localStorage 预填 runId。
+- page.tsx 顶部视图新增 `validation`；四个页面导航统一加入「验证」项。
+- 学习页：运行结束后显示"查看验证记录"入口（携带 runId 跳验证页）。
+- 路径页：节点详情新增"依据"面板——最近一次持久化学习决策（触发来源、BKT 前后值、理由、系统决策与推荐资源）。
+- 资源页：新增可信溯源条（门禁状态、难度校准、来源 runId、"查看验证记录"跳转）。
+- 画像弹窗：新增"最近一次状态变化"区块（触发来源、BKT before/after、理由、下一步）；难度曲线注明预测值与实际作答口径。
+- 修复历史缺陷（冒烟发现）：修订环被调度器误跳过——裁决未放行进入修订轮后，dispatch 的 skipRemaining 把刚入队的修订节点跳过并错误收尾为 succeeded（这正是 G10"20 个历史运行零修订"的根因）；修复为按 adjudication.outcome 区分 revised/rejected，rejected 路径补齐 publication_decision 产物 + generation_end 快照 + manifest；audit 跳过 evidence 块（定位信息不是事实声明）。
+- 端到端冒烟（2 个临时账号 + 3 次真实运行，完成后清理）：修订轮机械链路 1→2→3 走通；unsupported 声明 3→2→1 收敛（修订环增益可见）；预算用尽 fail-closed 后 19 产物 + 双快照 + manifest + POST /verify 七项全过；learner-advanced 的一次完整运行保留为演示产物。
+- 验证：根 typecheck 0 错、163 测试全过；web tsc 0 错、生产构建通过；api:3001 / worker / web:3000 重启后健康。
+- 冒烟临时账号与数据已按表清空（0 残留、0 孤儿产物）；未发生计划外网络下载。
+
+## 2026-08-29 里程碑 F 完成：离线回放、指标与消融
+
+- 新增 `server/runs/metrics.ts`：官方三项指标口径（幻觉率 non_factual 不入分母、空分母 N/A；难度适配/覆盖率判定函数）+ 补充指标（初稿/终稿幻觉率、门禁净增益、有效质询率）+ verifyExportIntegrity（七项完整性校验：artifact hash 重算、DAG 闭合、事件 seq 连续、inputRefs、Claim—Evidence 悬空、裁决只紧不松、发布 fail-closed、敏感字段扫描）+ replayExport（按轮次重算规则门禁与在线裁决对照）。
+- 新增脚本：`pnpm verify:export`（导出包完整性校验）、`pnpm replay:run`（离线回放，退出码语义化）、`pnpm gold:export`（黄金标注导出）；新增 `scripts/export-gold-labels.ts` 并生成 data/evaluation/{gold-cases,gold-knowledge-points,personas}.json 三个固定黄金标注文件。
+- 指标口径修正（evaluation.ts）：hallucinationRate 改为官方口径（review 在分母、non_factual 排除、空分母 null）+ 新增 draftFinalHallucinationRates（修 G10）；evaluate.ts live 覆盖率改为证据边口径（资源块绑定知识点 × supported Claim 的 evidence edge，修 G9），报告显式区分 resultScope（offline_rule_60 / stratified_live_N + offline_full_60）。
+- 消融 A2 重写（修 G10）：按 attempt 轮次统计初稿/终稿幻觉率与门禁净增益（non_factual 排除），历史 20 次运行 A1 分化 3 种计划、A2 终稿幻觉率 0、A3 33/33 入区间全过。
+- API：POST /api/learning/runs/:runId/verify（离线规则复算，返回完整性 checks + manifest 对照 + replay 轮次明细）；export 重构为共享构建器 buildRunExportPayload。
+- 验证：typecheck 0 错误；23 文件 / 163 测试全过（新增 metrics 13 用例：篡改 hash 发现、悬空 evidence edge 发现、裁决放松发现、seq 缺口、敏感字段、fail-closed 发布校验、口径与净增益）；pnpm evaluate 离线 60 案例全过；pnpm ablation 三组全过。
+- 未发生网络下载与 live 模型调用。
+
+## 2026-08-29 里程碑 E 完成：反馈驱动的持久化学习决策
+
+- 新增 `src/learning/decision.ts`：学习决策纯函数（remediate/continue/advance/collect_more_evidence 四态；低掌握或连续错误→补强、掌握高但置信不足→同级采样、双达标→进阶、反馈冲突或证据不足→先追问；先修缺口大优先讲义、补强资源轮换避免重复）+ decisionToRecommendationLevel 路径建议映射；理由携带真实 BKT 前后值。
+- schema/迁移 0010：`learning_decisions` 表（learner/run/asset/kp/trigger/input_snapshot_id/decision/推荐资源/rationale），CHECK 约束 + 双索引，已应用。
+- 新增 `server/decision-service.ts`：recordLearningDecision（先固化 feedback_update 学情快照→纯函数决策→落库+learning_event，fail-open 不阻断作答主流程）、listDecisions（learner 隔离）、latestDecisionByKnowledgePoint、latestBktUpdate/assetAttemptStats/prereqGapFor 查询辅助。
+- 端点接入：quiz-attempts 与 asset feedback 提交后自动记录决策（PG 模式）；新增 GET /api/learning/decisions。
+- 路径建议改造（G12）：pg-store getRecommendationEvidence 增载每知识点最近持久化决策，recommendationForNode 优先消费（level 映射 + 理由合并），缺失时回退 computeNodeRecommendation。
+- StudyRunRequest 新增 sourceDecisionId（parse/校验、design_constraints 产物记录），形成"反馈→决策→下一运行"链。
+- 验证：typecheck 0 错误；21 文件 / 152 测试全过（新增决策 9 用例：四态全覆盖、资源轮换、冲突追问、BKT 前后值可追溯）。
+- 未发生网络下载与 live 模型调用。
+
+## 2026-08-29 里程碑 D 完成：声明级幻觉治理与独立质询裁决
+
+- audit.ts 升级：新增 ClaimType 分类（numeric/field_meaning/method_step/causal/risk_advice/non_factual，确定性启发式可单测）与 claimLogicalKey（跨修订轮稳定键，规范化文本）；auditResource 产出 claimType/logicalKey，汇总口径排除 non_factual（不进分母、不阻断发布）。
+- 新增 `src/learning/claim-verification.ts`：确定性核验纯函数——数值逐个与绑定证据比对、字段含义对 dataset_fields 字典、越界因果规则（绝对化表述无限定词 fail closed）、引用越界检查；结论只能比输入更严（supported→review→unsupported），绝不放松。
+- executor 集成：runAuditClaims 逐条 verifyClaims（字段字典取自 PG dataset_fields）；persistClaims 写 runId/attempt/claimType/logicalKey/supersedesClaimId（按上一轮同 logicalKey 匹配）；裁决计数与修订回退列表排除 non_factual；裁决 Agent 输入补充反证检索结果（不读生成端对话）。
+- 反证检索（里程碑 D 第 7 条）：批评 Agent 可提出 counterevidence_request（迁移 0009 扩展 CHECK），executor 在已有知识库/数据中执行反证检索（复用混合检索，不联网），命中项并入合并证据包供下一轮修订引用，结果写入 challenge_set 产物并如实展示未命中/失败。
+- 新增 `server/runs/claim-trace.ts`：logicalKey 聚组的声明追溯链（初稿→质询→裁决→修订→终稿）+ hallucinationRateFromTrace（空分母返回 null 的 N/A 语义，修 G10 一部分）；已接入 GET /runs/:runId/trace。
+- 验证：typecheck 0 错误；20 文件 / 143 测试全过（新增 11 个故障注入用例：错数字、数字一致、越界因果、字段含义写错、引用越界、无证据建议、核验只严不松、逻辑键稳定、non_factual 口径）；迁移 0009 已应用。
+- 未发生网络下载与 live 模型调用。
+
+## 2026-08-29 里程碑 C 完成：真实学情信号与检索后策略修正
+
+- 新增 `server/runs/policy.ts`：taskFactRisk 纯函数（数值/因果/操作密度 + 资源类型风险）、deriveVerificationPolicy 纯函数（sparse 禁强事实/冲突从严/数值因果核验/低置信难度质询/降级如实记录，门禁只增不减）、defaultVerificationPolicy、deriveRiskLevelWithTaskRisk。
+- 运行前信号（修 G5）：profile-insights 新增 computeRunLearnerSignals（profileUncertainty=1-目标+先修加权置信度、knowledgeRisk=0.5×近期错误率+0.3×先修缺口+0.2×掌握不确定性）与 prereqClosureOf（前置闭包 BFS）+ computePlannerKnowledgeSignals；routes 的 derivePlannerSignals 改为真实 BKT 信号驱动，planner 风险等级纳入 taskRisk。
+- planner 输入固化：POST /runs 创建运行后立即写 design_constraints artifact（signals + 任务风险理由，producer=rule），不再只存在于 plan JSON。
+- 检索后修正：analyze.domain 完成后由实际证据产物推导 policy；amended 时写 verification_policy_json + design_constraints（post_retrieval_policy）artifact + 追加 `plan.amended` 事件（protocol 已加事件类型）；生成端消费 forbidStrongFactualClaims（sparse 时 prompt 追加禁强事实约束）；裁决端消费 conflictMode/strength（partial 亦不放行）。
+- 验证：typecheck 0 错误；19 文件 / 132 测试全过（新增 policy 测试矩阵 11 用例：空证据 sparse、冲突从严、降级门禁不减、低置信难度质询、高置信不放松、先修缺口计算、无先修权重回退、taskRisk 升级风险等级）。
+- 未发生网络下载与 live 模型调用。
+
+## 2026-08-29 里程碑 B 完成：VACP 产物层与起止快照
+
+- schema/迁移：`collaboration_artifacts`（唯一键 run+node+attempt+type+actor）、`run_state_snapshots`（run_start/generation_end/feedback_update）两表落地；claims 补 run_id/attempt/draft_artifact_id/claim_type/logical_key/supersedes_claim_id，study_run_nodes 补 actor_key/primary_artifact_id，study_runs 补 start_snapshot_id/verification_policy_json/execution_manifest_hash；迁移 0008 全部 nullable/带默认值，历史行保留，已应用到 PG 并核对表结构。
+- 新增 `server/runs/artifacts.ts`：ActorKey（10 执行者）与节点映射、ArtifactType、PublicRationale 契约、递归排序稳定序列化 + SHA-256、确定性产物 ID、幂等持久化（onConflict 回读）、运行产物链读取、execution manifest 散列、producer 元数据（model/promptHash/settingsHash）。
+- 新增 `server/runs/snapshots.ts`：run_start 快照在 createStudyRun 时固化并回写 start_snapshot_id（修 G7 导出语义）；generation_end 快照在发布收尾固化。
+- executor 改造：十个节点全部在成功前持久化主产物（learner_snapshot/evidence_set/domain_brief/resource_draft/claim_audit/challenge_set/adjudication/privacy_decision/publication_decision），下游 inputRefs 引用上游产物 ID；修订轮走 attempt+1 产物不覆盖旧轮；上传正文只存文件名/字节数/散列；发布收尾计算 execution manifest hash。claims 落库带 runId/attempt/draftArtifactId。
+- 路由：新增 `GET /api/learning/runs/:runId/trace`（DAG+artifact+Claim 图+质询+裁决+快照，learner 双重校验）；export 修正——initialLearnerState 取 run_start 快照（历史运行回退现查并如实标注 source）、artifact 清单+散列+producer、Claim 按 attempt 分组、EvidencePack 快照、执行清单散列、上传正文替换为审计元数据（脱敏）。
+- 验证：typecheck 0 错误；测试 18 文件 / 121 用例全过（新增 artifacts 契约 6 用例：稳定序列化、单字符变化散列必变、产物 ID 确定性、执行者覆盖）；pnpm db:migrate 应用成功。
+- 未发生网络下载与 live 模型调用。
+
+## 2026-08-29 里程碑 A 完成：基线冻结与流量保护
+
+- 工作区改动确认（`git status --short`）：用户未提交改动为 findings.md / progress.md / task_plan.md（升级规划记录）、删除 `sol的第一份计划.md`、新增 `docs/挑战杯多智能体可信协同升级计划.md`；全部保留未覆盖，本轮未改动任何无关文件。
+- 服务与数据状态：PostgreSQL / Redis 容器 healthy（15432 / 16379），api(3001) 与 web(3000) 常开运行中；MetroPT-3 数据与嵌入已在库，未重新拉镜像、未重新导数据。
+- 基线验证：`pnpm typecheck` 0 错误（5.5s）；`pnpm test` 17 个测试文件 / 115 用例全部通过（3.2s）；`pnpm-lock.yaml` 无变化。
+- 流量保护约定落位：`.env.example` 新增 `IM_TRAINING_AGENT_ALLOW_LIVE_EVAL=false`（默认关闭），并注明打开前必须先说明预计案例数与调用量、取得用户授权；本轮未发生任何网络下载与 live 模型调用。
+- 下一步：里程碑 B（VACP 产物层与起止快照）——schema 增补 `collaboration_artifacts` / `run_state_snapshots`、新增 `server/runs/artifacts.ts` 与 `server/runs/snapshots.ts`、executor 节点产物化、Claim 补 attempt/draft 关联前置。
+
+## 2026-08-29 挑战杯多智能体可信协同升级计划
+
+- 完整重读 `挑战杯.md`：确认满分要求集中在完整闭环（30）、技术创新（25）、用户体验（15）和实用价值（30）；实用价值高分线要求 ≥3 画像、完整测试方案、幻觉率 <5%、难度适配 ≥85%、核心知识覆盖 ≥90%，且低档说明明确提到测试用例不足 50 组会扣分。
+- 复核当前实际代码：动态 DAG、BullMQ、SSE、BKT、难度校准、混合检索、Claim 审核、独立批评、证据裁决、六类资源均已落地；当前 115 个测试与 TypeScript 检查通过。
+- 明确主要缺口：`context_json` 会覆盖修订轮中间产物；Claim 缺 attempt/draft 关联；运行前画像快照语义不正确；planner 运行时信号较粗；覆盖率仍有关键词判定；现有 live 报告仅 9 个分层案例；消融报告没有初稿幻觉率与真实修订增益。
+- 形成核心创新：VACP 可验证 Agent 协同协议，以及“学情图—声明证据图—协同运行链”架构；通过不可变 artifact、公开理由、输入引用、内容散列、离线 replay、反事实画像对照和消融实验形成可供第三方验证与借鉴的方法。
+- 前端方案锁定为小改：保留现有三个工作台，顶部新增“验证”页面；路径页补决策依据，学习页补节点公开产物，资源页补 provenance 和反馈影响，画像补 before/after。
+- 新增详细执行文档 `docs/挑战杯多智能体可信协同升级计划.md`，覆盖硬约束、差距审计、目标协议、数据/API、八个里程碑、测试矩阵、指标口径、材料清单、风险与完成定义。
+- 流量约束已写入计划：本次规划未联网、未安装依赖、未下载数据或模型、未执行 live 模型评测。
+
 # 2026-08-29 总规阶段一~五主体执行：PG 单数据源 + 诊断/画像/苏格拉底 + 混合检索/批评裁决 + 评测交付
 
 - 阶段一A/B：未提交的用户自传头像工作收口——PATCH /api/auth/avatar-image、users.avatar_image（SQLite ensureColumn + PG 迁移 0003）、共享 ProfileDialog，三个工作台顶栏统一 AvatarBubble 消费 avatarImage；清理一次性脚本与根目录旧 .next；前端 .next 缓存损坏导致的 GET / 404 已排查修复（清缓存重启）。

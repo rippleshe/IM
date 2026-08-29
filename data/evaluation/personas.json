@@ -1,0 +1,20 @@
+{
+  "description": "三画像 BKT 先验（难度适配推演口径；与 demo:seed 诊断作答模式一致）",
+  "personas": {
+    "learner-foundation": {
+      "pMastery": 0.18,
+      "confidence": 0.35,
+      "prereqReadiness": 0.25
+    },
+    "learner-advanced": {
+      "pMastery": 0.72,
+      "confidence": 0.8,
+      "prereqReadiness": 0.9
+    },
+    "learner-maintenance": {
+      "pMastery": 0.45,
+      "confidence": 0.6,
+      "prereqReadiness": 0.6
+    }
+  }
+}

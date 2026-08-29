@@ -56,6 +56,8 @@ export interface StudyRunRequest {
   /** custom 模式的真实约束；门禁角色不受其影响 */
   selectedAgentIds: LearningAgentId[];
   temporaryReference?: TemporaryReference | null;
+  /** 反馈驱动的来源决策（升级计划 里程碑 E：反馈→决策→下一运行链） */
+  sourceDecisionId?: string | null;
 }
 
 export type RunNodeKey =
@@ -98,6 +100,7 @@ export interface StudyRunPlan {
 
 export type RunEventType =
   | 'run.accepted'
+  | 'plan.amended'
   | 'node.started'
   | 'node.progress'
   | 'node.succeeded'

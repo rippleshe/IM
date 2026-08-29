@@ -6,6 +6,7 @@
  * - custom：selectedAgentIds 真实裁剪业务节点；审核与合规门禁任何情况下不可移除。
  */
 import { isLearningResourceType, type LearningResourceType } from '../../src/learning/types.js';
+import { deriveRiskLevelWithTaskRisk } from './policy.js';
 import {
   BUSINESS_ROLES,
   MANDATORY_NODE_KEYS,
@@ -29,10 +30,12 @@ export class PlanningError extends Error {
 
 /** 画像与知识状态信号，全部来源于 PostgreSQL 持久化数据，可审计 */
 export interface PlannerSignals {
-  /** 画像不确定度：1 - 平均掌握置信度，0~1 */
+  /** 画像不确定度：1 - 目标知识点与先修点加权平均置信度（升级计划 §4.7），0~1 */
   profileUncertainty: number;
-  /** 知识风险：近期作答错误率等，0~1 */
+  /** 知识风险：0.5×近期错误率 + 0.3×先修缺口 + 0.2×掌握不确定性，0~1 */
   knowledgeRisk: number;
+  /** 任务事实风险（taskFactRisk 纯函数输出），0~1 */
+  taskRisk: number;
   /** 证据覆盖预估（检索前的主题判断） */
   evidenceCoverageHint: 'sparse' | 'normal' | 'rich';
 }
@@ -62,9 +65,7 @@ const NODE_SEEDS: NodeSeed[] = [
 ];
 
 function deriveRiskLevel(signals: PlannerSignals): RunRiskLevel {
-  if (signals.knowledgeRisk > 0.5 || signals.profileUncertainty > 0.7) return 'high';
-  if (signals.knowledgeRisk > 0.3 || signals.profileUncertainty > 0.4) return 'medium';
-  return 'low';
+  return deriveRiskLevelWithTaskRisk(signals, signals.taskRisk);
 }
 
 function deriveChallengeFocus(request: StudyRunRequest, signals: PlannerSignals): StudyRunPlan['challengeFocus'] {
@@ -84,6 +85,7 @@ export function normalizePlannerSignals(raw: Partial<PlannerSignals> | undefined
   return {
     profileUncertainty: clamp01(raw?.profileUncertainty ?? 0.5),
     knowledgeRisk: clamp01(raw?.knowledgeRisk ?? 0),
+    taskRisk: clamp01(raw?.taskRisk ?? 0),
     evidenceCoverageHint: raw?.evidenceCoverageHint ?? 'normal',
   };
 }
@@ -123,7 +125,11 @@ export function parseStudyRunRequest(body: unknown): StudyRunRequest {
 
   const pathNodeId = typeof raw['pathNodeId'] === 'string' && raw['pathNodeId'] ? raw['pathNodeId'] : null;
 
-  return { task, pathNodeId, resourceType, collaborationMode, selectedAgentIds, temporaryReference };
+  const sourceDecisionId = typeof raw['sourceDecisionId'] === 'string' && raw['sourceDecisionId'].trim()
+    ? raw['sourceDecisionId'].trim().slice(0, 120)
+    : null;
+
+  return { task, pathNodeId, resourceType, collaborationMode, selectedAgentIds, temporaryReference, sourceDecisionId };
 }
 
 /**

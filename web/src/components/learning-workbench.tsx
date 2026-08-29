@@ -82,7 +82,7 @@ type LearningWorkbenchProps = {
   apiBase: string;
   user: AuthenticatedUser;
   onLogout: () => void;
-  onNavigate: (view: "path" | "study" | "resources") => void;
+  onNavigate: (view: "path" | "study" | "resources" | "validation") => void;
   onUserChange?: (user: AuthenticatedUser) => void;
 };
 
@@ -100,6 +100,7 @@ export function LearningWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
   const [sending, setSending] = useState(false);
   const [studyRunning, setStudyRunning] = useState(false);
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
+  const [finishedRunId, setFinishedRunId] = useState<string | null>(null);
   const [nodeStates, setNodeStates] = useState<Array<{ key: string; state: RunNodeState }>>([]);
   const [liveSummary, setLiveSummary] = useState("");
   const [notice, setNotice] = useState("");
@@ -190,6 +191,7 @@ export function LearningWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
     }
     const finish = () => {
       source.close();
+      setFinishedRunId(runId);
       void refreshMessages().finally(() => {
         setStudyRunning(false);
         setActiveRunId(null);
@@ -289,7 +291,7 @@ export function LearningWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
   return <main className={`flex h-screen min-h-0 flex-col overflow-hidden bg-background ${resizing ? "select-none" : ""}`}>
     <header className="flex h-16 shrink-0 items-center justify-between border-b px-5 sm:px-7">
       <div className="flex items-center gap-2.5"><AvatarBubble user={user} size="h-9 w-9 text-xs" /><span className="min-w-0"><span className="block text-sm font-semibold tracking-tight">IM-Training-Agent</span><span className="block text-[11px] text-muted-foreground">{user.displayName}</span></span></div>
-      <nav aria-label="学习空间" className="flex items-center rounded-lg border bg-muted/40 p-1 text-sm"><button type="button" onClick={() => setSettingsOpen(true)} className="rounded-md px-3 py-1.5 text-muted-foreground hover:text-foreground">设置</button><button type="button" onClick={() => setProfileOpen(true)} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">画像</button><button type="button" onClick={() => onNavigate("path")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">路径</button><button type="button" className="rounded-md bg-background px-4 py-1.5 font-medium shadow-sm">学习</button><button type="button" onClick={() => onNavigate("resources")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">资源</button></nav>
+      <nav aria-label="学习空间" className="flex items-center rounded-lg border bg-muted/40 p-1 text-sm"><button type="button" onClick={() => setSettingsOpen(true)} className="rounded-md px-3 py-1.5 text-muted-foreground hover:text-foreground">设置</button><button type="button" onClick={() => setProfileOpen(true)} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">画像</button><button type="button" onClick={() => onNavigate("path")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">路径</button><button type="button" className="rounded-md bg-background px-4 py-1.5 font-medium shadow-sm">学习</button><button type="button" onClick={() => onNavigate("resources")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">资源</button><button type="button" onClick={() => onNavigate("validation")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">验证</button></nav>
       <button type="button" onClick={logout} className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-2 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"><LogOut className="h-3.5 w-3.5" />退出</button>
     </header>
 
@@ -313,6 +315,15 @@ export function LearningWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
           <div className="mx-auto max-w-3xl space-y-4">
             {loading ? <div className="flex min-h-[240px] items-center justify-center text-sm text-muted-foreground">正在加载协同记录</div> : messages.length === 0 ? <div className="flex min-h-[240px] flex-col items-center justify-center text-center"><Bot className="mb-3 h-8 w-8 text-muted-foreground/50" /><p className="text-sm font-medium">从一条任务开始群聊协同</p><p className="mt-1 max-w-sm text-xs leading-5 text-muted-foreground">@ 引用路径节点并说明你要的资料。总控会编排学情、双路检索、领域核对、生成与审核，每个智能体的发言都会逐条冒泡。</p></div> : messages.map((message) => <MessageCard key={message.id} message={message} onExport={exportAsset} />)}
             {(studyRunning || nodeStates.length > 0) && <RunProgressStrip states={nodeStates} summary={liveSummary} />}
+            {!studyRunning && finishedRunId && (
+              <div className="flex items-center justify-between rounded-xl border bg-muted/20 px-3.5 py-2.5 text-xs">
+                <span className="text-muted-foreground">本次协同已结束，产物链与声明图已固化。</span>
+                <button type="button" onClick={() => {
+                  try { window.localStorage.setItem("im-training-agent:validation-prefill", JSON.stringify({ runId: finishedRunId })); } catch { /* 忽略 */ }
+                  onNavigate("validation");
+                }} className="rounded-lg border px-2.5 py-1.5 text-[11px] font-medium hover:bg-muted">查看验证记录</button>
+              </div>
+            )}
             {studyRunning && <div className="flex items-center gap-2 text-xs text-muted-foreground"><span className="h-2 w-2 animate-pulse rounded-full bg-foreground" />多智能体正在协同处理，发言会逐条出现…</div>}
           </div>
         </div>
