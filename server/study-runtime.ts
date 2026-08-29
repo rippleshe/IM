@@ -3,6 +3,8 @@
  * API 进程与 BullMQ Worker 进程都必须用同一份模型注册、角色路由和发布门禁判定，
  * 避免 api/worker 两套实现漂移。
  */
+// 必须最先加载：模型注册在模块求值时读取 DASHSCOPE_API_KEY（ESM import 提升早于入口的 dotenv.config()）
+import 'dotenv/config';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';

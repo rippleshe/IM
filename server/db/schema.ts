@@ -462,6 +462,36 @@ export const runEvents = pgTable('run_events', {
 /* 8. 辩论与声明图（总规 §5.2 修订环）                                    */
 /* ------------------------------------------------------------------ */
 
+/** 苏格拉底启发式追问会话（总规 §7.4）：低置信关键知识点的多轮引导，最多 5 轮 */
+export const guidanceSessions = pgTable('guidance_sessions', {
+  id: text('id').primaryKey(),
+  learnerId: text('learner_id').notNull(),
+  pathNodeId: text('path_node_id'),
+  knowledgePointId: text('knowledge_point_id').notNull(),
+  status: text('status').notNull().default('active'),
+  roundCount: integer('round_count').notNull().default(0),
+  decision: jsonb('decision'),
+  createdAt: ms('created_at').notNull(),
+  finishedAt: ms('finished_at'),
+}, (t) => [
+  check('ck_guidance_status', sql`${t.status} in ('active','finished')`),
+  index('idx_guidance_sessions_learner').on(t.learnerId, t.createdAt),
+]);
+
+export const guidanceTurns = pgTable('guidance_turns', {
+  id: text('id').primaryKey(),
+  sessionId: text('session_id').notNull(),
+  learnerId: text('learner_id').notNull(),
+  round: integer('round').notNull(),
+  question: text('question').notNull(),
+  answer: text('answer').notNull(),
+  evaluation: text('evaluation').notNull(),
+  correct: boolean('correct').notNull(),
+  bktBefore: jsonb('bkt_before').notNull(),
+  bktAfter: jsonb('bkt_after').notNull(),
+  createdAt: ms('created_at').notNull(),
+}, (t) => [index('idx_guidance_turns_session').on(t.sessionId, t.round)]);
+
 export const claims = pgTable('claims', {
   id: text('id').primaryKey(),
   resourceId: text('resource_id').notNull(),

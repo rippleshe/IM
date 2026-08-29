@@ -305,6 +305,43 @@ app.post('/api/learning/chat', async (req, res) => {
 import { createRunsRouter } from "./runs/routes.js";
 app.use("/api/learning/runs", createRunsRouter(requireLearner));
 
+// ---------- 苏格拉底启发式追问（总规 §7.4）：低置信关键知识点多轮引导 ----------
+import { startGuidanceSession, answerGuidanceSession } from './guidance-service.js';
+
+app.post('/api/learning/guidance/sessions', async (req, res) => {
+  const learner = await requireLearner(req, res);
+  if (!learner) return;
+  const pathNodeId = typeof req.body?.pathNodeId === 'string' && req.body.pathNodeId ? req.body.pathNodeId : null;
+  try {
+    const session = await startGuidanceSession(learner.id, pathNodeId);
+    res.status(201).json({ success: true, ...session });
+  } catch (error) {
+    console.error('[guidance] 创建会话失败：', error);
+    res.status(500).json({ success: false, error: '追问会话创建失败，请稍后重试' });
+  }
+});
+
+app.post('/api/learning/guidance/sessions/:sessionId/answers', async (req, res) => {
+  const learner = await requireLearner(req, res);
+  if (!learner) return;
+  const answer = typeof req.body?.answer === 'string' ? req.body.answer.trim() : '';
+  if (!answer) {
+    res.status(400).json({ success: false, error: '请先写下你的回答' });
+    return;
+  }
+  try {
+    const outcome = await answerGuidanceSession(learner.id, req.params.sessionId, answer);
+    if (!outcome) {
+      res.status(404).json({ success: false, error: '未找到该追问会话' });
+      return;
+    }
+    res.json({ success: true, ...outcome });
+  } catch (error) {
+    console.error('[guidance] 提交回答失败：', error);
+    res.status(500).json({ success: false, error: '回答提交失败，请稍后重试' });
+  }
+});
+
 // ---------- 初始诊断（总规 §7.3）：12 题固定题集，作答驱动 BKT 初始状态 ----------
 import { DIAGNOSTIC_QUESTIONS, scoreDiagnostic } from '../src/learning/diagnostic.js';
 
