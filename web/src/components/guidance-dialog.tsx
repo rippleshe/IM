@@ -175,10 +175,9 @@ export function GuidanceDialog({ apiBase, pathNodeId, user, onClose, onGenerateR
         <div className="shrink-0 border-t bg-background p-4">
           {error && <p className="mb-2 rounded-lg border border-destructive/25 bg-destructive/5 px-3 py-2 text-xs text-destructive">{error}</p>}
           <div className="flex items-end gap-2 rounded-2xl border bg-card p-2 focus-within:ring-2 focus-within:ring-foreground/10">
-            <textarea value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void submitAnswer(); } }} rows={2} placeholder={`说说你的理解（${user.displayName} 的思考会驱动后续提问）`} className="max-h-28 min-h-[42px] flex-1 resize-none bg-transparent px-2 py-2 text-sm leading-5 outline-none placeholder:text-muted-foreground" />
+            <textarea value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void submitAnswer(); } }} rows={2} placeholder="说说你的理解" className="max-h-28 min-h-[42px] flex-1 resize-none bg-transparent px-2 py-2 text-sm leading-5 outline-none placeholder:text-muted-foreground" />
             <button type="button" disabled={!draft.trim() || submitting} onClick={() => void submitAnswer()} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-foreground text-background disabled:opacity-35" aria-label="提交回答">{submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}</button>
           </div>
-          <p className="mt-2 text-center text-[10px] text-muted-foreground">每轮一个问题，最多 5 轮；回答会实时更新你的知识状态。</p>
         </div>
       ) : null}
     </section>

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Camera, Loader2, RefreshCw, Sparkles, Trash2 } from "lucide-react";
+import { Loader2, RefreshCw, Sparkles, Trash2 } from "lucide-react";
 import type { AuthenticatedUser } from "@/components/auth-entry";
 
 export type ProfileKeyword = string;
@@ -38,18 +38,21 @@ const AVATAR_FALLBACK: Record<AuthenticatedUser["avatarKey"], string> = {
 
 /** 把用户选择的图片读入 canvas，居中裁方并缩到 128px，输出 jpeg data URL（约 <30KB）。 */
 async function readAvatarImage(file: File): Promise<string> {
-  const dataUrl = await new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result));
-    reader.onerror = () => reject(new Error("读取图片失败"));
-    reader.readAsDataURL(file);
-  });
-  const image = await new Promise<HTMLImageElement>((resolve, reject) => {
-    const element = new Image();
-    element.onload = () => resolve(element);
-    element.onerror = () => reject(new Error("图片解析失败"));
-    element.src = dataUrl;
-  });
+  if (!file.type.startsWith("image/")) throw new Error("请选择图片文件");
+  if (file.size > 12 * 1024 * 1024) throw new Error("图片不能超过 12MB");
+  const objectUrl = URL.createObjectURL(file);
+  let image: HTMLImageElement;
+  try {
+    image = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const element = new Image();
+      element.onload = () => resolve(element);
+      element.onerror = () => reject(new Error("图片解析失败"));
+      element.src = objectUrl;
+    });
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+  if (!image.naturalWidth || !image.naturalHeight) throw new Error("图片尺寸无效");
   const size = 128;
   const canvas = document.createElement("canvas");
   canvas.width = size;
@@ -85,6 +88,7 @@ export function ProfileDialog({ apiBase, user, headerRight, extraMetrics = [], o
   const [profile, setProfile] = useState<LearningProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [regenerating, setRegenerating] = useState(false);
+  const [updateStatus, setUpdateStatus] = useState("");
   const [uploading, setUploading] = useState(false);
   const [notice, setNotice] = useState("");
   const [recentChange, setRecentChange] = useState<LearningDecisionSummary | null>(null);
@@ -116,7 +120,7 @@ export function ProfileDialog({ apiBase, user, headerRight, extraMetrics = [], o
       });
       const data = await response.json() as { success?: boolean; error?: string; user?: AuthenticatedUser };
       if (!response.ok || !data.success || !data.user) throw new Error(data.error || "头像保存失败");
-      onUserChange?.(data.user);
+      onUserChange?.({ ...data.user, diagnosticCompleted: data.user.diagnosticCompleted ?? user.diagnosticCompleted });
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "头像保存失败");
     } finally {
@@ -135,7 +139,7 @@ export function ProfileDialog({ apiBase, user, headerRight, extraMetrics = [], o
       });
       const data = await response.json() as { success?: boolean; error?: string; user?: AuthenticatedUser };
       if (!response.ok || !data.success || !data.user) throw new Error(data.error || "头像移除失败");
-      onUserChange?.(data.user);
+      onUserChange?.({ ...data.user, diagnosticCompleted: data.user.diagnosticCompleted ?? user.diagnosticCompleted });
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "头像移除失败");
     }
@@ -146,9 +150,10 @@ export function ProfileDialog({ apiBase, user, headerRight, extraMetrics = [], o
     setNotice("");
     try {
       const response = await fetch(`${apiBase}/api/learning/profile/regenerate`, { method: "POST", credentials: "include" });
-      const data = await response.json() as { success?: boolean; error?: string; profile?: LearningProfile };
+      const data = await response.json() as { success?: boolean; error?: string; profile?: LearningProfile; updated?: boolean };
       if (!response.ok || !data.success || !data.profile) throw new Error(data.error || "画像生成失败");
       setProfile(data.profile);
+      setUpdateStatus(data.updated ? "画像已依据新增学习记录更新" : "没有新的学习记录，画像保持不变");
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "画像生成失败");
     } finally {
@@ -173,7 +178,7 @@ export function ProfileDialog({ apiBase, user, headerRight, extraMetrics = [], o
       <div className="min-h-0 flex-1 overflow-y-auto px-7 py-6">
         <div className="flex items-center justify-between gap-4">
           <div className="flex items-center gap-4">
-            <AvatarBubble user={user} />
+            <button type="button" onClick={() => fileInputRef.current?.click()} disabled={uploading} className="group relative rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-foreground/30" aria-label="更换头像"><AvatarBubble user={user} /><span className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-full bg-foreground/55 text-[10px] font-medium text-background opacity-0 transition-opacity group-hover:opacity-100">更换</span></button>
             <div>
               <div className="text-lg font-semibold tracking-tight">{user.displayName}</div>
               <div className="mt-0.5 text-sm text-muted-foreground">@{user.loginName}</div>
@@ -184,13 +189,7 @@ export function ProfileDialog({ apiBase, user, headerRight, extraMetrics = [], o
 
         <div className="mt-5 flex flex-wrap items-center gap-2.5">
           <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={(event) => { const file = event.target.files?.[0]; if (file) void uploadAvatar(file); }} />
-          <button type="button" onClick={() => fileInputRef.current?.click()} disabled={uploading} className="inline-flex h-9 items-center gap-1.5 rounded-lg border px-3 text-xs font-medium hover:bg-muted disabled:opacity-60">
-            {uploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Camera className="h-3.5 w-3.5" />}
-            {user.avatarImage ? "更换图片" : "上传头像图片"}
-          </button>
-          {user.avatarImage
-            ? <button type="button" onClick={() => void removeAvatar()} className="inline-flex h-9 items-center gap-1.5 rounded-lg border px-3 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-destructive"><Trash2 className="h-3.5 w-3.5" />移除，用回首字母</button>
-            : <span className="text-[11px] leading-4 text-muted-foreground">支持任意图片，自动裁方压缩后保存</span>}
+          {user.avatarImage ? <button type="button" onClick={() => void removeAvatar()} className="inline-flex h-9 items-center gap-1.5 rounded-lg border px-3 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-destructive"><Trash2 className="h-3.5 w-3.5" />移除头像</button> : null}
         </div>
 
         {notice ? <p className="mt-3 rounded-lg border border-destructive/25 bg-destructive/5 px-3 py-2 text-xs text-destructive">{notice}</p> : null}
@@ -199,7 +198,7 @@ export function ProfileDialog({ apiBase, user, headerRight, extraMetrics = [], o
           <div className="text-xs font-medium text-muted-foreground">画像描述</div>
           {loading
             ? <div className="mt-2 h-16 animate-pulse rounded-xl bg-muted/60" />
-            : <p className="mt-2 rounded-xl bg-muted/50 p-4 text-sm leading-7">{profile?.summary || "还没有画像描述；继续学习或点击下方“重新生成画像”，系统会依据学习证据总结你的画像。"}</p>}
+            : <p className="mt-2 rounded-xl bg-muted/50 p-4 text-sm leading-7">{profile?.summary || "暂无画像描述。"}</p>}
         </div>
 
         <div className="mt-5">
@@ -215,7 +214,7 @@ export function ProfileDialog({ apiBase, user, headerRight, extraMetrics = [], o
 
         {(profile?.blindSpots?.length ?? 0) > 0 && (
           <div className="mt-5">
-            <div className="text-xs font-medium text-muted-foreground">知识盲区（作答与诊断证据驱动）</div>
+            <div className="text-xs font-medium text-muted-foreground">知识盲区</div>
             <div className="mt-2 space-y-2">
               {profile!.blindSpots!.map((spot) => <div key={spot.knowledgePointId} className="rounded-xl border border-amber-200/70 bg-amber-50/50 p-3 text-xs">
                 <div className="flex items-center justify-between gap-2"><span className="font-semibold">{spot.label}</span><span className="text-amber-700">掌握 {Math.round(spot.pMastery * 100)}%</span></div>
@@ -240,13 +239,12 @@ export function ProfileDialog({ apiBase, user, headerRight, extraMetrics = [], o
                 </div>
               </div>)}
             </div>
-            <p className="mt-1.5 text-[10px] leading-4 text-muted-foreground">难度与预计成功率为模型预测值；实际正确率以作答记录为准（下方知识盲区与掌握度来自真实作答）。</p>
           </div>
         )}
 
         {recentChange && (
           <div className="mt-5">
-            <div className="text-xs font-medium text-muted-foreground">最近一次状态变化（反馈驱动，可追溯）</div>
+            <div className="text-xs font-medium text-muted-foreground">最近一次状态变化</div>
             <div className="mt-2 rounded-xl border p-3 text-xs">
               <div className="flex items-center justify-between gap-2">
                 <span className="font-semibold">{recentChange.triggerType === "quiz_attempt" ? "习题作答" : recentChange.triggerType === "asset_feedback" ? "资源掌握反馈" : "启发式追问"}</span>
@@ -280,11 +278,11 @@ export function ProfileDialog({ apiBase, user, headerRight, extraMetrics = [], o
       </div>
 
       <footer className="shrink-0 border-t bg-background px-7 py-4">
-        <button type="button" onClick={() => void regenerateProfile()} disabled={regenerating} className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border px-4 text-sm font-medium hover:bg-muted disabled:opacity-60">
+        <button type="button" onClick={() => void regenerateProfile()} disabled={regenerating} className="flex h-10 w-full items-center justify-center gap-2 rounded-lg border px-4 text-sm font-medium hover:bg-muted disabled:opacity-60">
           {regenerating ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-          重新生成画像
+          根据最新数据更新画像
         </button>
-        <p className="mt-2 text-[11px] leading-4 text-muted-foreground">画像只依据真实学习证据生成：诊断与练习作答、资源反馈、学习时长。不会虚构能力评价。</p>
+        {updateStatus ? <p className="mt-2 text-center text-xs text-muted-foreground">{updateStatus}</p> : null}
       </footer>
     </section>
   </div>;

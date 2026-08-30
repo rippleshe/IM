@@ -69,19 +69,15 @@ export interface ProfileInsights {
 
 const RESOURCE_SCAFFOLD: Record<LearningResourceType, ScaffoldStrength> = {
   lecture: 'high',
-  practice_guide: 'high',
+  presentation: 'high',
   concept_map: 'high',
-  review_cards: 'high',
   tiered_quiz: 'medium',
-  challenge_task: 'low',
 };
 const RESOURCE_LABELS: Record<LearningResourceType, string> = {
   lecture: '讲义',
   tiered_quiz: '分层习题',
-  practice_guide: '实操指南',
-  concept_map: '知识图谱',
-  review_cards: '复习卡片',
-  challenge_task: '挑战任务',
+  presentation: 'PPT',
+  concept_map: '知识脉络',
 };
 
 export async function buildProfileInsights(learnerId: string): Promise<ProfileInsights> {

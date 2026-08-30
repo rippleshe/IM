@@ -53,14 +53,14 @@ describe('反馈驱动学习决策（升级计划 里程碑 E）', () => {
     expect(result.rationale.reasons.join('')).toContain('置信度');
   });
 
-  it('掌握与置信度均达标 → advance（挑战任务）', () => {
+  it('掌握与置信度均达标 → advance（知识脉络）', () => {
     const result = decideLearningNextStep(baseInput({
       bktBefore: { pMastery: 0.7, confidence: 0.5 },
       bktAfter: { pMastery: 0.8, confidence: 0.7 },
       attemptCount: 4, correctCount: 4,
     }));
     expect(result.decision).toBe('advance');
-    expect(result.recommendedResourceType).toBe('challenge_task');
+    expect(result.recommendedResourceType).toBe('concept_map');
   });
 
   it('反馈冲突（高正确率×掌握差评）→ collect_more_evidence，先追问', () => {

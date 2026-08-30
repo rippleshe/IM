@@ -81,13 +81,13 @@ const LEVEL_KNOWLEDGE_POINTS: Record<EvaluationTaskLevel, string[]> = {
 };
 
 const RESOURCE_TYPES: LearningResourceType[] = [
-  'lecture', 'tiered_quiz', 'practice_guide', 'concept_map', 'review_cards', 'challenge_task',
+  'lecture', 'tiered_quiz', 'presentation', 'concept_map',
 ];
 
 /**
  * 目标难度区间按教学原则独立设定（不拟合模型输出）：
  * 初学者任何资源都应偏易；进阶者接受高难度；在职转岗居中；
- * 挑战任务/习题相对讲义类要求区间相应收紧或放宽。
+ * 习题相对讲义类要求区间相应收紧。
  */
 function targetBandFor(persona: EvaluationPersona, type: LearningResourceType): [number, number] {
   const base: Record<EvaluationPersona, [number, number]> = {
@@ -95,22 +95,16 @@ function targetBandFor(persona: EvaluationPersona, type: LearningResourceType): 
     'learner-advanced': [0.4, 0.85],
     'learner-maintenance': [0.1, 0.5],
   };
-  const challenge: Record<EvaluationPersona, [number, number]> = {
-    'learner-foundation': [0, 0.2],
-    'learner-advanced': [0.35, 0.75],
-    'learner-maintenance': [0, 0.25],
-  };
   const quiz: Record<EvaluationPersona, [number, number]> = {
     'learner-foundation': [0, 0.2],
     'learner-advanced': [0.35, 0.8],
     'learner-maintenance': [0.05, 0.4],
   };
-  if (type === 'challenge_task') return challenge[persona];
   if (type === 'tiered_quiz') return quiz[persona];
   return base[persona];
 }
 
-/** 生成 60 个固定案例：每画像 20 = 6 类资源 × 3 层任务 + 2 类资源各补 1 个域组合 */
+/** 生成 60 个固定案例：每画像 20 = 4 类资源 × 5 个域与任务组合 */
 export function buildEvaluationCases(): EvaluationCase[] {
   const personas: EvaluationPersona[] = ['learner-foundation', 'learner-advanced', 'learner-maintenance'];
   const cases: EvaluationCase[] = [];
@@ -121,9 +115,7 @@ export function buildEvaluationCases(): EvaluationCase[] {
         { domain: 'metropt3', level: 'advanced' },
         { domain: 'metropt3', level: 'transfer' },
       ];
-      // 补充组合只加给讲义与分层习题，保证每画像恰好 20
-      if (type === 'lecture') combos.push({ domain: 'ai4i', level: 'transfer' });
-      if (type === 'tiered_quiz') combos.push({ domain: 'metropt3', level: 'basic' });
+      combos.push({ domain: 'ai4i', level: 'transfer' }, { domain: 'ai4i', level: 'advanced' });
       for (const combo of combos) {
         const index = cases.filter((item) => item.persona === persona).length + 1;
         const task = PERSONA_TASK_FOCUS[persona][combo.domain][combo.level];

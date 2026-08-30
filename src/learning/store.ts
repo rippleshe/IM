@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { bktUpdate, createBktState, type BktState } from './bkt.js';
 import type { SqliteDatabase } from './sqlite.js';
 import type { QuizQuestion, ResourceDocument } from './types.js';
+import { judgeQuizAnswer, sanitizeSubmittedAnswer, type QuizSubmissionOptions } from './quiz.js';
 import type { ClaimAuditRecord } from './audit.js';
 
 export interface LearningPathNodeView {
@@ -275,13 +276,13 @@ export class LearningStore {
     });
   }
 
-  submitQuizAttempt(learnerId: string, assetId: string, questionId: string, answerId: string, durationMs: number): QuizSubmissionResult {
+  submitQuizAttempt(learnerId: string, assetId: string, questionId: string, answerId: string, durationMs: number, options: QuizSubmissionOptions = {}): QuizSubmissionResult {
     const asset = this.getAsset(learnerId, assetId);
     if (!asset || asset.type !== 'tiered_quiz') throw new Error('未找到这份习题资产');
     const question = extractQuizQuestions(asset).find((item) => item.id === questionId);
     if (!question) throw new Error('未找到这道题');
-    const normalizedAnswerId = answerId.trim().slice(0, 32);
-    const correct = normalizedAnswerId === question.answerId;
+    const normalizedAnswerId = sanitizeSubmittedAnswer(answerId);
+    const correct = judgeQuizAnswer(question, normalizedAnswerId, options);
     const safeDuration = Math.max(0, Math.min(Math.round(durationMs), 3_600_000));
     const attempt: QuizAttemptView = {
       id: `quiz-attempt-${randomUUID()}`,
@@ -413,7 +414,7 @@ export class LearningStore {
     return message;
   }
 
-  listChatMessages(learnerId: string, limit = 80, surface: 'path' | 'study' = 'path'): LearningChatMessageView[] {
+  listChatMessages(learnerId: string, limit = 80, surface: 'path' | 'study' | 'resource_qa' = 'path'): LearningChatMessageView[] {
     const rows = this.db.prepare(`
       SELECT id, role, content, metadata_json AS metadataJson, created_at AS createdAt
       FROM learning_chat_messages WHERE learner_id = ? ORDER BY created_at DESC LIMIT ?
@@ -430,9 +431,9 @@ export class LearningStore {
       }
       return { id: row.id, role: row.role === 'assistant' ? 'assistant' : 'user', content: row.content, metadata, createdAt: Number(row.createdAt) };
     });
-    return messages.filter((message) => surface === 'study'
-      ? message.metadata['surface'] === 'study'
-      : message.metadata['surface'] !== 'study');
+    return messages.filter((message) => surface === 'path'
+      ? message.metadata['surface'] !== 'study' && message.metadata['surface'] !== 'resource_qa'
+      : message.metadata['surface'] === surface);
   }
 
   replacePathGraph(

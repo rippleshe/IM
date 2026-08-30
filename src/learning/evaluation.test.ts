@@ -10,7 +10,7 @@ import {
 import { calibrateDifficulty } from './difficulty.js';
 
 describe('evaluation（docs/挑战杯技术开发总规.md §8.2）', () => {
-  it('生成 60 个固定案例：三画像各 20，覆盖六类资源与三层任务', () => {
+  it('生成 60 个固定案例：三画像各 20，覆盖四类资源与三层任务', () => {
     const cases = buildEvaluationCases();
     expect(cases).toHaveLength(60);
     const regen = buildEvaluationCases();
@@ -19,7 +19,7 @@ describe('evaluation（docs/挑战杯技术开发总规.md §8.2）', () => {
       expect(cases.filter((item) => item.persona === persona)).toHaveLength(20);
     }
     const types = new Set(cases.map((item) => item.resourceType));
-    expect(types.size).toBe(6);
+    expect(types.size).toBe(4);
     const levels = new Set(cases.map((item) => item.taskLevel));
     expect([...levels].sort()).toEqual(['advanced', 'basic', 'transfer']);
   });

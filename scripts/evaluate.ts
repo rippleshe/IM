@@ -27,7 +27,6 @@ const THRESHOLDS = { hallucinationRate: 0.05, difficultyAccuracy: 0.85, coverage
 
 function scaffoldOfType(type: EvaluationCase['resourceType']): ScaffoldStrength {
   if (type === 'tiered_quiz') return 'medium';
-  if (type === 'challenge_task') return 'low';
   return 'high';
 }
 

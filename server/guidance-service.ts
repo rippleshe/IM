@@ -20,6 +20,7 @@ import {
   type SocraticEvaluation,
 } from '../src/learning/socratic.js';
 import { normalizeKnowledgePointId, type LearningPathGraphView } from '../src/learning/store.js';
+import { SOCRATIC_EVALUATION_SYSTEM, SOCRATIC_QUESTION_SYSTEM } from './prompts.js';
 
 const KP_LABEL_FALLBACK = '该知识点';
 
@@ -91,7 +92,7 @@ async function askQuestion(
       messages: [
         {
           role: 'system',
-          content: '你是苏格拉底式导学智能体。只输出 JSON：{"question":"一个开放式引导问题（不超过60字）"}。问题必须一步一步引导学习者自己发现答案，不直接给结论，不一次问多个问题。',
+          content: SOCRATIC_QUESTION_SYSTEM,
         },
         {
           role: 'user',
@@ -106,8 +107,8 @@ async function askQuestion(
       ],
       model: route.model,
       temperature: route.thinking.temperature,
-      maxTokens: Math.min(route.thinking.maxTokens, 600),
-    }), 20_000, '追问生成超时');
+      maxTokens: Math.min(route.thinking.maxTokens, 2_400),
+    }), 60_000, '追问生成超时');
     const parsed = parseJson<{ question?: unknown }>(response.text) ?? {};
     if (typeof parsed.question === 'string' && parsed.question.trim()) return parsed.question.trim().slice(0, 160);
     console.warn('[guidance] 追问生成返回无法解析：', response.text.slice(0, 160));
@@ -128,14 +129,14 @@ async function evaluateAnswer(
       messages: [
         {
           role: 'system',
-          content: '你是导学评价器。只输出 JSON：{"verdict":"correct|partial|incorrect","comment":"面向学习者的公开评价（不超过80字），指出对在哪里、缺什么，不展示推理过程"}。',
+          content: SOCRATIC_EVALUATION_SYSTEM,
         },
         { role: 'user', content: JSON.stringify({ question, answer: answer.slice(0, 2000), knowledgePoint: labelOf(knowledgePointId) }) },
       ],
       model: route.model,
       temperature: route.thinking.temperature,
-      maxTokens: Math.min(route.thinking.maxTokens, 600),
-    }), 20_000, '回答评价超时');
+      maxTokens: Math.min(route.thinking.maxTokens, 2_400),
+    }), 60_000, '回答评价超时');
     const parsed = parseJson<{ verdict?: unknown; comment?: unknown }>(response.text) ?? {};
     const verdict = ['correct', 'partial', 'incorrect'].includes(String(parsed.verdict))
       ? String(parsed.verdict) as SocraticEvaluation['verdict']
@@ -250,7 +251,10 @@ export async function answerGuidanceSession(learnerId: string, sessionId: string
       question: turn.question,
       evaluation: turn.evaluation,
     }));
-    const nextQuestion = await askQuestion(sessionRow.knowledgePointId, round + 1, '', history);
+    // 后续轮同样携带证据摘要，保证问题中的事实表述有依据
+    const evidencePack = await learningStore.listEvidence(learnerId, 4);
+    const evidenceDigest = evidencePack.map((item) => `${item.sourceTitle}：${item.content.slice(0, 160)}`).join('\n');
+    const nextQuestion = await askQuestion(sessionRow.knowledgePointId, round + 1, evidenceDigest, history);
     await database.db.update(guidanceSessions)
       .set({ roundCount: round, currentQuestion: nextQuestion })
       .where(eq(guidanceSessions.id, sessionId));

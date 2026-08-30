@@ -40,6 +40,7 @@ import {
   type QuizSubmissionResult,
 } from '../../src/learning/store.js';
 import { decisionToRecommendationLevel } from '../../src/learning/decision.js';
+import { judgeQuizAnswer, sanitizeSubmittedAnswer, type QuizSubmissionOptions } from '../../src/learning/quiz.js';
 import { bktUpdate, createBktState, type BktState } from '../../src/learning/bkt.js';
 import type { ClaimAuditRecord } from '../../src/learning/audit.js';
 import type { ResourceDocument } from '../../src/learning/types.js';
@@ -334,13 +335,13 @@ export class PgLearningStore {
     }));
   }
 
-  async submitQuizAttempt(learnerId: string, assetId: string, questionId: string, answerId: string, durationMs: number): Promise<QuizSubmissionResult> {
+  async submitQuizAttempt(learnerId: string, assetId: string, questionId: string, answerId: string, durationMs: number, options: QuizSubmissionOptions = {}): Promise<QuizSubmissionResult> {
     const asset = await this.getAsset(learnerId, assetId);
     if (!asset || asset.type !== 'tiered_quiz') throw new Error('未找到这份习题资产');
     const question = extractQuizQuestions(asset).find((item) => item.id === questionId);
     if (!question) throw new Error('未找到这道题');
-    const normalizedAnswerId = answerId.trim().slice(0, 32);
-    const correct = normalizedAnswerId === question.answerId;
+    const normalizedAnswerId = sanitizeSubmittedAnswer(answerId);
+    const correct = judgeQuizAnswer(question, normalizedAnswerId, options);
     const safeDuration = Math.max(0, Math.min(Math.round(durationMs), 3_600_000));
     const attempt: QuizAttemptView = {
       id: `quiz-attempt-${randomUUID()}`,
@@ -475,7 +476,7 @@ export class PgLearningStore {
     return message;
   }
 
-  async listChatMessages(learnerId: string, limit = 80, surface: 'path' | 'study' = 'path'): Promise<LearningChatMessageView[]> {
+  async listChatMessages(learnerId: string, limit = 80, surface: 'path' | 'study' | 'resource_qa' = 'path'): Promise<LearningChatMessageView[]> {
     const rows = (await this.pool.query(
       `SELECT id, role, content, metadata_json AS "metadataJson", created_at AS "createdAt"
        FROM learning_chat_messages WHERE learner_id = $1 ORDER BY created_at DESC LIMIT $2`,
@@ -486,9 +487,9 @@ export class PgLearningStore {
       const metadata: Record<string, unknown> = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
       return { id: row.id, role: row.role === 'assistant' ? 'assistant' : 'user', content: row.content, metadata, createdAt: Number(row.createdAt) };
     });
-    return messages.filter((message) => surface === 'study'
-      ? message.metadata['surface'] === 'study'
-      : message.metadata['surface'] !== 'study');
+    return messages.filter((message) => surface === 'path'
+      ? message.metadata['surface'] !== 'study' && message.metadata['surface'] !== 'resource_qa'
+      : message.metadata['surface'] === surface);
   }
 
   async replacePathGraph(

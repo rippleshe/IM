@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Lock, Radio, Settings } from "lucide-react";
+import { Lock, Settings } from "lucide-react";
 
 type ThinkingDepth = "low" | "medium" | "high" | "max";
 type AgentRoute = { modelId: string; thinkingDepth: "inherit" | ThinkingDepth };
@@ -11,7 +11,6 @@ type RuntimeSettings = {
   providers: Array<{ id: string; displayName: string; baseURL: string; apiKeyConfigured: boolean; models: Array<{ id: string; displayName: string }> }>;
   models: Array<{ id: string; displayName: string; provider: string; providerDisplayName: string }>;
   agentRouting: Record<string, AgentRoute>;
-  autoAssetTypes: Array<"lecture" | "tiered_quiz" | "concept_map">;
 };
 
 type PrivacyEvent = {
@@ -21,6 +20,12 @@ type PrivacyEvent = {
   byteCount: number | null;
   redactedFieldCount: number;
   createdAt: number;
+};
+
+type DataPrivacyOverview = {
+  source: { kind: "postgres" | "sqlite"; label: string; detail: string };
+  records: { assets: number; pathNodes: number; studyMessages: number; resourceQaMessages: number; evidenceItems: number; auditEvents: number; profileEvidence: number };
+  retention: { temporaryReference: string; sharedKnowledge: string; audit: string };
 };
 
 const agentLabels: Array<[string, string, string | null]> = [
@@ -37,14 +42,22 @@ const privacyEventLabels: Record<string, string> = {
 };
 
 function PrivacyPanel({ apiBase }: { apiBase: string }) {
+  const [overview, setOverview] = useState<DataPrivacyOverview | null>(null);
   const [events, setEvents] = useState<PrivacyEvent[] | null>(null);
   const [clearing, setClearing] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const load = useCallback(async () => {
     try {
-      const response = await fetch(`${apiBase}/api/settings/privacy-audit?limit=8`, { credentials: "include" });
-      const data = await response.json() as { events?: PrivacyEvent[] };
-      setEvents(data.events ?? []);
-    } catch { setEvents([]); }
+      const [overviewResponse, eventsResponse] = await Promise.all([
+        fetch(`${apiBase}/api/settings/data-privacy`, { credentials: "include" }),
+        fetch(`${apiBase}/api/settings/privacy-audit?limit=8`, { credentials: "include" }),
+      ]);
+      const overviewData = await overviewResponse.json() as DataPrivacyOverview & { success?: boolean };
+      const eventsData = await eventsResponse.json() as { events?: PrivacyEvent[] };
+      if (!overviewResponse.ok || !overviewData.success) throw new Error("数据状态读取失败");
+      setOverview(overviewData);
+      setEvents(eventsData.events ?? []);
+    } catch { setOverview(null); setEvents([]); }
   }, [apiBase]);
   useEffect(() => { void load(); }, [load]);
   const clear = async () => {
@@ -55,24 +68,38 @@ function PrivacyPanel({ apiBase }: { apiBase: string }) {
       await load();
     } finally { setClearing(false); }
   };
-  return <div className="space-y-3">
-    <div className="divide-y rounded-xl border text-xs">
-      <div className="flex items-center justify-between px-3 py-3"><span>学习记录存储</span><span className="text-muted-foreground">本机 SQLite，不离开设备</span></div>
-      <div className="flex items-center justify-between px-3 py-3"><span>上传资料原文</span><span className="text-muted-foreground">仅本次任务使用，不保存</span></div>
-      <div className="flex items-center justify-between px-3 py-3"><span>公共知识库写入</span><span className="text-muted-foreground">仅审核后的固定资料</span></div>
-      <div className="flex items-center justify-between px-3 py-3"><span className="flex items-center gap-1.5"><Lock className="h-3 w-3" />审核与隐私门禁</span><span className="text-muted-foreground">固定关卡，不可关闭</span></div>
-    </div>
-    <div className="rounded-xl border">
-      <div className="flex items-center justify-between border-b px-3 py-2.5"><span className="text-xs font-medium">隐私审计记录</span><button type="button" disabled={clearing || !events?.length} onClick={() => void clear()} className="rounded-md border px-2 py-1 text-[11px] text-muted-foreground hover:bg-muted disabled:opacity-40">清除记录</button></div>
-      <div className="max-h-48 overflow-y-auto p-1.5">
-        {events === null ? <div className="px-2 py-3 text-[11px] text-muted-foreground">正在读取审计记录</div> : events.length === 0 ? <div className="px-2 py-3 text-[11px] leading-4 text-muted-foreground">暂无审计记录。使用临时参考资料时会在这里留痕（只记文件名与哈希，不存原文）。</div> : events.map((event) => <div key={event.id} className="flex items-center justify-between gap-2 rounded-lg px-2 py-2 text-[11px] hover:bg-muted/50"><span className="min-w-0 truncate">{privacyEventLabels[event.eventType] ?? event.eventType}<span className="text-muted-foreground"> · {event.fileName ?? "未知文件"}</span></span><span className="shrink-0 text-muted-foreground">{event.byteCount === null ? "" : `${Math.max(1, Math.round(event.byteCount / 1024))} KB · `}{new Intl.DateTimeFormat("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(event.createdAt)}</span></div>)}
-      </div>
-    </div>
+  const exportData = () => {
+    setExporting(true);
+    const link = document.createElement("a");
+    link.href = `${apiBase}/api/settings/export`;
+    link.download = "im-training-agent-data.json";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => setExporting(false), 700);
+  };
+  return <div className="space-y-4">
+    <section className="rounded-xl border bg-background p-4">
+      <div className="flex items-center justify-between gap-3"><div><div className="text-xs font-medium">数据位置</div><div className="mt-1 text-sm font-semibold">{overview?.source.label ?? "读取中"}</div></div><span className="rounded-full bg-emerald-100 px-2.5 py-1 text-[11px] font-medium text-emerald-700">当前使用</span></div>
+      <div className="mt-3 grid grid-cols-3 gap-2 text-center"><div className="rounded-lg bg-muted/50 p-2.5"><div className="text-lg font-semibold">{overview?.records.assets ?? "—"}</div><div className="text-[11px] text-muted-foreground">资源</div></div><div className="rounded-lg bg-muted/50 p-2.5"><div className="text-lg font-semibold">{overview?.records.pathNodes ?? "—"}</div><div className="text-[11px] text-muted-foreground">路径节点</div></div><div className="rounded-lg bg-muted/50 p-2.5"><div className="text-lg font-semibold">{overview?.records.profileEvidence ?? "—"}</div><div className="text-[11px] text-muted-foreground">学习证据</div></div></div>
+      <div className="mt-3 text-xs text-muted-foreground">{overview?.source.detail ?? "正在读取数据状态"}</div>
+      <button type="button" disabled={exporting} onClick={exportData} className="mt-3 h-9 w-full rounded-lg border text-xs font-medium hover:bg-muted disabled:opacity-50">{exporting ? "正在导出" : "导出我的学习数据"}</button>
+    </section>
+    <section className="divide-y rounded-xl border bg-background text-xs">
+      <div className="flex items-center justify-between gap-4 px-4 py-3"><span>学习与画像</span><span className="text-right text-muted-foreground">画像、路径、作答、资源与问答记录</span></div>
+      <div className="flex items-center justify-between gap-4 px-4 py-3"><span>临时参考资料</span><span className="text-right text-emerald-700">任务结束即丢弃原文</span></div>
+      <div className="flex items-center justify-between gap-4 px-4 py-3"><span>公共知识库</span><span className="text-right text-muted-foreground">只读，不写入个人资料</span></div>
+      <div className="flex items-center justify-between gap-4 px-4 py-3"><span className="flex items-center gap-1.5"><Lock className="h-3 w-3" />审核与隐私门禁</span><span className="text-right text-muted-foreground">系统固定保护</span></div>
+    </section>
+    <section className="rounded-xl border bg-background">
+      <div className="flex items-center justify-between border-b px-4 py-3"><span className="text-xs font-medium">隐私审计记录 · {overview?.records.auditEvents ?? 0}</span><button type="button" disabled={clearing || !events?.length} onClick={() => void clear()} className="rounded-md border px-2.5 py-1.5 text-[11px] text-muted-foreground hover:bg-muted disabled:opacity-40">{clearing ? "清除中" : "清除记录"}</button></div>
+      <div className="max-h-48 overflow-y-auto p-2">{events === null ? <div className="px-2 py-3 text-xs text-muted-foreground">正在读取</div> : events.length === 0 ? <div className="px-2 py-3 text-xs text-muted-foreground">暂无审计记录</div> : events.map((event) => <div key={event.id} className="flex items-center justify-between gap-2 rounded-lg px-2 py-2 text-[11px] hover:bg-muted/50"><span className="min-w-0 truncate">{privacyEventLabels[event.eventType] ?? event.eventType}<span className="text-muted-foreground"> · {event.fileName ?? "未知文件"}</span></span><span className="shrink-0 text-muted-foreground">{event.byteCount === null ? "" : `${Math.max(1, Math.round(event.byteCount / 1024))} KB · `}{new Intl.DateTimeFormat("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(event.createdAt)}</span></div>)}</div>
+    </section>
   </div>;
 }
 
 export function SettingsDialog({ apiBase, onClose }: { apiBase: string; onClose: () => void }) {
-  const [tab, setTab] = useState<"models" | "agents" | "assets" | "privacy">("models");
+  const [tab, setTab] = useState<"models" | "agents" | "privacy">("models");
   const [settings, setSettings] = useState<RuntimeSettings | null>(null);
   const [error, setError] = useState("");
   const [providerOpen, setProviderOpen] = useState(false);
@@ -137,25 +164,11 @@ export function SettingsDialog({ apiBase, onClose }: { apiBase: string; onClose:
     finally { setSaving(false); }
   };
 
-  const toggleAsset = async (type: "lecture" | "tiered_quiz" | "concept_map") => {
-    if (!settings) return;
-    const next = settings.autoAssetTypes.includes(type) ? settings.autoAssetTypes.filter((item) => item !== type) : [...settings.autoAssetTypes, type];
-    if (next.length === 0) return;
-    setSaving(true);
-    try {
-      const response = await fetch(`${apiBase}/api/settings/asset-policy`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ autoAssetTypes: next }) });
-      const data = await response.json() as RuntimeSettings & { success?: boolean; error?: string };
-      if (!response.ok || !data.success) throw new Error(data.error || "资产设置保存失败");
-      setSettings(data);
-    } catch (reason) { setError(reason instanceof Error ? reason.message : "资产设置保存失败"); }
-    finally { setSaving(false); }
-  };
-
   return <div className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/25 p-6" role="dialog" aria-modal="true" aria-label="设置">
     <section className="flex max-h-[calc(100vh-4rem)] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border bg-card shadow-2xl">
       <header className="flex shrink-0 items-center justify-between border-b px-7 py-5"><h2 className="flex items-center gap-2 text-base font-semibold"><Settings className="h-4.5 w-4.5" />设置</h2><button type="button" onClick={onClose} className="rounded-md px-3 py-1.5 text-sm text-muted-foreground hover:bg-muted">关闭</button></header>
       <div className="min-h-0 flex-1 overflow-y-auto px-7 py-5">
-      <div className="mt-4 grid grid-cols-4 rounded-lg bg-muted/70 p-1 text-xs">{([["models", "模型服务"], ["agents", "协同编排"], ["assets", "学习资产"], ["privacy", "数据与隐私"]] as const).map(([key, label]) => <button key={key} type="button" onClick={() => { setTab(key); setError(""); }} className={`rounded-md px-2 py-2 ${tab === key ? "bg-background font-medium shadow-sm" : "text-muted-foreground hover:text-foreground"}`}>{label}</button>)}</div>
+      <div className="mt-4 grid grid-cols-3 rounded-lg bg-muted/70 p-1 text-xs">{([["models", "模型服务"], ["agents", "协同编排"], ["privacy", "数据与隐私"]] as const).map(([key, label]) => <button key={key} type="button" onClick={() => { setTab(key); setError(""); }} className={`rounded-md px-2 py-2 ${tab === key ? "bg-background font-medium shadow-sm" : "text-muted-foreground hover:text-foreground"}`}>{label}</button>)}</div>
       {error && <div className="mt-3 rounded-lg border border-destructive/25 bg-destructive/5 px-3 py-2 text-xs text-destructive">{error}</div>}
       <div className="mt-4 min-h-[300px]">
         {tab === "models" && <div className="space-y-3">
@@ -165,7 +178,7 @@ export function SettingsDialog({ apiBase, onClose }: { apiBase: string; onClose:
               <select value={settings?.activeModel ?? ""} disabled={saving || !settings?.models.length} onChange={(event) => void saveDefault({ activeModel: event.target.value })} className="h-9 min-w-0 rounded-lg border bg-background px-2 text-xs"><option value="">请选择模型</option>{settings?.models.map((model) => <option key={model.id} value={model.id}>{model.displayName}</option>)}</select>
               <select value={settings?.defaultThinkingDepth ?? "medium"} disabled={saving || !settings} onChange={(event) => void saveDefault({ defaultThinkingDepth: event.target.value as ThinkingDepth })} className="h-9 rounded-lg border bg-background px-2 text-xs"><option value="low">low</option><option value="medium">medium</option><option value="high">high</option><option value="max">max</option></select>
             </div>
-            <p className="mt-2 text-[10px] leading-4 text-muted-foreground">思考深度影响每次模型调用的推理投入：低更快，高更稳。学习协同的每个智能体单独发言时都会按这里的配置执行。</p>
+            <p className="mt-2 text-[10px] leading-4 text-muted-foreground">思考深度：低更快，高更稳。</p>
           </div>
           <div className="rounded-xl border p-3">
             <div className="flex items-center justify-between"><span className="text-xs font-medium">已配置服务</span><button type="button" onClick={() => setProviderOpen((value) => !value)} className="rounded-md border px-2.5 py-1.5 text-xs hover:bg-muted">添加服务</button></div>
@@ -184,7 +197,6 @@ export function SettingsDialog({ apiBase, onClose }: { apiBase: string; onClose:
           </div>
         </div>}
         {tab === "agents" && <div>
-          <div className="mb-3 flex items-start gap-2 rounded-lg bg-muted/50 px-3 py-2.5 text-[11px] leading-4 text-muted-foreground"><Radio className="mt-0.5 h-3 w-3 shrink-0" />每个智能体按职责单独选择模型与思考深度；留空则继承默认执行模型。学习协同发起后即按此路由真实执行。</div>
           <div className="divide-y rounded-xl border">
             {agentLabels.map(([id, label, note]) => {
               const route = settings?.agentRouting[id] ?? { modelId: "", thinkingDepth: "inherit" as const };
@@ -198,10 +210,6 @@ export function SettingsDialog({ apiBase, onClose }: { apiBase: string; onClose:
               </div>;
             })}
           </div>
-        </div>}
-        {tab === "assets" && <div>
-          <div className="mb-3 flex items-start gap-2 rounded-lg bg-muted/50 px-3 py-2.5 text-[11px] leading-4 text-muted-foreground"><Radio className="mt-0.5 h-3 w-3 shrink-0" />控制发起一次完整学习任务后自动生成的资产类型；学习页手动生成的资源不受这里限制。</div>
-          <div className="grid grid-cols-3 gap-2">{([["lecture", "讲义"], ["tiered_quiz", "分层习题"], ["concept_map", "知识图谱"]] as const).map(([type, label]) => { const enabled = settings?.autoAssetTypes.includes(type) ?? false; return <button key={type} type="button" disabled={saving || !settings} onClick={() => void toggleAsset(type)} className={`rounded-xl border p-4 text-left ${enabled ? "border-foreground bg-muted/60" : "hover:bg-muted/40"}`}><div className="text-xs font-medium">{label}</div><div className="mt-2 text-[11px] text-muted-foreground">{enabled ? "自动生成" : "关闭"}</div></button>; })}</div>
         </div>}
         {tab === "privacy" && <PrivacyPanel apiBase={apiBase} />}
       </div>

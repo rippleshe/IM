@@ -37,7 +37,7 @@ export interface TaskFactRisk {
   reasons: string[];
 }
 
-/** 任务事实风险纯函数：数值分析、因果判断、现场操作与挑战任务风险更高（升级计划 §4.7） */
+/** 任务事实风险纯函数：数值分析、因果判断与现场操作风险更高（升级计划 §4.7） */
 export function taskFactRisk(request: Pick<StudyRunRequest, 'task' | 'resourceType'>): TaskFactRisk {
   const text = request.task.slice(0, 2000);
   const numericDensity = densityOf(text, NUMERIC_HINTS);
@@ -47,12 +47,7 @@ export function taskFactRisk(request: Pick<StudyRunRequest, 'task' | 'resourceTy
   if (numericDensity > 0) reasons.push(`任务含数值/统计类表述（密度 ${numericDensity.toFixed(2)}），数字必须逐条核对`);
   if (causalDensity > 0) reasons.push('任务含因果判断表述，禁止把相关/异常升级为确定故障原因');
   if (operationalDensity > 0) reasons.push('任务含现场操作表述，操作建议必须有证据或标注为通用流程');
-  const resourceRisk = request.resourceType === 'challenge_task'
-    ? 0.3
-    : request.resourceType === 'tiered_quiz' || request.resourceType === 'practice_guide'
-      ? 0.15
-      : 0;
-  if (resourceRisk >= 0.3) reasons.push('挑战任务直接面向真实判断，事实风险更高');
+  const resourceRisk = request.resourceType === 'tiered_quiz' ? 0.15 : 0;
   const score = Math.min(1, 0.4 * numericDensity + 0.35 * causalDensity + 0.25 * operationalDensity + resourceRisk);
   return { score: Number(score.toFixed(3)), numericDensity, causalDensity, operationalDensity, reasons };
 }
@@ -169,8 +164,8 @@ export function deriveVerificationPolicy(input: PolicyInput): VerificationPolicy
     reasons.push('文档向量检索降级为全文检索：如实记录，门禁保持齐全');
   }
 
-  // 知识图谱/复习卡：可减少生成型调用，但门禁不减少
-  if (input.resourceType === 'concept_map' || input.resourceType === 'review_cards') {
+  // 知识脉络：可减少生成型调用，但门禁不减少
+  if (input.resourceType === 'concept_map') {
     reasons.push('结构化模板资源：生成型调用减少，门禁不减少');
   }
 

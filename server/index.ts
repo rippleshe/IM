@@ -6,7 +6,6 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 import {
-  AUTO_ASSET_TYPES,
   LEARNING_AGENT_IDS,
   getAgentExecutionSettings,
   getRequestedModel,
@@ -23,7 +22,7 @@ import {
   withTimeout,
 } from './study-runtime.js';
 import type { ProviderConfig } from '../src/models/config.js';
-import type { AutoAssetType, LearningAgentId, ThinkingDepth } from './study-runtime.js';
+import type { LearningAgentId, ThinkingDepth } from './study-runtime.js';
 
 
 import express from 'express';
@@ -43,6 +42,7 @@ app.use(express.static(path.join(path.dirname(fileURLToPath(import.meta.url)), '
 import { importMetroPt3Csv } from '../src/learning/metropt3.js';
 import { importMetroPt3CsvPg } from './db/pg-evidence.js';
 import { fallbackPathGraph, generateInitialPathGraph } from './initial-path.js';
+import { LEARNING_ASSISTANT_SYSTEM, RESOURCE_QA_SYSTEM } from './prompts.js';
 import { dataSource, evidenceService, learningStore, identityStore, datasetDb } from './study-context.js';
 import { assetAttemptStats, latestBktUpdate, listDecisions, prereqGapFor, recordLearningDecision } from './decision-service.js';
 import { getLearningDatabase } from './db/client.js';
@@ -82,6 +82,45 @@ function resourceToMarkdown(resource: ResourceDocument): string {
     }
   }
   return lines.join('\n');
+}
+
+function escapeHtml(value: string): string {
+  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+/**
+ * PPT 资源使用可被 PowerPoint 直接打开的 HTML 演示稿导出。
+ * 每个 heading 作为一页，后续正文/列表归入该页；没有 heading 时按内容块分组。
+ */
+function resourceToPresentation(resource: ResourceDocument): string {
+  const slides: Array<{ title: string; body: string[] }> = [];
+  let current: { title: string; body: string[] } | null = null;
+  const start = (title: string) => {
+    current = { title: title || resource.title, body: [] };
+    slides.push(current);
+  };
+  start(resource.title);
+  for (const block of resource.blocks) {
+    if (block.type === 'heading') {
+      start(String(block.content));
+      continue;
+    }
+    if (!current) start(resource.title);
+    if (block.type === 'list' || block.type === 'checklist') {
+      const items = Array.isArray(block.content) ? block.content : [block.content];
+      current!.body.push(...items.map((item) => `• ${typeof item === 'string' ? item : JSON.stringify(item)}`));
+    } else if (block.type === 'code') {
+      const content = block.content as { caption?: string; code?: string };
+      if (content.caption) current!.body.push(content.caption);
+      if (content.code) current!.body.push(content.code);
+    } else if (block.type === 'evidence') {
+      const content = block.content as { label?: string; locator?: string; summary?: string };
+      current!.body.push(`${content.label ?? '证据'}：${content.summary ?? ''}${content.locator ? `（${content.locator}）` : ''}`);
+    } else if (typeof block.content === 'string') current!.body.push(block.content);
+  }
+  if (slides.length > 1 && slides[0]?.body.length === 0) slides.shift();
+  const htmlSlides = slides.map((slide, index) => `<section class="slide"><div class="slide-number">${index + 1} / ${slides.length}</div><h1>${escapeHtml(slide.title)}</h1><div class="body">${slide.body.map((line) => `<p>${escapeHtml(line)}</p>`).join('')}</div></section>`).join('\n');
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>${escapeHtml(resource.title)}</title><style>body{margin:0;background:#e9edf2;font-family:Arial,"Microsoft YaHei",sans-serif}.slide{box-sizing:border-box;width:1280px;height:720px;margin:28px auto;padding:76px 92px;background:#fff;color:#18212b;page-break-after:always;position:relative}.slide h1{font-size:42px;line-height:1.25;border-bottom:4px solid #2563eb;padding-bottom:20px;margin:0 0 34px}.body{font-size:25px;line-height:1.65}.body p{margin:0 0 16px;white-space:pre-wrap}.slide-number{position:absolute;right:92px;top:30px;color:#64748b;font-size:16px}@media print{body{background:#fff}.slide{margin:0}}</style></head><body>${htmlSlides}</body></html>`;
 }
 
 function readCookie(header: string | undefined, name: string): string | undefined {
@@ -179,8 +218,8 @@ async function respondToLearningConversation(learnerId: string, prompt: string):
   const evidencePack = await evidenceService.buildEvidencePack(prompt, { learnerId });
   const route = getAgentExecutionSettings('learning_planning', undefined, undefined);
   const activities: Array<{ agentId: LearningAgentId; name: string; action: string }> = [
-    { agentId: 'learning_planning', name: '学情与路径智能体', action: '结合画像和当前路径理解你的请求' },
-    { agentId: 'evidence_retrieval', name: '知识检索智能体', action: `检索到 ${evidencePack.items.length} 条可用证据` },
+    { agentId: 'learning_planning', name: '学情与路径智能体', action: '读取当前画像、路径节点和你的请求，定位需要调整的学习目标' },
+    { agentId: 'evidence_retrieval', name: '知识检索智能体', action: `从结构化数据与知识库检索 ${evidencePack.items.length} 条证据，并保留来源位置` },
   ];
   let assistant: LearningAssistantOutput;
   try {
@@ -188,7 +227,7 @@ async function respondToLearningConversation(learnerId: string, prompt: string):
       messages: [
         {
           role: 'system',
-          content: '你是工业设备数据诊断训练的学情与路径智能体。仅输出 JSON：reply（面向学习者的简洁中文回复）和 revision（可选）。revision 只能含 addNodes、updateNodes、addEdges。节点字段：knowledgePointId（英文短 ID）、title、description；边字段：fromKnowledgePointId、toKnowledgePointId、relation（prerequisite|branch|application|review）。当用户明确希望调整、补充、细分学习路径时才给 revision；不要修改用户的学完或掌握状态，不要删除已有节点。普通知识问答可用已提供证据回答，并明确不确定性。',
+          content: LEARNING_ASSISTANT_SYSTEM,
         },
         {
           role: 'user',
@@ -202,16 +241,16 @@ async function respondToLearningConversation(learnerId: string, prompt: string):
       ],
       model: route.model,
       temperature: route.thinking.temperature,
-      maxTokens: Math.min(route.thinking.maxTokens, 3_000),
-    }), 15_000, '协同回答超时');
+      maxTokens: Math.min(route.thinking.maxTokens, 5_000),
+    }), 60_000, '协同回答超时');
     assistant = normalizeLearningAssistantOutput(parseJson<unknown>(response.text));
   } catch (error) {
     assistant = { reply: '暂时无法连接协同模型；当前路径没有被修改。你可以稍后重试。', revision: {} };
   }
   const result = await learningStore.applyPathRevision(learnerId, assistant.revision ?? {});
-  activities.push({ agentId: 'cross_validation', name: '交叉验证智能体', action: result.changed ? '已检查新增节点与依赖关系，并写入路径' : '已核对当前路径，无需改动' });
+  activities.push({ agentId: 'cross_validation', name: '交叉验证智能体', action: result.changed ? '检查新增节点是否重复、前置关系是否成立，并写入路径' : '检查节点重复、依赖关系和现有路径后，确认无需改动' });
   const profile = result.changed
-    ? await withTimeout(generateProfileSnapshot(learnerId, route.model, route.thinking), 8_000, '画像更新超时').catch(() => learningStore.getProfile(learnerId))
+    ? await withTimeout(generateProfileSnapshot(learnerId, route.model, route.thinking), 8_000, '画像更新超时').then((snapshot) => snapshot.profile).catch(() => learningStore.getProfile(learnerId))
     : await learningStore.getProfile(learnerId);
   return { assistant, pathChanged: result.changed, profile, activities };
 }
@@ -234,7 +273,7 @@ app.patch('/api/auth/avatar', async (req, res) => {
     res.status(404).json({ success: false, error: '未找到当前用户' });
     return;
   }
-  res.json({ success: true, user });
+  res.json({ success: true, user: await serializeLearner(user) });
 });
 
 /** 用户自传头像：请求体 { image: dataURL | null }，服务端校验类型与大小上限。 */
@@ -255,11 +294,12 @@ app.patch('/api/auth/avatar-image', async (req, res) => {
     res.status(404).json({ success: false, error: '未找到当前用户' });
     return;
   }
-  res.json({ success: true, user });
+  res.json({ success: true, user: await serializeLearner(user) });
 });
 
-app.use('/api/learning', (req, res, next) => {
-  if (!requireLearner(req, res)) return;
+app.use('/api/learning', async (req, res, next) => {
+  const learner = await requireLearner(req, res);
+  if (!learner) return;
   next();
 });
 
@@ -461,11 +501,11 @@ app.post('/api/auth/onboarding', async (req, res) => {
     const path = await learningStore.replacePathGraph(learner.id, pathGraph.nodes, pathGraph.edges);
     let profile;
     try {
-      profile = await withTimeout(
+      profile = (await withTimeout(
         generateProfileSnapshot(learner.id, defaultRoute.model, defaultRoute.thinking),
         8_000,
         '首次画像生成超时',
-      );
+      )).profile;
     } catch (error) {
       console.warn('Initial profile generation skipped:', error instanceof Error ? error.message : String(error));
       profile = await learningStore.getProfile(learner.id);
@@ -589,12 +629,13 @@ app.post('/api/learning/assets/:assetId/quiz-attempts', async (req, res) => {
   const questionId = typeof req.body?.questionId === 'string' ? req.body.questionId : '';
   const answerId = typeof req.body?.answerId === 'string' ? req.body.answerId : '';
   const durationMs = typeof req.body?.durationMs === 'number' ? req.body.durationMs : 0;
+  const selfAssessed = typeof req.body?.selfAssessed === 'boolean' ? req.body.selfAssessed : undefined;
   if (!questionId || !answerId) {
-    res.status(400).json({ success: false, error: '请选择一个答案后再提交' });
+    res.status(400).json({ success: false, error: '请先完成作答再提交' });
     return;
   }
   try {
-    const result = await learningStore.submitQuizAttempt(learner.id, req.params.assetId, questionId, answerId, durationMs);
+    const result = await learningStore.submitQuizAttempt(learner.id, req.params.assetId, questionId, answerId, durationMs, { selfAssessed });
     // 里程碑 E（G12）：作答 → BKT 前后值 → 持久化下一步学习决策
     if (dataSource === 'postgres') {
       const knowledgePointId = result.question && 'knowledgePointId' in result.question
@@ -647,13 +688,74 @@ app.get('/api/learning/catalog', async (_req, res) => {
   }
 });
 
-app.use('/api/settings', (req, res, next) => {
-  if (!requireLearner(req, res)) return;
+app.use('/api/settings', async (req, res, next) => {
+  const learner = await requireLearner(req, res);
+  if (!learner) return;
   next();
 });
 
 app.get('/api/settings', async (_req, res) => {
   res.json(getSettingsPayload());
+});
+
+app.get('/api/settings/data-privacy', async (req, res) => {
+  const learner = await requireLearner(req, res);
+  if (!learner) return;
+  const [profile, path, assets, studyMessages, qaMessages, evidence, auditEvents] = await Promise.all([
+    learningStore.getProfile(learner.id),
+    learningStore.getPathGraph(learner.id),
+    learningStore.listAssets(learner.id),
+    learningStore.listChatMessages(learner.id, 200, 'study'),
+    learningStore.listChatMessages(learner.id, 200, 'resource_qa'),
+    learningStore.listEvidence(learner.id, 50),
+    learningStore.listPrivacyAuditEvents(30),
+  ]);
+  res.json({
+    success: true,
+    source: {
+      kind: dataSource,
+      label: dataSource === 'postgres' ? 'PostgreSQL' : 'SQLite',
+      detail: dataSource === 'postgres' ? '当前运行数据源：PostgreSQL' : '当前运行数据源：本机 SQLite',
+    },
+    records: {
+      assets: assets.length,
+      pathNodes: path.nodes.length,
+      studyMessages: studyMessages.length,
+      resourceQaMessages: qaMessages.length,
+      evidenceItems: evidence.length,
+      auditEvents: auditEvents.length,
+      profileEvidence: profile.evidenceCount,
+    },
+    retention: {
+      temporaryReference: '任务结束即丢弃原文',
+      sharedKnowledge: '系统只读资料',
+      audit: '仅保留文件名、大小、哈希与脱敏字段数量',
+    },
+  });
+});
+
+app.get('/api/settings/export', async (req, res) => {
+  const learner = await requireLearner(req, res);
+  if (!learner) return;
+  const payload = {
+    exportedAt: new Date().toISOString(),
+    dataSource,
+    learner: await identityStore.getById(learner.id),
+    onboarding: await identityStore.getOnboarding(learner.id),
+    profile: await learningStore.getProfile(learner.id),
+    path: await learningStore.getPathGraph(learner.id),
+    assets: await learningStore.listAssets(learner.id),
+    conversations: {
+      path: await learningStore.listChatMessages(learner.id, 200, 'path'),
+      study: await learningStore.listChatMessages(learner.id, 200, 'study'),
+      resourceQa: await learningStore.listChatMessages(learner.id, 200, 'resource_qa'),
+    },
+    evidence: await learningStore.listEvidence(learner.id, 50),
+  };
+  const fileName = `im-training-agent-data-${learner.loginName}.json`;
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="learning-data.json"; filename*=UTF-8''${encodeURIComponent(fileName)}`);
+  res.send(JSON.stringify(payload, null, 2));
 });
 
 app.post('/api/settings/providers', async (req, res) => {
@@ -756,22 +858,6 @@ app.post('/api/settings/default-execution', async (req, res) => {
   res.json(getSettingsPayload());
 });
 
-app.post('/api/settings/asset-policy', async (req, res) => {
-  const submitted = req.body?.autoAssetTypes;
-  if (!Array.isArray(submitted)) {
-    res.status(400).json({ success: false, error: '学习资产设置无效' });
-    return;
-  }
-  const selected = submitted.filter((type): type is AutoAssetType => AUTO_ASSET_TYPES.includes(type as AutoAssetType));
-  if (selected.length === 0) {
-    res.status(400).json({ success: false, error: '请至少保留一类自动生成的学习资产' });
-    return;
-  }
-  runtimeWorkbenchSettings.autoAssetTypes = Array.from(new Set(selected));
-  saveRuntimeWorkbenchSettings();
-  res.json(getSettingsPayload());
-});
-
 app.get('/api/settings/privacy-audit', async (req, res) => {
   const limit = typeof req.query['limit'] === 'string' ? Number(req.query['limit']) : 8;
   res.json({ success: true, events: await learningStore.listPrivacyAuditEvents(Number.isFinite(limit) ? limit : 8) });
@@ -804,10 +890,68 @@ app.get('/api/learning/assets', async (req, res) => {
   res.json({ success: true, learnerId: learner.id, assets: await learningStore.listAssets(learner.id) });
 });
 
+app.get('/api/learning/resource-qa', async (req, res) => {
+  const learner = await requireLearner(req, res);
+  if (!learner) return;
+  res.json({ success: true, messages: await learningStore.listChatMessages(learner.id, 80, 'resource_qa') });
+});
+
+app.post('/api/learning/resource-qa', async (req, res) => {
+  const learner = await requireLearner(req, res);
+  if (!learner) return;
+  const question = typeof req.body?.question === 'string' ? req.body.question.trim().slice(0, 3_000) : '';
+  const requestedAssetId = typeof req.body?.assetId === 'string' ? req.body.assetId : '';
+  if (!question) {
+    res.status(400).json({ success: false, error: '请输入想问的问题' });
+    return;
+  }
+  const assets = await learningStore.listAssets(learner.id);
+  const selectedAsset = requestedAssetId ? assets.find((asset) => asset.id === requestedAssetId) : undefined;
+  if (requestedAssetId && !selectedAsset) {
+    res.status(404).json({ success: false, error: '未找到要提问的资源' });
+    return;
+  }
+  const userMessage = await learningStore.saveChatMessage(learner.id, 'user', question, { surface: 'resource_qa', assetId: selectedAsset?.id ?? null });
+  const history = await learningStore.listChatMessages(learner.id, 14, 'resource_qa');
+  // 选中资源优先、限制注入长度：保证上下文聚焦且不超窗
+  const orderedAssets = selectedAsset
+    ? [selectedAsset, ...assets.filter((asset) => asset.id !== selectedAsset.id)]
+    : assets;
+  const resourceContext = orderedAssets.slice(0, 12).map((asset) => ({
+    id: asset.id,
+    title: asset.title,
+    type: asset.type,
+    learningObjectives: asset.learningObjectives,
+    content: asset.blocks.slice(0, 30)
+      .map((block) => typeof block.content === 'string' ? block.content : JSON.stringify(block.content))
+      .join('\n')
+      .slice(0, asset.id === selectedAsset?.id ? 6_000 : 1_800),
+  }));
+  const route = getAgentExecutionSettings('domain_expert', undefined, undefined);
+  let answer = '';
+  try {
+    const response = await withTimeout(multiModelClient.simple({
+      messages: [
+        { role: 'system', content: RESOURCE_QA_SYSTEM },
+        { role: 'user', content: JSON.stringify({ question, selectedResourceId: selectedAsset?.id ?? null, resources: resourceContext, recentConversation: history.slice(-12).map((item) => ({ role: item.role, content: item.content.slice(0, 600) })) }) },
+      ],
+      model: route.model,
+      temperature: Math.min(route.thinking.temperature, 0.35),
+      maxTokens: Math.min(route.thinking.maxTokens, 4_000),
+    }), 90_000, '资源问答超时');
+    answer = response.text.trim();
+  } catch {
+    answer = '暂时无法连接问答服务。你的问题已保留，稍后可以继续提问。';
+  }
+  if (!answer) answer = '现有资源中暂时没有足够依据回答这个问题。';
+  const assistantMessage = await learningStore.saveChatMessage(learner.id, 'assistant', answer, { surface: 'resource_qa', assetId: selectedAsset?.id ?? null });
+  res.json({ success: true, userMessage, assistantMessage });
+});
+
 app.get('/api/learning/profile', async (req, res) => {
   const learner = await requireLearner(req, res);
   if (!learner) return;
-  const profile = await learningStore.getProfile(learner.id);
+  const profile = (await generateProfileSnapshot(learner.id)).profile;
   const insights = await buildProfileInsights(learner.id);
   res.json({ success: true, profile: { ...profile, ...insights } });
 });
@@ -830,8 +974,8 @@ app.post('/api/learning/profile/regenerate', async (req, res) => {
   if (!learner) return;
   try {
     const thinking = getThinkingSettings(req.body?.thinkingDepth);
-    const profile = await withTimeout(generateProfileSnapshot(learner.id, getRequestedModel(req.body?.model), thinking), 8_000, '学习画像生成超时');
-    res.json({ success: true, profile });
+    const result = await withTimeout(generateProfileSnapshot(learner.id, getRequestedModel(req.body?.model), thinking), 8_000, '学习画像生成超时');
+    res.json({ success: true, ...result });
   } catch (error) {
     res.status(500).json({ success: false, error: error instanceof Error ? error.message : String(error) });
   }
@@ -852,16 +996,24 @@ app.get('/api/learning/assets/:assetId/export', async (req, res) => {
     res.status(404).json({ success: false, error: '未找到该学习资产' });
     return;
   }
-  const format = req.query['format'] === 'json' ? 'json' : req.query['format'] === 'txt' ? 'txt' : 'md';
+  const format = req.query['format'] === 'json' ? 'json' : req.query['format'] === 'txt' ? 'txt' : req.query['format'] === 'ppt' ? 'ppt' : 'md';
   const safeName = resource.title.replace(/[\\/:*?"<>|]/g, '-').slice(0, 80) || 'learning-resource';
+  const fileName = `${safeName}.${format}`;
+  const disposition = `attachment; filename="learning-resource.${format}"; filename*=UTF-8''${encodeURIComponent(fileName)}`;
   if (format === 'json') {
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
-    res.setHeader('Content-Disposition', `attachment; filename="${safeName}.json"`);
+    res.setHeader('Content-Disposition', disposition);
     res.send(JSON.stringify(resource, null, 2));
     return;
   }
+  if (format === 'ppt') {
+    res.setHeader('Content-Type', 'application/vnd.ms-powerpoint; charset=utf-8');
+    res.setHeader('Content-Disposition', disposition);
+    res.send(resourceToPresentation(resource));
+    return;
+  }
   res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-  res.setHeader('Content-Disposition', `attachment; filename="${safeName}.${format}"`);
+  res.setHeader('Content-Disposition', disposition);
   res.send(format === 'md' ? resourceToMarkdown(resource) : resourceToMarkdown(resource).replace(/^#+\s?/gm, '').replace(/`/g, ''));
 });
 

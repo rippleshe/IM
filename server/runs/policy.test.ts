@@ -48,16 +48,16 @@ const BASE_POLICY_INPUT = {
 };
 
 describe('任务事实风险（升级计划 §4.7）', () => {
-  it('数值/因果/操作表述提升对应密度，挑战任务风险更高', () => {
+  it('数值/因果/操作表述提升对应密度，习题任务风险更高', () => {
     const numeric = taskFactRisk({ task: '统计故障阈值并计算百分比准确率', resourceType: 'lecture' });
     expect(numeric.numericDensity).toBeGreaterThan(0);
     const causal = taskFactRisk({ task: '解释故障原因和因果机理', resourceType: 'lecture' });
     expect(causal.causalDensity).toBeGreaterThan(0);
     const operational = taskFactRisk({ task: '给出现场检修操作步骤', resourceType: 'lecture' });
     expect(operational.operationalDensity).toBeGreaterThan(0);
-    const challenge = taskFactRisk({ task: '分析数据', resourceType: 'challenge_task' });
+    const quiz = taskFactRisk({ task: '分析数据', resourceType: 'tiered_quiz' });
     const plain = taskFactRisk({ task: '分析数据', resourceType: 'lecture' });
-    expect(challenge.score).toBeGreaterThan(plain.score);
+    expect(quiz.score).toBeGreaterThan(plain.score);
     expect(taskFactRisk({ task: '随机泛化任务', resourceType: 'lecture' }).score).toBeLessThan(0.15);
   });
 });

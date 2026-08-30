@@ -2,6 +2,8 @@ import path from "node:path";
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // 开发工具只保留在终端，学习产品界面不展示 Next 的悬浮入口。
+  devIndicators: false,
   // 挑战杯交付：standalone 产物供容器化运行（web/Dockerfile）
   output: "standalone",
   // pnpm workspace + turbopack：root 必须指向 lockfile 所在的 workspace 根，

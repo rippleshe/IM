@@ -1,13 +1,11 @@
 export type LearningResourceType =
   | 'lecture'
+  | 'presentation'
   | 'concept_map'
-  | 'practice_guide'
-  | 'review_cards'
-  | 'tiered_quiz'
-  | 'challenge_task';
+  | 'tiered_quiz';
 
 const LEARNING_RESOURCE_TYPE_VALUES: readonly LearningResourceType[] = [
-  'lecture', 'concept_map', 'practice_guide', 'review_cards', 'tiered_quiz', 'challenge_task',
+  'lecture', 'presentation', 'concept_map', 'tiered_quiz',
 ];
 
 export function isLearningResourceType(value: unknown): value is LearningResourceType {
@@ -91,11 +89,18 @@ export interface QuizOption {
   text: string;
 }
 
+/** 题型：choice 四选一；blank 填空（answer 为标准答案，可含「|」多候选）；short_answer 简答（对照参考答案自评） */
+export type QuizQuestionType = 'choice' | 'blank' | 'short_answer';
+
 export interface QuizQuestion {
   id: string;
+  /** 缺省为 choice（兼容历史资产） */
+  type?: QuizQuestionType;
   level: 'L1' | 'L2' | 'L3';
   prompt: string;
-  options: QuizOption[];
+  /** 仅 choice 题使用 */
+  options?: QuizOption[];
+  /** choice：正确选项 id；blank：标准答案（可含 | 多候选）；short_answer：参考答案要点 */
   answerId: string;
   explanation: string;
   evidenceIds: string[];

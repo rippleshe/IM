@@ -14,9 +14,10 @@ import {
   Table2,
 } from "lucide-react";
 import type { AuthenticatedUser } from "@/components/auth-entry";
-import { AvatarBubble } from "@/components/profile-dialog";
+import { AvatarBubble, ProfileDialog } from "@/components/profile-dialog";
+import { SettingsDialog } from "@/components/settings-dialog";
 
-type ResourceType = "lecture" | "tiered_quiz" | "practice_guide" | "concept_map" | "review_cards" | "challenge_task";
+type ResourceType = "lecture" | "tiered_quiz" | "presentation" | "concept_map";
 
 type RunSummary = {
   id: string;
@@ -101,8 +102,7 @@ const NODE_LABELS: Record<string, string> = {
 };
 
 const RESOURCE_LABELS: Record<string, string> = {
-  lecture: "讲义", tiered_quiz: "分层习题", practice_guide: "实操指南",
-  concept_map: "知识图谱", review_cards: "复习卡片", challenge_task: "挑战任务",
+  lecture: "讲义", tiered_quiz: "分层习题", presentation: "PPT", concept_map: "知识脉络",
 };
 
 function rateText(rate: number | null): string {
@@ -119,9 +119,10 @@ type ValidationWorkbenchProps = {
   user: AuthenticatedUser;
   onLogout: () => void;
   onNavigate: (view: "path" | "study" | "resources" | "validation") => void;
+  onUserChange?: (user: AuthenticatedUser) => void;
 };
 
-export function ValidationWorkbench({ apiBase, user, onLogout, onNavigate }: ValidationWorkbenchProps) {
+export function ValidationWorkbench({ apiBase, user, onLogout, onNavigate, onUserChange }: ValidationWorkbenchProps) {
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [trace, setTrace] = useState<TraceData | null>(null);
@@ -129,6 +130,8 @@ export function ValidationWorkbench({ apiBase, user, onLogout, onNavigate }: Val
   const [verifying, setVerifying] = useState(false);
   const [loading, setLoading] = useState(true);
   const [notice, setNotice] = useState("");
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
 
   const loadRuns = useCallback(async () => {
     const response = await fetch(`${apiBase}/api/learning/runs`, { credentials: "include" });
@@ -198,9 +201,9 @@ export function ValidationWorkbench({ apiBase, user, onLogout, onNavigate }: Val
   return <main className="flex h-screen min-h-0 flex-col overflow-hidden bg-background">
     <header className="flex h-16 shrink-0 items-center justify-between border-b px-5 sm:px-7">
       <div className="flex items-center gap-2.5"><AvatarBubble user={user} size="h-9 w-9 text-xs" /><span className="min-w-0"><span className="block text-sm font-semibold tracking-tight">IM-Training-Agent</span><span className="block text-[11px] text-muted-foreground">{user.displayName}</span></span></div>
-      <nav aria-label="学习空间" className="flex items-center rounded-lg border bg-muted/40 p-1 text-sm"><button type="button" onClick={logout} className="rounded-md px-3 py-1.5 text-muted-foreground hover:text-foreground">退出</button><button type="button" onClick={() => onNavigate("path")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">路径</button><button type="button" onClick={() => onNavigate("study")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">学习</button><button type="button" onClick={() => onNavigate("resources")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">资源</button><button type="button" className="rounded-md bg-background px-4 py-1.5 font-medium shadow-sm">验证</button></nav>
-      <span className="text-xs text-muted-foreground">可信协同验证台</span>
-    </header>
+      <nav aria-label="学习空间" className="flex items-center rounded-lg border bg-muted/40 p-1 text-sm"><button type="button" onClick={() => setSettingsOpen(true)} className="rounded-md px-3 py-1.5 text-muted-foreground hover:text-foreground">设置</button><button type="button" onClick={() => setProfileOpen(true)} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">画像</button><button type="button" onClick={() => onNavigate("path")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">路径</button><button type="button" onClick={() => onNavigate("study")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">学习</button><button type="button" onClick={() => onNavigate("resources")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">资源</button><button type="button" className="rounded-md bg-background px-4 py-1.5 font-medium shadow-sm">验证</button></nav>
+      <button type="button" onClick={() => void logout()} className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-2 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"><LogOut className="h-3.5 w-3.5" />退出</button>
+     </header>
 
     <div className="min-h-0 flex-1 overflow-y-auto">
       <div className="mx-auto max-w-5xl space-y-6 px-5 py-6 sm:px-7">
@@ -212,7 +215,7 @@ export function ValidationWorkbench({ apiBase, user, onLogout, onNavigate }: Val
             <button type="button" onClick={() => void loadRuns()} className="inline-flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-[11px] hover:bg-muted"><RefreshCw className="h-3 w-3" />刷新</button>
           </div>
           {loading ? <p className="mt-3 text-xs text-muted-foreground">正在读取运行历史…</p> : runs.length === 0
-            ? <p className="mt-3 text-xs leading-5 text-muted-foreground">还没有协同运行记录。到「学习」页发起一次协同生成，这里会展示完整的验证链。</p>
+            ? <p className="mt-3 text-xs leading-5 text-muted-foreground">还没有协同运行记录，到「学习」页发起一次后可在这里查看验证链。</p>
             : <div className="mt-3 grid gap-2 sm:grid-cols-2">
                 {runs.map((run) => (
                   <button key={run.id} type="button" onClick={() => setSelectedRunId(run.id)}
@@ -233,7 +236,7 @@ export function ValidationWorkbench({ apiBase, user, onLogout, onNavigate }: Val
         {trace && <>
           {/* 2. 可信摘要 */}
           <section aria-label="可信摘要" className="rounded-2xl border bg-card p-5">
-            <div className="flex items-center gap-2"><ShieldCheck className="h-4 w-4" /><h2 className="text-sm font-semibold">可信摘要</h2><span className="text-[11px] text-muted-foreground">{trace.run.id}</span></div>
+             <div className="flex items-center gap-2"><ShieldCheck className="h-4 w-4" /><h2 className="text-sm font-semibold">可信摘要</h2></div>
             <div className="mt-3 grid grid-cols-2 gap-2 text-center sm:grid-cols-6">
               <Metric label="证据条数" value={evidenceCount} />
               <Metric label="事实声明" value={auditableClaims.length} />
@@ -242,12 +245,16 @@ export function ValidationWorkbench({ apiBase, user, onLogout, onNavigate }: Val
               <Metric label="修订轮数" value={revisionCount} />
               <Metric label="发布结论" value={released ? "已放行" : published ? "异常" : "未放行"} tone={released ? "ok" : "warn"} />
             </div>
-            {trace.verificationPolicy?.reasons?.length ? <p className="mt-3 text-[11px] leading-4 text-muted-foreground">检索后策略修正：{trace.verificationPolicy.reasons.join("；")}</p> : null}
+             {trace.verificationPolicy ? <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-muted-foreground">
+               <span className="rounded-full border bg-background px-2.5 py-1">证据覆盖：{coverageLabel(trace.verificationPolicy.coverageStatus)}</span>
+               <span className="rounded-full border bg-background px-2.5 py-1">校验强度：{strengthLabel(trace.verificationPolicy.strength)}</span>
+               {trace.verificationPolicy.reasons?.length ? <span className="rounded-full border bg-background px-2.5 py-1">附加约束 {trace.verificationPolicy.reasons.length} 项</span> : null}
+             </div> : null}
           </section>
 
           {/* 3. 协同链 */}
           <section aria-label="协同链" className="rounded-2xl border bg-card p-5">
-            <div className="flex items-center gap-2"><Link2 className="h-4 w-4" /><h2 className="text-sm font-semibold">协同运行链</h2><span className="text-[11px] text-muted-foreground">每个执行者的输入引用、公开结论与产物散列（默认折叠）</span></div>
+             <div className="flex items-center gap-2"><Link2 className="h-4 w-4" /><h2 className="text-sm font-semibold">协同运行链</h2></div>
             <div className="mt-3 space-y-2">
               {trace.nodes.map((node) => {
                 const artifact = trace.artifacts.find((item) => item.nodeKey === node.nodeKey && item.attempt === node.attempt && ["learner_snapshot", "evidence_set", "domain_brief", "resource_draft", "claim_audit", "challenge_set", "adjudication", "privacy_decision", "publication_decision"].includes(item.artifactType));
@@ -269,7 +276,7 @@ export function ValidationWorkbench({ apiBase, user, onLogout, onNavigate }: Val
                       <p className="break-all"><span className="text-muted-foreground">产物散列：</span><code className="text-[10px]">{artifact.contentHash.slice(0, 32)}…</code></p>
                       <p><span className="text-muted-foreground">生产者：</span>{artifact.producer.kind === "agent" ? `模型 ${artifact.producer.model ?? "—"}` : artifact.producer.kind === "rule" ? "确定性规则" : artifact.producer.kind}</p>
                       {artifact.publicRationale.uncertainty.length > 0 ? <p className="text-amber-700"><span className="text-muted-foreground">不确定：</span>{artifact.publicRationale.uncertainty.join("；")}</p> : null}
-                    </> : <p className="text-muted-foreground">{node.resultSummary ?? "该节点暂无主产物（可能未执行或历史运行）"}</p>}
+                    </> : <p className="text-muted-foreground">{node.resultSummary ?? "暂无主产物"}</p>}
                   </div>
                 </details>;
               })}
@@ -278,8 +285,8 @@ export function ValidationWorkbench({ apiBase, user, onLogout, onNavigate }: Val
 
           {/* 4. 声明证据表 */}
           <section aria-label="声明证据表" className="rounded-2xl border bg-card p-5">
-            <div className="flex items-center gap-2"><Table2 className="h-4 w-4" /><h2 className="text-sm font-semibold">声明证据表</h2><span className="text-[11px] text-muted-foreground">按逻辑声明聚组：终稿 verdict 与证据定位</span></div>
-            {trace.claimTrace.length === 0 ? <p className="mt-3 text-xs text-muted-foreground">该运行没有可核对的声明（历史运行或尚未生成）。</p> : (
+            <div className="flex items-center gap-2"><Table2 className="h-4 w-4" /><h2 className="text-sm font-semibold">声明证据表</h2></div>
+            {trace.claimTrace.length === 0 ? <p className="mt-3 text-xs text-muted-foreground">该运行没有可核对的声明。</p> : (
               <div className="mt-3 overflow-x-auto">
                 <table className="w-full min-w-[640px] text-left text-[11px]">
                   <thead><tr className="border-b text-muted-foreground"><th className="py-2 pr-3 font-medium">声明内容</th><th className="py-2 pr-3 font-medium">类型</th><th className="py-2 pr-3 font-medium">轮次</th><th className="py-2 pr-3 font-medium">终稿结论</th><th className="py-2 pr-3 font-medium">证据定位</th><th className="py-2 font-medium">质询议题</th></tr></thead>
@@ -303,10 +310,15 @@ export function ValidationWorkbench({ apiBase, user, onLogout, onNavigate }: Val
 
           {/* 5. 前后对照 */}
           <section aria-label="前后对照" className="rounded-2xl border bg-card p-5">
-            <div className="flex items-center gap-2"><BadgeCheck className="h-4 w-4" /><h2 className="text-sm font-semibold">前后对照</h2><span className="text-[11px] text-muted-foreground">同一运行各修订轮的声明与结论变化</span></div>
-            {attempts.length <= 1
-              ? <p className="mt-3 text-xs leading-5 text-muted-foreground">本次运行 {attempts.length === 1 ? `只有第 ${attempts[0]} 轮（一轮通过门禁，无修订）` : "没有声明数据"}。运行起点与生成结束的学情快照{trace.snapshots.runStart && trace.snapshots.generationEnd ? "均已固化，可在导出包中对照" : "仅部分固化（历史运行）"}。</p>
-              : <div className="mt-3 space-y-2">
+            <div className="flex items-start gap-2"><BadgeCheck className="mt-0.5 h-4 w-4" /><h2 className="text-sm font-semibold">前后对照</h2></div>
+             {attempts.length <= 1
+               ? <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                   <Metric label="运行轮次" value={attempts.length || "—"} />
+                   <Metric label="起始快照" value={trace.snapshots.runStart ? "已记录" : "—"} tone={trace.snapshots.runStart ? "ok" : undefined} />
+                   <Metric label="收尾快照" value={trace.snapshots.generationEnd ? "已记录" : "—"} tone={trace.snapshots.generationEnd ? "ok" : undefined} />
+                   <Metric label="可对照" value={trace.snapshots.runStart && trace.snapshots.generationEnd ? "可用" : "部分"} tone={trace.snapshots.runStart && trace.snapshots.generationEnd ? "ok" : "warn"} />
+                 </div>
+               : <div className="mt-3 space-y-2">
                   {attempts.map((attempt) => {
                     const stageClaims = trace.claimGraph.filter((claim) => (claim.attempt ?? 1) === attempt);
                     const unsupported = stageClaims.filter((claim) => claim.verdict === "unsupported").length;
@@ -322,19 +334,19 @@ export function ValidationWorkbench({ apiBase, user, onLogout, onNavigate }: Val
           {/* 6. 离线校验结果 */}
           <section aria-label="离线校验" className="rounded-2xl border bg-card p-5">
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2"><ScrollText className="h-4 w-4" /><h2 className="text-sm font-semibold">离线校验</h2></div>
+              <div className="flex items-start gap-2"><ScrollText className="mt-0.5 h-4 w-4" /><h2 className="text-sm font-semibold">离线校验</h2></div>
               <button type="button" onClick={() => void runVerify()} disabled={verifying} className="inline-flex h-8 items-center gap-1 rounded-lg border px-3 text-xs font-medium hover:bg-muted disabled:opacity-50">{verifying ? "校验中…" : "运行离线复算"}</button>
             </div>
             {verify ? <div className="mt-3 space-y-1.5 text-[11px]">
               {verify.integrity.checks.map((check) => <div key={check.id} className="flex items-start gap-2"><span className={check.passed ? "text-emerald-600" : "text-destructive"}>{check.passed ? "✔" : "✘"}</span><span><span className="font-medium">{check.label}</span><span className="text-muted-foreground">：{check.detail}</span></span></div>)}
               {verify.replay.attempts.map((attempt) => <div key={attempt.attempt} className="text-muted-foreground">第 {attempt.attempt} 轮回放门禁 {attempt.ruleGate}，在线裁决 {attempt.recordedVerdict ?? "缺记录"} → {attempt.match ? "一致（不更松）" : "✘ 不一致"}</div>)}
               {verify.replay.differences.length > 0 ? <p className="text-destructive">{verify.replay.differences.join("；")}</p> : null}
-            </div> : <p className="mt-3 text-xs leading-5 text-muted-foreground">离线复算不调用模型：核对产物散列、引用完整、门禁一致与发布依据，可在不依赖模型的情况下复核本次运行。</p>}
+            </div> : <p className="mt-3 text-xs text-muted-foreground">点击「运行离线复算」核对本次运行的产物散列、引用与门禁一致性。</p>}
           </section>
 
           {/* 7. 导出入口 */}
           <section aria-label="导出" className="flex flex-wrap items-center justify-between rounded-2xl border bg-card p-5">
-            <div className="flex items-center gap-2"><FileJson className="h-4 w-4" /><div><h2 className="text-sm font-semibold">比赛证据包</h2><p className="mt-0.5 text-[11px] text-muted-foreground">画像快照 + 协同链产物 + 声明图 + 裁决 + 资源，可用于离线回放复核</p></div></div>
+             <div className="flex items-start gap-2"><FileJson className="mt-0.5 h-4 w-4" /><h2 className="text-sm font-semibold">证据包</h2></div>
             <div className="flex gap-2">
               <button type="button" onClick={() => window.open(`${apiBase}/api/learning/runs/${encodeURIComponent(trace.run.id)}/export`, "_blank", "noopener,noreferrer")} className="inline-flex h-8 items-center gap-1 rounded-lg border px-3 text-xs font-medium hover:bg-muted"><Download className="h-3.5 w-3.5" />下载 JSON</button>
               <button type="button" onClick={() => onNavigate("resources")} className="inline-flex h-8 items-center rounded-lg border px-3 text-xs hover:bg-muted">前往资源页</button>
@@ -343,6 +355,8 @@ export function ValidationWorkbench({ apiBase, user, onLogout, onNavigate }: Val
         </>}
       </div>
     </div>
+    {settingsOpen && <SettingsDialog apiBase={apiBase} onClose={() => setSettingsOpen(false)} />}
+    {profileOpen && <ProfileDialog apiBase={apiBase} user={user} onUserChange={onUserChange} onClose={() => setProfileOpen(false)} />}
   </main>;
 }
 
@@ -351,6 +365,14 @@ function Metric({ label, value, tone }: { label: string; value: string | number;
     <div className="text-[10px] text-muted-foreground">{label}</div>
     <div className={`mt-1 text-sm font-semibold ${tone === "warn" ? "text-amber-700" : tone === "ok" ? "text-emerald-700" : ""}`}>{value}</div>
   </div>;
+}
+
+function coverageLabel(value: string | undefined): string {
+  return value === "rich" ? "充分" : value === "sparse" ? "偏少" : value === "normal" ? "正常" : "—";
+}
+
+function strengthLabel(value: string | undefined): string {
+  return value === "strict" ? "从严" : value === "standard" ? "标准" : "—";
 }
 
 function claimTypeLabel(claimType: string | null): string {

@@ -13,8 +13,17 @@ import { verifyClaims } from '../../src/learning/claim-verification.js';
 import { crossValidate } from '../../src/learning/evidence.js';
 import { calibrateDifficulty, type DifficultyCalibration, type ScaffoldStrength } from '../../src/learning/difficulty.js';
 import { normalizeKnowledgePointId } from '../../src/learning/store.js';
-import { buildLlmResourceDocument, buildResourceDraft } from '../../src/learning/resource-builder.js';
+import { buildLlmResourceDocument, buildResourceDraft, parseLlmResourceDraft } from '../../src/learning/resource-builder.js';
 import type { EvidencePack, LearningResourceType, ResourceDocument } from '../../src/learning/types.js';
+import {
+  ASSESS_LEARNER_SYSTEM,
+  CRITIC_SYSTEM,
+  DOMAIN_ANALYST_SYSTEM,
+  JUDGE_SYSTEM,
+  RESOURCE_TYPE_LABELS,
+  resourceGenerationSystem,
+  resourceGenerationUserHint,
+} from '../prompts.js';
 import { evidenceService, learningStore } from '../study-context.js';
 import { getAgentExecutionSettings, multiModelClient, parseJson, withTimeout } from '../study-runtime.js';
 import { getLearningDatabase } from '../db/client.js';
@@ -83,17 +92,34 @@ function runDb() {
   return getLearningDatabase().db;
 }
 
-async function callAgent(agentId: LearningAgentId, system: string, user: string, maxTokens = 1600): Promise<string> {
+async function callAgent(agentId: LearningAgentId, system: string, user: string, maxTokens = 3_000): Promise<string> {
   const route = getAgentExecutionSettings(agentId, undefined, undefined);
   const response = await withTimeout(
     multiModelClient.simple({
       messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
       model: route.model,
       temperature: route.thinking.temperature,
+      // 推理模型的思维段同样占用输出预算，节点的 JSON 正文必须留足余量
       maxTokens: Math.min(route.thinking.maxTokens, maxTokens),
     }),
-    30_000,
+    90_000,
     '模型调用超时',
+  );
+  return response.text;
+}
+
+/** 资源生成长文专用：不受角色路由的输出上限约束，超时与预算独立放宽 */
+async function callResourceGeneration(agentId: LearningAgentId, system: string, user: string, maxTokens: number): Promise<string> {
+  const route = getAgentExecutionSettings(agentId, undefined, undefined);
+  const response = await withTimeout(
+    multiModelClient.simple({
+      messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
+      model: route.model,
+      temperature: route.thinking.temperature,
+      maxTokens,
+    }),
+    200_000,
+    '资源生成超时',
   );
   return response.text;
 }
@@ -115,12 +141,14 @@ async function bubble(run: StudyRunRow, role: LearningAgentId, text: string, ext
   });
 }
 
-function evidenceDigest(pack: EvidencePack | null): unknown {
+function evidenceDigest(pack: EvidencePack | null, options: { itemCount?: number; contentLimit?: number } = {}): unknown {
   if (!pack) return [];
-  return pack.items.slice(0, 10).map((item) => ({
+  const itemCount = options.itemCount ?? 10;
+  const contentLimit = options.contentLimit ?? 240;
+  return pack.items.slice(0, itemCount).map((item) => ({
     title: item.sourceTitle,
     locator: item.locator,
-    content: item.content.slice(0, 240),
+    content: item.content.slice(0, contentLimit),
   }));
 }
 
@@ -170,10 +198,9 @@ async function pathNodeOf(run: StudyRunRow) {
   return graph.nodes.find((node) => node.id === run.request.pathNodeId) ?? null;
 }
 
-/** 脚手架强度按资源类型：讲义/实操/卡片/图谱高，习题中，挑战任务低（总规 §7.2） */
+/** 脚手架强度按资源类型：讲义、PPT、图谱高，习题中。 */
 function scaffoldOfType(type: LearningResourceType): ScaffoldStrength {
   if (type === 'tiered_quiz') return 'medium';
-  if (type === 'challenge_task') return 'low';
   return 'high';
 }
 
@@ -254,7 +281,7 @@ async function runAssessLearner(run: StudyRunRow, node: RunNodeSpec, attempt: nu
   let usedAgent = false;
   let systemPrompt = '';
   try {
-    systemPrompt = '你是学习协同中的“学情与路径智能体”。只输出 JSON：{"analysis":"不超过120字的第一人称分析：你看到了什么学习状态，因此本次资源如何定位","requirements":["3到5条对本次资源的具体设计要求"]}。禁止虚构任何数据或作答记录。';
+    systemPrompt = ASSESS_LEARNER_SYSTEM;
     const raw = await callAgent('learning_planning',
       systemPrompt,
       JSON.stringify({
@@ -361,7 +388,7 @@ async function runAnalyzeDomain(run: StudyRunRow, node: RunNodeSpec, attempt: nu
   let usedAgent = false;
   let systemPrompt = '';
   try {
-    systemPrompt = '你是“领域诊断智能体”，负责设备数据分析领域的专业准确性。只输出 JSON：{"points":["3到5条讲解要点"],"boundaries":["2到3条必须强调的专业边界或不确定性提醒"]}。要点与边界必须能在给定证据中找到依据，禁止编造阈值或数据。';
+    systemPrompt = DOMAIN_ANALYST_SYSTEM;
     const raw = await callAgent('domain_expert',
       systemPrompt,
       JSON.stringify({ task: run.request.task, evidence: evidenceDigest(merged) }));
@@ -428,9 +455,12 @@ async function runAnalyzeDomain(run: StudyRunRow, node: RunNodeSpec, attempt: nu
   return `${points.length} 个要点、${boundaries.length} 条边界`;
 }
 
-const RESOURCE_TYPE_LABELS: Record<string, string> = {
-  lecture: '讲义', tiered_quiz: '分层习题', practice_guide: '实操指南',
-  concept_map: '知识图谱', review_cards: '复习卡片', challenge_task: '挑战任务',
+/** 各资源类型的生成预算：推理模型的思维段占用输出预算，讲义长文需要大额余量 */
+const GENERATION_MAX_TOKENS: Record<LearningResourceType, number> = {
+  lecture: 12_000,
+  presentation: 10_000,
+  tiered_quiz: 10_000,
+  concept_map: 8_000,
 };
 
 async function runGenerateResource(run: StudyRunRow, node: RunNodeSpec, attempt: number): Promise<string> {
@@ -439,10 +469,9 @@ async function runGenerateResource(run: StudyRunRow, node: RunNodeSpec, attempt:
   const assess = ctx.assess ?? { analysis: '', requirements: ['从学习者当前水平切入，不跳步'] };
   const domain = ctx.domain ?? { points: [], boundaries: [] };
   const pathNode = await pathNodeOf(run);
-  const typeLabel = RESOURCE_TYPE_LABELS[run.request.resourceType] ?? '讲义';
+  const type = run.request.resourceType;
   const isRevision = attempt > 1;
-  const llmEligible = run.request.resourceType === 'lecture' || run.request.resourceType === 'practice_guide';
-  const calibration = await calibrateForLearner(run, pathNode, run.request.resourceType);
+  const calibration = await calibrateForLearner(run, pathNode, type);
 
   let generated: ResourceDocument | null = null;
   let note = '';
@@ -450,39 +479,35 @@ async function runGenerateResource(run: StudyRunRow, node: RunNodeSpec, attempt:
   let generationPrompt = '';
   // 检索后策略（升级计划 §4.7）：证据稀疏时禁止强事实表达，门禁不放松
   const forbidStrongClaims = run.verificationPolicy?.['forbidStrongFactualClaims'] === true;
-  const sparseConstraint = forbidStrongClaims
-    ? '当前证据覆盖不足（sparse）：禁止输出任何具体数字、阈值或确定性结论，全部改为定性表述并明确标注证据边界。'
-    : '';
-  if (llmEligible) {
-    generationPrompt = (isRevision
-      ? `你是“个性化资源生成智能体”。审核退回了${typeLabel}初稿中无法与证据核对的内容。只输出修订后的 JSON：{"title":"资源标题","objectives":["2到3条学习目标"],"sections":[{"heading":"小节标题","text":"150到260字的正文"}]}。要求：保持其余内容不变；被退回的表述要么改成与证据一致的数字，要么删除数字改为定性描述；仍禁止编造证据之外的阈值。`
-      : `你是“个性化资源生成智能体”，为学习者生成${typeLabel}。只输出 JSON：{"title":"资源标题","objectives":["2到3条学习目标"],"sections":[{"heading":"小节标题","text":"150到260字的正文"}]}，sections 给 2 到 4 个。要求：融合给定证据；引用数字必须与证据一致；面向初学者；禁止编造证据之外的阈值或结论。`) + (sparseConstraint ? `\n${sparseConstraint}` : '');
-    const payload = isRevision
-      ? { failedClaims: ctx.revision_failed ?? [], designRequirements: assess.requirements, evidence: evidenceDigest(merged) }
-      : { designRequirements: assess.requirements, domainPoints: domain.points, domainBoundaries: domain.boundaries, evidence: evidenceDigest(merged) };
-    try {
-      const raw = await callAgent('resource_generation', generationPrompt, JSON.stringify(payload), 2400);
-      const parsed = parseJson<{ title?: unknown; objectives?: unknown; sections?: unknown }>(raw);
-      const sections = parsed && Array.isArray(parsed.sections) ? parsed.sections.flatMap((item) => {
-        const section = item as { heading?: unknown; text?: unknown };
-        return typeof section.heading === 'string' && typeof section.text === 'string' ? [{ heading: section.heading, text: section.text }] : [];
-      }) : [];
-      if (parsed && typeof parsed.title === 'string' && sections.length >= 2) {
-        generated = buildLlmResourceDocument(`study-${run.id}-${attempt}`, run.request.task, run.request.resourceType, merged, pathNode?.knowledgePointId, {
-          title: parsed.title,
-          objectives: Array.isArray(parsed.objectives) ? parsed.objectives.map((item) => String(item)) : [],
-          sections,
-        }, { calibration });
-        usedLlm = generated !== null;
+  generationPrompt = resourceGenerationSystem({ type, isRevision, forbidStrongClaims });
+  const payload = isRevision
+    ? {
+        failedClaims: ctx.revision_failed ?? [],
+        designRequirements: assess.requirements,
+        evidence: evidenceDigest(merged, { itemCount: 14, contentLimit: 500 }),
       }
-    } catch { /* 模板兜底 */ }
-    if (!generated) {
-      generated = buildResourceDraft(`study-${run.id}-${attempt}`, run.request.task, run.request.resourceType, merged, pathNode?.knowledgePointId, { calibration });
-      note = isRevision ? '修订轮使用内置结构模板保证可追溯。' : '生成模型不可用，已使用内置结构模板。';
+    : {
+        designRequirements: assess.requirements,
+        domainPoints: domain.points,
+        domainBoundaries: domain.boundaries,
+        evidence: evidenceDigest(merged, { itemCount: 14, contentLimit: 500 }),
+      };
+  try {
+    const raw = await callResourceGeneration('resource_generation', generationPrompt, `${JSON.stringify(payload)}\n\n${resourceGenerationUserHint(isRevision)}`, GENERATION_MAX_TOKENS[type]);
+    const llm = parseLlmResourceDraft(type, parseJson<unknown>(raw));
+    if (llm) {
+      generated = buildLlmResourceDocument(`study-${run.id}-${attempt}`, run.request.task, type, merged, pathNode?.knowledgePointId, llm, { calibration });
+      usedLlm = generated !== null;
+    } else {
+      console.warn(`[generate.resource] 模型输出无法解析为 ${type} 草稿，回退模板：${raw.slice(0, 200)}`);
     }
-  } else {
-    generated = buildResourceDraft(`study-${run.id}-${attempt}`, run.request.task, run.request.resourceType, merged, pathNode?.knowledgePointId, { calibration });
-    note = '该资源类型使用结构化模板生成，证据引用保持可回溯。';
+  } catch (error) {
+    // 生成失败必须留下原因（超时/网络/额度），否则排障时只能看到"模型不可用"
+    console.warn(`[generate.resource] 模型调用失败（${type}${isRevision ? '，修订轮' : ''}），回退模板：`, error instanceof Error ? error.message : error);
+  }
+  if (!generated) {
+    generated = buildResourceDraft(`study-${run.id}-${attempt}`, run.request.task, type, merged, pathNode?.knowledgePointId, { calibration });
+    note = isRevision ? '修订轮使用内置结构模板保证可追溯。' : '生成模型不可用，已使用内置结构模板。';
   }
   if (forbidStrongClaims) {
     note = note ? `${note}证据稀疏：已按策略要求保守表达。` : '证据稀疏：已按策略要求保守表达。';
@@ -502,8 +527,18 @@ async function runGenerateResource(run: StudyRunRow, node: RunNodeSpec, attempt:
   }, ['assess.learner', 'retrieve.structured', 'retrieve.document', 'analyze.domain'], usedLlm
     ? agentProducer(generationPrompt, getAgentExecutionSettings('resource_generation', undefined, undefined))
     : RULE_PRODUCER);
+  // 气泡向学习者公开生成结构：不同资源类型给出各自的构成清单，而不是只有块数
+  const describeStructure = (doc: ResourceDocument): string => {
+    const headings = doc.blocks.filter((block) => block.type === 'heading').map((block) => String(block.content));
+    const questionBlock = doc.blocks.find((block) => block.type === 'question')?.content as { questions?: unknown[] } | undefined;
+    const charCount = doc.blocks.reduce((sum, block) => sum + (typeof block.content === 'string' ? block.content.length : 0), 0);
+    if (doc.type === 'tiered_quiz' && questionBlock?.questions) return `共 ${questionBlock.questions.length} 道题（选择/填空/简答混合，L1-L3 分层）`;
+    if (doc.type === 'presentation') return `${headings.length} 页幻灯片，每页要点与讲解词`;
+    if (doc.type === 'concept_map') return '知识关系图 + 逐节点解读 + 阅读路径';
+    return `${headings.length} 节正文（约 ${charCount} 字），含代码示例与数据摘录`;
+  };
   await bubble(run, node.role,
-    `${isRevision ? `第 ${attempt} 轮修订完成` : '初稿完成'}：《${resource.title}》，共 ${resource.blocks.length} 个内容块（含代码示例与数据摘录）。${note || '已融入证据引用，交由审核。'}`);
+    `${isRevision ? `第 ${attempt} 轮修订完成` : '初稿完成'}：《${resource.title}》——${describeStructure(resource)}。${note || '所有内容已绑定证据引用，交由审核智能体逐条核对。'}`);
   return `草稿《${resource.title}》共 ${resource.blocks.length} 块`;
 }
 
@@ -601,7 +636,7 @@ type DebateIssueInput = {
 };
 
 /** 独立批评 Agent（总规 §5.2 升级）：LLM 从反方立场逐条审查草稿；失败返回空，规则兜底不受影响 */
-const CRITIC_SYSTEM_PROMPT = '你是独立批评智能体（反方），只负责挑错，不负责修改。只输出 JSON：{"issues":[{"issueType":"no_evidence|conflict|out_of_scope_causality|difficulty_mismatch|counterevidence_request","targetClaimId":"对应声明的 id 或 null","argument":"不超过80字的具体批评或反证检索请求"}]}。审查维度：no_evidence=声明在证据里找不到支持；conflict=声明数字或结论与证据冲突；out_of_scope_causality=把数据异常写成了越界的确定性因果；difficulty_mismatch=内容难度与学习者状态不匹配；counterevidence_request=请求在已有知识库和数据中检索可能推翻该声明的反证（argument 写明检索词）。只在确有问题时列出，最多 4 条，没有问题就输出空数组。';
+const CRITIC_SYSTEM_PROMPT = CRITIC_SYSTEM;
 
 async function criticAgentIssues(run: StudyRunRow, audit: NonNullable<RunContext['audit']>): Promise<DebateIssueInput[]> {
   const ctx = contextOf(run);
@@ -622,7 +657,7 @@ async function criticAgentIssues(run: StudyRunRow, audit: NonNullable<RunContext
         focus,
         learnerState: ctx.assess?.analysis ?? '',
         resourceDifficulty: draft.difficulty,
-      }), 1200);
+      }), 3_000);
     const parsed = parseJson<{ issues?: unknown }>(raw) ?? {};
     if (!Array.isArray(parsed.issues)) return [];
     const allowed = new Set(['no_evidence', 'conflict', 'out_of_scope_causality', 'difficulty_mismatch', 'counterevidence_request']);
@@ -748,7 +783,7 @@ async function runDebateChallenge(run: StudyRunRow, node: RunNodeSpec, attempt: 
 const VERDICT_SEVERITY: Record<string, number> = { supported: 0, partial: 1, conflict: 2, unsupported: 3 };
 
 /** 裁决 Agent（总规 §5.2 升级）：LLM 独立给出整体判决；失败返回 null，规则兜底不受影响 */
-const JUDGE_SYSTEM_PROMPT = '你是证据裁决智能体（裁判），在反方质询后给出整体判决。只输出 JSON：{"verdict":"supported|partial|conflict|unsupported","rationale":"不超过80字的公开判决理由"}。判据：全部实质性声明都有证据支持且来源互证=supported；存在待复核表述=partial；证据之间存在冲突=conflict；存在无证据支持的实质性结论=unsupported。你的判决只能基于给定材料。';
+const JUDGE_SYSTEM_PROMPT = JUDGE_SYSTEM;
 
 async function adjudicatorAgentVerdict(run: StudyRunRow, audit: NonNullable<RunContext['audit']>): Promise<{ verdict: 'supported' | 'partial' | 'conflict' | 'unsupported'; rationale: string } | null> {
   try {
@@ -761,7 +796,7 @@ async function adjudicatorAgentVerdict(run: StudyRunRow, audit: NonNullable<RunC
         strictAdjudication: run.plan.strictAdjudication,
         // 裁决端只读结构化材料：反证检索结果（不读取生成端对话或理由）
         counterevidence: contextOf(run).counterevidence ?? [],
-      }), 800);
+      }), 2_400);
     const parsed = parseJson<{ verdict?: unknown; rationale?: unknown }>(raw) ?? {};
     const verdict = String(parsed.verdict);
     if (!(verdict in VERDICT_SEVERITY)) return null;

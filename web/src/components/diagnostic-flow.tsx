@@ -8,7 +8,7 @@ type DiagnosticOption = { id: string; text: string };
 type DiagnosticQuestion = { id: string; code: string; dimension: string; level: "L1" | "L2" | "L3"; prompt: string; options: DiagnosticOption[] };
 type DiagnosticReview = { questionId: string; prompt: string; yourAnswer: string; correctAnswer: string; correct: boolean; explanation: string };
 type DimensionScore = { dimension: string; total: number; correct: number };
-type AttemptResult = { sessionId: string; total: number; correct: number; byDimension: DimensionScore[]; review: DiagnosticReview[] };
+type AttemptResult = { sessionId: string; total: number; correct: number; byDimension: DimensionScore[] | Record<string, Omit<DimensionScore, "dimension">>; review: DiagnosticReview[] };
 
 const DIMENSION_LABELS: Record<string, string> = {
   python: "Python 基础",
@@ -51,7 +51,12 @@ export function DiagnosticFlow({ apiBase, user, onFinished }: DiagnosticFlowProp
   const question = questions[index];
   const answeredCount = Object.keys(answers).length;
   const allAnswered = questions.length > 0 && answeredCount === questions.length;
-  const dimensionSummary = useMemo(() => result?.byDimension ?? [], [result]);
+  const dimensionSummary = useMemo<DimensionScore[]>(() => {
+    const raw = result?.byDimension;
+    if (!raw) return [];
+    if (Array.isArray(raw)) return raw;
+    return Object.entries(raw).map(([dimension, score]) => ({ dimension, total: score.total, correct: score.correct }));
+  }, [result]);
 
   const choose = (optionId: string) => {
     if (!question || submitting) return;
@@ -92,7 +97,6 @@ export function DiagnosticFlow({ apiBase, user, onFinished }: DiagnosticFlowProp
           <div className="text-center">
             <div className="text-xs font-medium text-muted-foreground">入学诊断完成</div>
             <div className="mt-2 text-3xl font-semibold tracking-tight">{result.correct} / {result.total}</div>
-            <p className="mt-2 text-xs leading-5 text-muted-foreground">系统已按本次作答初始化你的知识状态，后续作答与反馈会持续更新。</p>
           </div>
           <div className="mt-7 space-y-2.5">
             {dimensionSummary.map((item) => {
@@ -129,8 +133,8 @@ export function DiagnosticFlow({ apiBase, user, onFinished }: DiagnosticFlowProp
           <div className="mt-6 space-y-2.5">
             {question.options.map((option) => {
               const selected = answers[question.id] === option.id;
-              return <button key={option.id} type="button" onClick={() => choose(option.id)} className={`flex w-full items-start gap-3 rounded-xl border p-4 text-left text-sm leading-6 transition-colors ${selected ? "border-foreground bg-muted" : "hover:border-foreground/35 hover:bg-muted/30"}`}>
-                <span className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-[10px] ${selected ? "border-foreground bg-foreground text-background" : ""}`}>{option.id}</span>
+              return <button key={option.id} type="button" onClick={() => choose(option.id)} className={`flex w-full items-start gap-3 rounded-xl border p-4 text-left text-sm leading-6 transition-all ${selected ? "border-foreground/70 bg-muted shadow-sm" : "hover:border-foreground/35 hover:bg-muted/25 hover:shadow-sm"}`}>
+                <span className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md border text-[11px] font-semibold transition-colors ${selected ? "border-foreground bg-foreground text-background" : "border-border text-muted-foreground"}`}>{option.id}</span>
                 <span>{option.text}</span>
               </button>;
             })}

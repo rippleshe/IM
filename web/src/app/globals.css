@@ -118,6 +118,10 @@
 }
 
 @layer base {
+  /* 开发环境的 Next.js 浮动入口不属于学习产品界面，默认收起。 */
+  nextjs-portal {
+    display: none !important;
+  }
   * {
     @apply border-border outline-ring/50;
   }

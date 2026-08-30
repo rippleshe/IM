@@ -4,6 +4,7 @@
  * 演示账号在种子阶段就生成好差异化路径，评委登录即可看到完整知识树。
  */
 import { multiModelClient, parseJson } from './study-runtime.js';
+import { PATH_PLANNER_SYSTEM } from './prompts.js';
 import type { OnboardingInput } from '../src/learning/identity.js';
 import type { LearningPathEdgeView } from '../src/learning/store.js';
 
@@ -86,7 +87,7 @@ export async function generateInitialPathGraph(input: OnboardingInput, model: st
     messages: [
       {
         role: 'system',
-        content: '你是工业设备数据预测与诊断训练的学习路径规划智能体。只输出一个 JSON 对象，不要 Markdown。对象必须只有 nodes 和 edges。nodes 输出 12 到 18 个可执行知识节点，每项必须含 knowledgePointId（稳定英文短 ID）、title、description、sortOrder；description 要说明学习者在该节点要学会什么，粒度控制在一次 30 到 120 分钟学习活动。edges 是节点连接，每项必须含 fromKnowledgePointId、toKnowledgePointId、relation；relation 只能是 prerequisite、branch、application、review。路径必须是有根的知识树/有向无环图，至少包含 3 条并行分支和 2 个汇合应用节点，不能写成“第一章、第二章”的线性目录，也不能把 Agent、检索、审核、资源生成写成学习节点。默认覆盖但要根据学习者基础调整：Python 编程与环境、CSV/DataFrame 与数据清洗、时间字段与传感器变量、可视化、统计基础、时间序列、特征工程、异常检测/预测、SQL 或可复现分析、诊断逻辑、报告或工具实现、综合验证。目标必须落到工业设备数据的预测或诊断任务上；允许分支并行，但每个分支都要能通过边汇合到综合任务。不要将任何节点标为完成，不要凭空声称学习者已经掌握内容。',
+        content: PATH_PLANNER_SYSTEM,
       },
       { role: 'user', content: JSON.stringify(input) },
     ],

@@ -105,7 +105,7 @@ export function AuthEntry({ apiBase, user, onAuthenticated }: AuthEntryProps) {
           <section className="p-7 md:p-10">
             {onboarding ? (
               <form onSubmit={submitOnboarding} className="space-y-5">
-                <div><p className="text-sm font-semibold">先建立你的起始画像</p><p className="mt-1 text-xs text-muted-foreground">这些信息用于生成第一棵学习路径，之后可直接在对话里修改。</p></div>
+                <div><p className="text-sm font-semibold">先建立你的起始画像</p></div>
                 <div className="grid gap-4 sm:grid-cols-2">
                   <label className="space-y-1.5 text-xs font-medium">当前身份
                     <select value={role} onChange={(event) => setRole(event.target.value)} className="h-9 w-full rounded-lg border bg-background px-2.5 text-sm font-normal outline-none focus-visible:ring-2 focus-visible:ring-ring/50"><option>在校学习者</option><option>转岗学习者</option><option>一线运维人员</option><option>培训者</option></select>

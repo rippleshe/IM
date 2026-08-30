@@ -32,14 +32,10 @@ export const LEARNING_AGENT_IDS = [
 ] as const;
 export type LearningAgentId = typeof LEARNING_AGENT_IDS[number];
 type AgentRouteConfig = { modelId: string; thinkingDepth: 'inherit' | ThinkingDepth };
-const AUTO_ASSET_TYPES = ['lecture', 'tiered_quiz', 'concept_map'] as const;
-export { AUTO_ASSET_TYPES };
-export type AutoAssetType = typeof AUTO_ASSET_TYPES[number];
 export type RuntimeWorkbenchSettings = {
   agentRouting: Record<LearningAgentId, AgentRouteConfig>;
   defaultModelId: string;
   defaultThinkingDepth: ThinkingDepth;
-  autoAssetTypes: AutoAssetType[];
 };
 
 function createDefaultWorkbenchSettings(): RuntimeWorkbenchSettings {
@@ -47,7 +43,6 @@ function createDefaultWorkbenchSettings(): RuntimeWorkbenchSettings {
     agentRouting: Object.fromEntries(LEARNING_AGENT_IDS.map((id) => [id, { modelId: '', thinkingDepth: 'inherit' }])) as Record<LearningAgentId, AgentRouteConfig>,
     defaultModelId: '',
     defaultThinkingDepth: 'medium',
-    autoAssetTypes: [...AUTO_ASSET_TYPES],
   };
 }
 
@@ -66,10 +61,6 @@ function loadRuntimeWorkbenchSettings(): RuntimeWorkbenchSettings {
     if (typeof parsed.defaultModelId === 'string') defaults.defaultModelId = parsed.defaultModelId;
     if (['low', 'medium', 'high', 'max'].includes(parsed.defaultThinkingDepth ?? '')) {
       defaults.defaultThinkingDepth = parsed.defaultThinkingDepth as ThinkingDepth;
-    }
-    if (Array.isArray(parsed.autoAssetTypes)) {
-      const selected = parsed.autoAssetTypes.filter((type): type is AutoAssetType => AUTO_ASSET_TYPES.includes(type as AutoAssetType));
-      if (selected.length > 0) defaults.autoAssetTypes = selected;
     }
   } catch {
     // Fall back to safe local defaults when the optional settings file is malformed.
@@ -199,6 +190,7 @@ export function getAgentExecutionSettings(agentId: string, requestedModel: strin
 export function getSettingsPayload() {
   const config = mergeModelConfig();
   const providerMap = new Map(config.providers.map((provider) => [provider.id, provider]));
+  const storageKind = process.env['IM_TRAINING_AGENT_DATA_SOURCE'] === 'sqlite' || !process.env['DATABASE_URL'] ? 'sqlite' : 'postgres';
   const primary = getPrimaryModelRuntime();
   const activeModel = getRequestedModel(runtimeWorkbenchSettings.defaultModelId) ?? primary.model;
   return {
@@ -224,11 +216,11 @@ export function getSettingsPayload() {
         providerDisplayName: providerMap.get(model.provider)?.displayName ?? model.provider,
     })),
     agentRouting: runtimeWorkbenchSettings.agentRouting,
-    autoAssetTypes: runtimeWorkbenchSettings.autoAssetTypes,
     privacy: {
       uploadPolicy: 'session_only' as const,
       uploadContentRetained: false as const,
-      learnerDataScope: 'local' as const,
+      learnerDataScope: storageKind,
+      dataSource: storageKind === 'postgres' ? 'PostgreSQL' : 'SQLite',
     },
   };
 }

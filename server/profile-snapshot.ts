@@ -3,31 +3,69 @@
  * API 的 profile/regenerate 与 scripts/demo-seed.ts 共用：种子账号在播种时
  * 就生成好画像描述/关键词/雷达，评委打开画像弹窗即可看到真实画像内容。
  */
-import { multiModelClient, parseJson } from './study-runtime.js';
 import { identityStore, learningStore } from './study-context.js';
 
-export async function generateProfileSnapshot(learnerId: string, model: string | undefined, thinking: { temperature: number; maxTokens: number }) {
+const KNOWLEDGE_LABELS: Record<string, string> = {
+  'python-basics': 'Python 基础',
+  'python-control': 'Python 控制流',
+  'python-data-structures': 'Python 数据结构',
+  'pandas-reading': '数据读取',
+  'pandas-filter': '数据筛选',
+  'data-cleaning': '数据清洗',
+  'statistics-basics': '统计基础',
+  'time-series-basics': '时序分析',
+  'industrial-diagnosis-foundation': '设备诊断基础',
+};
+
+function labelOf(knowledgePointId: string): string {
+  return KNOWLEDGE_LABELS[knowledgePointId] ?? '专业知识学习';
+}
+
+function textOf(value: unknown): string {
+  if (typeof value === 'string') return value.trim();
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string').join('、').trim() : '';
+}
+
+function backgroundKeywords(background: string): string[] {
+  const knownTerms = [
+    '中职机电', '机电', 'Python', '零基础', '数据分析', '设备诊断', '传感器', '机器学习', '统计', '时序分析', '运维',
+  ];
+  const matched = knownTerms.filter((term) => background.toLowerCase().includes(term.toLowerCase()));
+  if (matched.length > 0) return matched;
+  return background
+    .split(/[，,。；;、/|\s]+/)
+    .map((item) => item.trim().replace(/^(我|希望|想要|目前|正在)/, ''))
+    .filter((item) => item.length >= 2 && item.length <= 10)
+    .slice(0, 3);
+}
+
+/**
+ * 画像只由已持久化的诊断、作答、反馈与学习记录确定性生成。
+ * 不使用语言模型，避免没有新数据时因采样差异产生不同画像。
+ */
+export async function generateProfileSnapshot(learnerId: string, _model?: string, _thinking?: { temperature: number; maxTokens: number }) {
   const current = await learningStore.getProfile(learnerId);
   const onboarding = await identityStore.getOnboarding(learnerId);
-  const response = await multiModelClient.simple({
-    messages: [
-      {
-        role: 'system',
-        content: '你是学习画像总结器。只输出 JSON 对象，不要 Markdown。字段必须是 summary（不超过80字）、keywords（3到6个短词）、radar（3到5项，每项含 name、score 0到1、reason）。只能根据提供的统计与技能证据描述，不得虚构能力。',
-      },
-      { role: 'user', content: JSON.stringify({ initialProfile: onboarding, metrics: { assetsCount: current.assetsCount, todayAssetsCount: current.todayAssetsCount, completedAssetsCount: current.completedAssetsCount, masteredAssetsCount: current.masteredAssetsCount, evidenceCount: current.evidenceCount, studyMinutes: current.studyMinutes, accuracy: current.accuracy }, skills: current.skills }) },
-    ],
-    model,
-    temperature: thinking.temperature,
-    maxTokens: Math.min(thinking.maxTokens, 2048),
-  });
-  const parsed = parseJson<{ summary?: unknown; keywords?: unknown; radar?: unknown }>(response.text) || {};
-  const keywords = Array.isArray(parsed.keywords) ? parsed.keywords.map(String).filter(Boolean).slice(0, 6) : [];
-  const radar = Array.isArray(parsed.radar) ? parsed.radar.map((raw) => {
-    const item = raw as Record<string, unknown>;
-    return { name: String(item['name'] || '学习维度'), score: Math.max(0, Math.min(1, Number(item['score']) || 0)), reason: String(item['reason'] || '') };
-  }).filter((item) => item.name).slice(0, 5) : [];
-  const summary = typeof parsed.summary === 'string' && parsed.summary.trim() ? parsed.summary.trim().slice(0, 160) : current.summary;
-  await learningStore.saveProfileSnapshot(learnerId, { summary, keywords, radar });
-  return learningStore.getProfile(learnerId);
+  const skills = [...current.skills].sort((a, b) => a.mastery - b.mastery || b.confidence - a.confidence);
+  const focus = skills[0];
+  const background: string = textOf(onboarding?.selfDescription) || textOf(onboarding?.role);
+  const accuracy = current.accuracy === null || current.accuracy === undefined ? null : Math.round(current.accuracy * 100);
+  const summary = current.evidenceCount === 0
+    ? `${background ? `${background}，` : ''}尚未产生可用学习记录。完成入学诊断或一次练习后，系统会基于作答和反馈更新画像。`
+    : `${background ? `${background}，` : ''}已积累 ${current.evidenceCount} 条学习记录${accuracy === null ? '' : `，当前正确率 ${accuracy}%`}。${focus ? `建议优先巩固「${labelOf(focus.knowledgePointId)}」。` : '继续通过作答与反馈积累学习证据。'}`;
+  const keywords: string[] = [...new Set([
+    ...(background ? backgroundKeywords(background) : []),
+    ...skills.slice(0, 3).map((skill) => labelOf(skill.knowledgePointId)).filter((label) => label !== '专业知识学习'),
+  ])].slice(0, 5);
+  const radar = [
+    { name: '学习投入', score: Math.min(1, current.studyMinutes / 120), reason: `已学习 ${current.studyMinutes} 分钟` },
+    { name: '练习表现', score: current.accuracy ?? 0, reason: accuracy === null ? '尚无习题作答' : `当前正确率 ${accuracy}%` },
+    { name: '知识掌握', score: skills.length ? skills.reduce((sum, skill) => sum + skill.mastery, 0) / skills.length : 0, reason: skills.length ? `依据 ${skills.length} 个知识点的作答状态` : '尚无知识状态' },
+    { name: '反馈完整度', score: current.assetsCount ? current.completedAssetsCount / current.assetsCount : 0, reason: `已完成 ${current.completedAssetsCount}/${current.assetsCount} 份资源` },
+  ].map((item) => ({ ...item, score: Number(Math.max(0, Math.min(1, item.score)).toFixed(2)) }));
+  const unchanged = current.summary === summary
+    && JSON.stringify(current.keywords) === JSON.stringify(keywords)
+    && JSON.stringify(current.radar) === JSON.stringify(radar);
+  if (!unchanged) await learningStore.saveProfileSnapshot(learnerId, { summary, keywords, radar });
+  return { profile: await learningStore.getProfile(learnerId), updated: !unchanged };
 }

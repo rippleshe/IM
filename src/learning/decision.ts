@@ -3,10 +3,10 @@
  *
  * 纯函数：一次作答/反馈后，依据 BKT 前后状态、实际作答正确率、掌握与难度反馈、
  * 先修缺口与最近决策历史，输出持久化的下一步学习动作：
- * - remediate：低掌握或连续错误 → 补先修讲义/复习卡/低阶题
+ * - remediate：低掌握或连续错误 → 补先修讲义/PPT/低阶题
  * - continue：掌握提高但置信度不足 → 同级练习或再采样
- * - advance：掌握与置信度均达标 → 挑战任务或下一节点
- * - collect_more_evidence：反馈冲突或证据太少 → 先追问而非武断升降阶
+ * - advance：掌握与置信度均达标 → 知识脉络或下一节点
+ * - collect_more_evidence：反馈冲突或证据太少 → 先以讲义收集学习证据
  */
 import type { LearningResourceType } from './types.js';
 
@@ -63,7 +63,7 @@ const CONFIDENCE_ADVANCE = 0.6;
 const MASTERY_REMEDIATE = 0.45;
 
 /** remediate 推荐资源的轮换序列：避免连续生成同一种补强材料（升级计划 里程碑 E 输入项） */
-const REMEDIATION_CYCLE: LearningResourceType[] = ['lecture', 'review_cards', 'tiered_quiz'];
+const REMEDIATION_CYCLE: LearningResourceType[] = ['lecture', 'presentation', 'tiered_quiz'];
 
 function correctRateOf(input: LearningDecisionInput): number | null {
   return input.attemptCount > 0 ? input.correctCount / input.attemptCount : null;
@@ -99,7 +99,7 @@ export function decideLearningNextStep(input: LearningDecisionInput): LearningDe
   if (evidenceThin || feedbackConflicts) {
     return {
       decision: 'collect_more_evidence',
-      recommendedResourceType: 'review_cards',
+      recommendedResourceType: 'lecture',
       rationale: {
         observations,
         reasons: feedbackConflicts
@@ -151,12 +151,12 @@ export function decideLearningNextStep(input: LearningDecisionInput): LearningDe
   if (masteryReady && confidenceEnough) {
     return {
       decision: 'advance',
-      recommendedResourceType: 'challenge_task',
+      recommendedResourceType: 'concept_map',
       rationale: {
         observations,
         reasons: [
           `掌握概率 ${after.pMastery} ≥ ${MASTERY_ADVANCE} 且置信度 ${after.confidence} ≥ ${CONFIDENCE_ADVANCE}`,
-          '可进入挑战任务或推进下一个路径节点',
+          '可查看知识脉络或推进下一个路径节点',
         ],
         uncertainty: [],
         bktBefore: before,

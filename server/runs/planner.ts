@@ -40,8 +40,9 @@ export interface PlannerSignals {
   evidenceCoverageHint: 'sparse' | 'normal' | 'rich';
 }
 
-const BASE_TIMEOUT_MS = 60_000;
-const GENERATION_TIMEOUT_MS = 120_000;
+const BASE_TIMEOUT_MS = 90_000;
+/** 生成节点：推理模型输出长文（含思维段）需要宽松预算 */
+const GENERATION_TIMEOUT_MS = 240_000;
 
 interface NodeSeed {
   key: RunNodeKey;
