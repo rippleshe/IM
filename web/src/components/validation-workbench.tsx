@@ -259,7 +259,7 @@ export function ValidationWorkbench({ apiBase, user, onLogout, onNavigate, onUse
 
   return <main className="app-shell flex h-screen min-h-0 flex-col overflow-hidden bg-background">
     <header className="flex h-16 shrink-0 items-center justify-between border-b px-5 sm:px-7">
-      <div className="flex items-center gap-2.5"><AvatarBubble user={user} size="h-9 w-9 text-xs" /><span className="min-w-0"><span className="block text-sm font-semibold tracking-tight">IM-Training-Agent</span><span className="block text-[11px] text-muted-foreground">{user.displayName}</span></span></div>
+      <div className="flex items-center gap-2.5"><AvatarBubble user={user} size="h-9 w-9 text-xs" /><span className="min-w-0"><span className="block text-sm font-semibold tracking-tight">智辩无幻</span><span className="block text-[11px] text-muted-foreground">{user.displayName}</span></span></div>
       <nav aria-label="学习空间" className="flex items-center rounded-lg border bg-muted/40 p-1 text-sm"><button type="button" onClick={() => setSettingsOpen(true)} className="rounded-md px-3 py-1.5 text-muted-foreground hover:text-foreground">设置</button><button type="button" onClick={() => setProfileOpen(true)} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">学习情况</button><button type="button" onClick={() => onNavigate("path")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">路径</button><button type="button" onClick={() => onNavigate("study")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">学习</button><button type="button" onClick={() => onNavigate("resources")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">资源</button><button type="button" className="rounded-md bg-background px-4 py-1.5 font-medium shadow-sm">验证</button></nav>
       <button type="button" onClick={() => void logout()} className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-2 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"><LogOut className="h-3.5 w-3.5" />退出</button>
      </header>
@@ -268,17 +268,17 @@ export function ValidationWorkbench({ apiBase, user, onLogout, onNavigate, onUse
       <div className="mx-auto max-w-5xl space-y-6 px-5 py-6 sm:px-7">
 
         {/* 1. 任务选择区 */}
-        <section aria-label="运行选择" className="rounded-2xl border bg-card p-5">
+        <section aria-label="运行选择" className="validation-panel rounded-xl border bg-card p-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2"><ListChecks className="h-4 w-4" /><h2 className="text-sm font-semibold">最近任务</h2></div>
-            <button type="button" onClick={() => void loadRuns()} className="inline-flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-[11px] hover:bg-muted"><RefreshCw className="h-3 w-3" />刷新</button>
+            <button type="button" onClick={() => void loadRuns()} className="validation-ghost-action inline-flex items-center gap-1 px-2 py-1 text-[11px]"><RefreshCw className="h-3 w-3" />刷新</button>
           </div>
           {loading ? <p className="mt-3 text-xs text-muted-foreground">正在读取运行历史…</p> : runs.length === 0
             ? <p className="mt-3 text-xs leading-5 text-muted-foreground">还没有任务记录，到「学习」页开始一次任务后可在这里查看检查结果。</p>
             : <div className="mt-3 grid gap-2 sm:grid-cols-2">
                 {runs.map((run) => (
                   <button key={run.id} type="button" onClick={() => setSelectedRunId(run.id)}
-                    className={`rounded-xl border p-3 text-left transition-colors ${selectedRunId === run.id ? "border-foreground bg-muted/40" : "hover:bg-muted/20"}`}>
+                    className={`validation-task rounded-lg border p-3 text-left transition-colors ${selectedRunId === run.id ? "border-blue-300 bg-blue-50/70" : ""}`}>
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-[11px] font-medium">{RESOURCE_LABELS[run.resourceType] ?? run.resourceType}</span>
                       <span className={`rounded-full px-2 py-0.5 text-[10px] ${run.status === "succeeded" ? "bg-emerald-100 text-emerald-700" : run.status === "failed" ? "bg-destructive/10 text-destructive" : "bg-amber-100 text-amber-700"}`}>{run.status === "succeeded" ? "已完成" : run.status === "failed" ? "失败" : run.status === "cancelled" ? "已取消" : "进行中"}</span>
@@ -294,7 +294,7 @@ export function ValidationWorkbench({ apiBase, user, onLogout, onNavigate, onUse
 
         {trace && <>
           {/* 2. 可信摘要 */}
-          <section aria-label="可信摘要" className="rounded-2xl border bg-card p-5">
+          <section aria-label="可信摘要" className="validation-panel rounded-xl border bg-card p-4">
              <div className="flex items-center gap-2"><ShieldCheck className="h-4 w-4" /><h2 className="text-sm font-semibold">可信摘要</h2></div>
             <div className="mt-3 grid grid-cols-2 gap-2 text-center sm:grid-cols-6">
               <Metric label="证据条数" value={evidenceCount} />
@@ -382,7 +382,7 @@ export function ValidationWorkbench({ apiBase, user, onLogout, onNavigate, onUse
           </section>
 
           {/* 5. 前后对照 */}
-          <section aria-label="前后对照" className="rounded-2xl border bg-card p-5">
+          <section aria-label="前后对照" className="validation-panel rounded-xl border bg-card p-4">
             <div className="flex items-start gap-2"><BadgeCheck className="mt-0.5 h-4 w-4" /><h2 className="text-sm font-semibold">前后对照</h2></div>
              {attempts.length <= 1
                ? <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
@@ -396,7 +396,7 @@ export function ValidationWorkbench({ apiBase, user, onLogout, onNavigate, onUse
                     const stageClaims = trace.claimGraph.filter((claim) => (claim.attempt ?? 1) === attempt);
                     const unsupported = stageClaims.filter((claim) => claim.verdict === "unsupported").length;
                     const decision = trace.auditDecisions.find((item) => item.round === attempt);
-                    return <div key={attempt} className="rounded-xl border bg-background px-3.5 py-3 text-[11px]">
+                    return <div key={attempt} className="rounded-lg border bg-background px-3.5 py-3 text-[11px]">
                       <div className="flex items-center justify-between"><span className="font-medium">第 {attempt} 轮</span><span>{decision ? `检查结果：${verdictLabel(decision.verdict)}${decision.released ? "（已通过）" : ""}` : "暂无检查结果"}</span></div>
                       <p className="mt-1 text-muted-foreground">可核对内容 {stageClaims.filter((claim) => claim.claimType !== "non_factual").length} 条、缺少依据 {unsupported} 条</p>
                     </div>;
@@ -405,10 +405,10 @@ export function ValidationWorkbench({ apiBase, user, onLogout, onNavigate, onUse
           </section>
 
           {/* 6. 记录完整性检查 */}
-          <section aria-label="记录完整性检查" className="rounded-2xl border bg-card p-5">
+          <section aria-label="记录完整性检查" className="validation-panel rounded-xl border bg-card p-4">
             <div className="flex items-center justify-between">
               <div className="flex items-start gap-2"><ScrollText className="mt-0.5 h-4 w-4" /><h2 className="text-sm font-semibold">记录完整性检查</h2></div>
-              <button type="button" onClick={() => void runVerify()} disabled={verifying} className="inline-flex h-8 items-center gap-1 rounded-lg border px-3 text-xs font-medium hover:bg-muted disabled:opacity-50">{verifying ? "检查中…" : "重新检查记录"}</button>
+              <button type="button" onClick={() => void runVerify()} disabled={verifying} className="validation-action inline-flex h-8 items-center gap-1 px-3 text-xs font-medium disabled:opacity-50">{verifying ? "检查中…" : "重新检查记录"}</button>
             </div>
             {verify ? <div className="mt-3 space-y-1.5 text-[11px]">
               {verify.integrity.checks.map((check) => <div key={check.id} className="flex items-start gap-2"><span className={check.passed ? "text-emerald-600" : "text-destructive"}>{check.passed ? "✔" : "✘"}</span><span><span className="font-medium">{readableAuditText(check.label)}</span><span className="text-muted-foreground">：{readableAuditText(check.detail)}</span></span></div>)}
@@ -418,11 +418,11 @@ export function ValidationWorkbench({ apiBase, user, onLogout, onNavigate, onUse
           </section>
 
           {/* 7. 导出入口 */}
-          <section aria-label="导出" className="flex flex-wrap items-center justify-between rounded-2xl border bg-card p-5">
+          <section aria-label="导出" className="validation-panel flex flex-wrap items-center justify-between rounded-xl border bg-card p-4">
              <div className="flex items-start gap-2"><FileJson className="mt-0.5 h-4 w-4" /><h2 className="text-sm font-semibold">完整记录</h2></div>
             <div className="flex gap-2">
-              <button type="button" onClick={() => window.open(`${apiBase}/api/learning/runs/${encodeURIComponent(trace.run.id)}/export`, "_blank", "noopener,noreferrer")} className="inline-flex h-8 items-center gap-1 rounded-lg border px-3 text-xs font-medium hover:bg-muted"><Download className="h-3.5 w-3.5" />下载记录</button>
-              <button type="button" onClick={() => onNavigate("resources")} className="inline-flex h-8 items-center rounded-lg border px-3 text-xs hover:bg-muted">前往资源页</button>
+              <button type="button" onClick={() => window.open(`${apiBase}/api/learning/runs/${encodeURIComponent(trace.run.id)}/export`, "_blank", "noopener,noreferrer")} className="validation-action inline-flex h-8 items-center gap-1 px-3 text-xs font-medium"><Download className="h-3.5 w-3.5" />下载记录</button>
+              <button type="button" onClick={() => onNavigate("resources")} className="validation-action inline-flex h-8 items-center px-3 text-xs">前往资源页</button>
             </div>
           </section>
         </>}

@@ -96,7 +96,34 @@ export function DescriptionList({ text, compact = false }: { text: string; compa
   </ul>;
 }
 
-function CodeFigure({ language, code, caption, invert = false }: { language: string; code: string; caption?: string; invert?: boolean }) {
+const CODE_TOKEN_SOURCE = String.raw`("(?:\\.|[^"])*"|'(?:\\.|[^'])*'|#[^\n]*|\b\d+(?:\.\d+)?\b|\b(?:as|and|async|await|class|const|def|elif|else|export|for|from|function|if|import|in|let|not|or|return|select|where|group|by|order|limit|insert|update|delete|true|false|null|none|print|with|yield)\b)`;
+
+function highlightCodeLine(line: string, invert: boolean) {
+  const parts: ReactNode[] = [];
+  let cursor = 0;
+  const pattern = new RegExp(CODE_TOKEN_SOURCE, "gi");
+  for (const match of line.matchAll(pattern)) {
+    const value = match[0] ?? "";
+    const index = match.index ?? 0;
+    if (index > cursor) parts.push(line.slice(cursor, index));
+    const lower = value.toLowerCase();
+    const className = value.startsWith("#") || value.startsWith("//")
+      ? invert ? "text-zinc-500" : "text-emerald-700"
+      : value.startsWith("\"") || value.startsWith("'") || value.startsWith("`")
+        ? invert ? "text-amber-300" : "text-amber-700"
+        : /^\d/.test(value)
+          ? invert ? "text-violet-300" : "text-violet-700"
+          : ["true", "false", "null", "none"].includes(lower)
+            ? invert ? "text-rose-300" : "text-rose-700"
+            : invert ? "font-semibold text-sky-300" : "font-semibold text-blue-700";
+    parts.push(<span key={`${index}-${value}`} className={className}>{value}</span>);
+    cursor = index + value.length;
+  }
+  if (cursor < line.length) parts.push(line.slice(cursor));
+  return parts;
+}
+
+export function CodeFigure({ language, code, caption, invert = false }: { language: string; code: string; caption?: string; invert?: boolean }) {
   const [copied, setCopied] = useState(false);
   const copy = async () => {
     try {
@@ -112,7 +139,7 @@ function CodeFigure({ language, code, caption, invert = false }: { language: str
         {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}{copied ? "已复制" : "复制"}
       </button>
     </figcaption>
-    <pre className="overflow-x-auto px-3.5 py-3 text-xs leading-6"><code className={`font-mono ${invert ? "text-zinc-100" : "text-slate-700"}`}>{code}</code></pre>
+    <pre className="overflow-x-auto px-3.5 py-3 text-xs leading-6"><code className={`font-mono ${invert ? "text-zinc-100" : "text-slate-700"}`}>{code.split("\n").map((line, index, lines) => <Fragment key={index}>{highlightCodeLine(line, invert)}{index < lines.length - 1 ? "\n" : null}</Fragment>)}</code></pre>
   </figure>;
 }
 

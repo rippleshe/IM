@@ -9,11 +9,11 @@ import {
   Loader2,
   LogOut,
   MessageSquareText,
+  Move,
   Network,
   Plus,
   RefreshCw,
   Send,
-  Sparkles,
   Trophy,
 } from "lucide-react";
 import type { AuthenticatedUser } from "@/components/auth-entry";
@@ -266,6 +266,7 @@ export function TreeCanvas({ graph, selectedNodeId, onSelect }: { graph: PathGra
   const panRef = useRef<{ x: number; y: number; left: number; top: number } | null>(null);
   const [fitZoom, setFitZoom] = useState(1);
   const [zoom, setZoom] = useState(1);
+  const canvasPadding = 180;
   const clampZoom = (value: number) => Math.max(0.45, Math.min(1.8, Number(value.toFixed(2))));
   useEffect(() => {
     const viewport = viewportRef.current;
@@ -280,6 +281,13 @@ export function TreeCanvas({ graph, selectedNodeId, onSelect }: { graph: PathGra
     return () => observer.disconnect();
   }, [layout.width]);
   useEffect(() => setZoom(fitZoom), [fitZoom]);
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    const worldWidth = layout.width * zoom + canvasPadding * 2;
+    const worldHeight = layout.height * zoom + canvasPadding * 2;
+    viewport.scrollTo({ left: Math.max(0, (worldWidth - viewport.clientWidth) / 2), top: Math.max(0, (worldHeight - viewport.clientHeight) / 2) });
+  }, [canvasPadding, layout.height, layout.width, zoom]);
   const distanceOfTouches = () => {
     const [first, second] = [...pointersRef.current.values()];
     return first && second ? Math.hypot(first.x - second.x, first.y - second.y) : 0;
@@ -314,9 +322,10 @@ export function TreeCanvas({ graph, selectedNodeId, onSelect }: { graph: PathGra
     if (pointersRef.current.size === 0) panRef.current = null;
   };
   return <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border bg-card">
-    <div ref={viewportRef} onWheel={(event) => { event.preventDefault(); setZoom((value) => clampZoom(value * (event.deltaY > 0 ? 0.9 : 1.1))); }} onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={releasePointer} onPointerCancel={releasePointer} className="min-h-0 flex-1 cursor-grab select-none overflow-auto active:cursor-grabbing" style={{ touchAction: "none", overscrollBehavior: "contain" }}>
-      <div className="relative shrink-0" style={{ width: layout.width * zoom, height: layout.height * zoom }}>
-        <div className="absolute left-0 top-0 origin-top-left" style={{ width: layout.width, height: layout.height, transform: `scale(${zoom})` }}>
+    <div className="flex shrink-0 items-center justify-between border-b bg-background px-3 py-2 text-[10px] text-muted-foreground"><span className="inline-flex items-center gap-1.5"><Move className="h-3.5 w-3.5 text-blue-500" />拖动浏览 · 滚轮缩放</span><button type="button" onClick={() => { setZoom(fitZoom); const viewport = viewportRef.current; if (viewport) viewport.scrollTo({ left: Math.max(0, (layout.width * fitZoom + canvasPadding * 2 - viewport.clientWidth) / 2), top: Math.max(0, (layout.height * fitZoom + canvasPadding * 2 - viewport.clientHeight) / 2) }); }} className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 hover:bg-muted hover:text-foreground"><RefreshCw className="h-3 w-3" />适应窗口</button></div>
+    <div ref={viewportRef} aria-label="可拖动学习路径画布" onWheel={(event) => { event.preventDefault(); setZoom((value) => clampZoom(value * (event.deltaY > 0 ? 0.9 : 1.1))); }} onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={releasePointer} onPointerCancel={releasePointer} className="min-h-0 flex-1 cursor-grab select-none overflow-auto active:cursor-grabbing" style={{ touchAction: "none", overscrollBehavior: "contain" }}>
+      <div className="relative shrink-0" style={{ width: layout.width * zoom + canvasPadding * 2, height: layout.height * zoom + canvasPadding * 2 }}>
+        <div className="absolute origin-top-left" style={{ left: canvasPadding, top: canvasPadding, width: layout.width, height: layout.height, transform: `scale(${zoom})` }}>
           <svg className="pointer-events-none absolute inset-0" width={layout.width} height={layout.height} aria-hidden="true">
             {graph.edges.map((edge) => {
               const from = layout.positions.get(edge.fromNodeId);
@@ -483,14 +492,14 @@ export function LearningPathWorkbench({ apiBase, user, onLogout, onNavigate, onU
 
   return <main className="app-shell flex h-screen min-h-0 flex-col overflow-hidden bg-background text-foreground">
     <header className="flex h-16 shrink-0 items-center justify-between border-b px-5 sm:px-7">
-      <div className="flex items-center gap-2.5"><AvatarBubble user={user} size="h-9 w-9 text-xs" /><span className="min-w-0"><span className="block text-sm font-semibold tracking-tight">IM-Training-Agent</span><span className="block text-[11px] text-muted-foreground">{user.displayName}</span></span></div>
+      <div className="flex items-center gap-2.5"><AvatarBubble user={user} size="h-9 w-9 text-xs" /><span className="min-w-0"><span className="block text-sm font-semibold tracking-tight">智辩无幻</span><span className="block text-[11px] text-muted-foreground">{user.displayName}</span></span></div>
       <nav aria-label="学习空间" className="flex items-center rounded-lg border bg-muted/40 p-1 text-sm"><button type="button" onClick={() => setSettingsOpen(true)} className="rounded-md px-3 py-1.5 text-muted-foreground hover:text-foreground">设置</button><button type="button" onClick={() => setProfileOpen(true)} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">学习情况</button><button type="button" className="rounded-md bg-background px-4 py-1.5 font-medium shadow-sm">路径</button><button type="button" onClick={() => onNavigate?.("study")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">学习</button><button type="button" onClick={() => onNavigate?.("resources")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">资源</button><button type="button" onClick={() => onNavigate?.("validation")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">验证</button></nav>
       <button type="button" onClick={logout} className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-2 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"><LogOut className="h-3.5 w-3.5" />退出</button>
     </header>
 
     <div className="path-layout grid min-h-0 flex-1 grid-cols-[minmax(360px,40%)_minmax(0,1fr)] overflow-hidden">
        <section className="flex min-h-0 min-w-0 flex-col bg-card" aria-label="路径调整对话与处理过程">
-        <div className="flex shrink-0 items-center justify-between border-b px-5 py-3.5 sm:px-6"><div className="flex items-center gap-2"><MessageSquareText className="h-4 w-4" /><h1 className="text-sm font-semibold">路径调整</h1></div></div>
+        <div className="workspace-pane-titlebar flex shrink-0 items-center justify-between border-b px-5 py-3.5 sm:px-6"><div className="flex items-center gap-2"><MessageSquareText className="h-4 w-4" /><h1 className="text-sm font-semibold">路径调整</h1></div></div>
          <div ref={feedRef} role="log" aria-live="polite" aria-busy={sending} className="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-6">
           <div className="mx-auto max-w-2xl space-y-5">
             {loading ? <div className="flex min-h-[250px] items-center justify-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4" />正在加载路径对话</div> : messages.length === 0 ? null : messages.map((chat) => chat.role === "user"
@@ -513,7 +522,7 @@ export function LearningPathWorkbench({ apiBase, user, onLogout, onNavigate, onU
       </section>
 
       <aside className="flex min-w-0 flex-col overflow-hidden border-l bg-muted/15" aria-label="知识树学习路径">
-        <div className="flex shrink-0 items-center justify-between border-b bg-background px-5 py-3.5"><div className="flex items-center gap-2"><Network className="h-4 w-4" /><h2 className="text-sm font-semibold">我的学习路径</h2></div><span className="text-xs text-muted-foreground">{completedNodes}/{path.nodes.length}</span></div>
+        <div className="workspace-pane-titlebar flex shrink-0 items-center justify-between border-b bg-background px-5 py-3.5"><div className="flex items-center gap-2"><Network className="h-4 w-4" /><h2 className="text-sm font-semibold">我的学习路径</h2></div><span className="text-xs text-muted-foreground">{completedNodes}/{path.nodes.length}</span></div>
         <div className="flex min-h-0 basis-[62%] flex-col p-4 pb-2"><div className="mb-3 flex shrink-0 items-center justify-between"><div className="flex items-center gap-3 text-[11px] text-muted-foreground"><span className="flex items-center gap-1"><i className="h-2 w-2 rounded-full bg-zinc-300" />未开始</span><span className="flex items-center gap-1"><i className="h-2 w-2 rounded-full bg-blue-600" />学完</span><span className="flex items-center gap-1"><i className="h-2 w-2 rounded-full bg-emerald-600" />掌握</span><span className="flex items-center gap-1"><i className="h-1.5 w-1.5 rounded-full bg-amber-500" />建议补强</span><span className="flex items-center gap-1"><i className="h-1.5 w-1.5 rounded-full bg-emerald-500" />可进阶</span></div></div>{loading ? <div className="flex min-h-0 flex-1 items-center justify-center"><Loader2 className="h-4 w-4 animate-spin text-muted-foreground" /></div> : path.nodes.length === 0 ? <div className="flex min-h-0 flex-1 items-center justify-center rounded-xl border border-dashed text-sm text-muted-foreground">尚未建立学习路径</div> : <TreeCanvas graph={path} selectedNodeId={selectedNodeId} onSelect={selectNode} />}</div>
         <div className="min-h-0 basis-[38%] overflow-y-auto border-t bg-background p-4">
           {selectedNode ? <div className="mx-auto max-w-2xl"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><div className="text-[10px] text-muted-foreground">当前节点</div><h3 className="mt-1 text-base font-semibold">{selectedNode.title}</h3></div><span className={`mt-1 h-2.5 w-2.5 shrink-0 rounded-full ${statusDot(selectedNode)}`} /></div>{selectedNode.recommendation ? <div className="mt-3"><RecommendationBadge recommendation={selectedNode.recommendation} /></div> : null}<NodeDecisionBasis apiBase={apiBase} knowledgePointId={selectedNode.knowledgePointId} /><div className="mt-3"><DescriptionList text={selectedNode.description} /></div><div className="mt-4 flex flex-wrap gap-2"><button type="button" onClick={() => carryIntoChat(selectedNode)} className="inline-flex h-8 items-center gap-1 rounded-lg border px-3 text-xs font-medium hover:bg-muted">带入对话</button><button type="button" onClick={() => requestNodeAddition("前置")} className="inline-flex h-8 items-center gap-1 rounded-lg border px-3 text-xs hover:bg-muted"><Plus className="h-3.5 w-3.5" />前置</button><button type="button" onClick={() => requestNodeAddition("分支")} className="inline-flex h-8 items-center gap-1 rounded-lg border px-3 text-xs hover:bg-muted"><Plus className="h-3.5 w-3.5" />分支</button><button type="button" onClick={() => requestNodeAddition("应用")} className="inline-flex h-8 items-center gap-1 rounded-lg border px-3 text-xs hover:bg-muted"><Plus className="h-3.5 w-3.5" />应用</button></div><div className="mt-3 flex gap-2"><button type="button" disabled={savingNodeId === selectedNode.id} onClick={() => void updateNode(selectedNode, { userStatus: selectedNode.userStatus === "completed" ? "learning" : "completed" })} className="inline-flex h-8 flex-1 items-center justify-center gap-1 rounded-lg border text-xs font-medium hover:bg-muted disabled:opacity-50"><Check className="h-3.5 w-3.5" />{selectedNode.userStatus === "completed" ? "继续学习" : "标记学完"}</button><button type="button" disabled={savingNodeId === selectedNode.id} onClick={() => void updateNode(selectedNode, { mastered: !selectedNode.mastered, userStatus: selectedNode.mastered ? selectedNode.userStatus : "completed" })} className={`inline-flex h-8 flex-1 items-center justify-center gap-1 rounded-lg border text-xs font-medium hover:bg-muted disabled:opacity-50 ${selectedNode.mastered ? "border-emerald-300 bg-emerald-50 text-emerald-700" : ""}`}><Trophy className="h-3.5 w-3.5" />{selectedNode.mastered ? "取消掌握" : "标记掌握"}</button></div></div> : <div className="flex h-full items-center justify-center text-sm text-muted-foreground">选择一个节点查看详情</div>}

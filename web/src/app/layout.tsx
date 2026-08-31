@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "IM-Training-Agent",
+  title: "智辩无幻",
   description: "面向个性化技能训练的多智能体协同学习平台",
 };
 
