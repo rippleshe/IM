@@ -93,7 +93,7 @@ function PrivacyPanel({ apiBase }: { apiBase: string }) {
       <button type="button" disabled={exporting} onClick={exportData} className="mt-3 h-9 w-full rounded-lg border text-xs font-medium hover:bg-muted disabled:opacity-50">{exporting ? "正在导出" : "导出我的学习数据"}</button>
     </section>
     <section className="divide-y rounded-xl border bg-background text-xs">
-      <div className="flex items-center justify-between gap-4 px-4 py-3"><span>学习情况</span><span className="text-right text-muted-foreground">学习路径、作答、资源与问答记录</span></div>
+      <div className="flex items-center justify-between gap-4 px-4 py-3"><span>画像</span><span className="text-right text-muted-foreground">学习路径、作答、资源与问答记录</span></div>
       <div className="flex items-center justify-between gap-4 px-4 py-3"><span>临时参考资料</span><span className="text-right text-emerald-700">任务结束即丢弃原文</span></div>
       <div className="flex items-center justify-between gap-4 px-4 py-3"><span>公共知识库</span><span className="text-right text-muted-foreground">只读，不写入个人资料</span></div>
       <div className="flex items-center justify-between gap-4 px-4 py-3"><span className="flex items-center gap-1.5"><Lock className="h-3 w-3" />审核与隐私保护</span><span className="text-right text-muted-foreground">系统固定保护</span></div>

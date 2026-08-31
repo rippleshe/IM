@@ -259,6 +259,22 @@ export class PgLearningStore {
     }
   }
 
+  async updateAssetMetadata(learnerId: string, assetId: string, patch: { title?: string; tags?: string[] }): Promise<ResourceDocument | null> {
+    const asset = await this.getAsset(learnerId, assetId);
+    if (!asset) return null;
+    const title = patch.title?.trim().slice(0, 80) || asset.title;
+    const tags = patch.tags
+      ? Array.from(new Set(patch.tags.map((tag) => tag.trim().slice(0, 32)).filter(Boolean))).slice(0, 12)
+      : asset.tags;
+    const next = { ...asset, title, tags };
+    await this.pool.query(
+      `UPDATE learning_assets SET title = $1, content_json = $2 WHERE learner_id = $3 AND id = $4`,
+      [title, JSON.stringify(next), learnerId, assetId],
+    );
+    await this.recordLearningEvent(learnerId, 'asset_metadata_updated', { assetId, titleChanged: title !== asset.title, tagCount: tags?.length ?? 0 });
+    return next;
+  }
+
   async deleteAsset(learnerId: string, assetId: string): Promise<boolean> {
     const asset = await this.getAsset(learnerId, assetId);
     if (!asset) return false;

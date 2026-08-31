@@ -12,7 +12,10 @@ import {
   LogOut,
   Map as MapIcon,
   MessageCircleQuestion,
+  Pencil,
+  Plus,
   Presentation,
+  Quote,
   Save,
   Target,
   Trash2,
@@ -30,6 +33,7 @@ type ResourceAsset = {
   id: string;
   type: ResourceType;
   title: string;
+  tags?: string[];
   difficulty: number;
   learningObjectives: string[];
   knowledgePointIds: string[];
@@ -54,6 +58,16 @@ const typeItems: Array<{ type: ResourceType; label: string; icon: typeof BookOpe
 
 function typeLabel(type: ResourceType) {
   return typeItems.find((item) => item.type === type)?.label ?? "资源";
+}
+
+function conciseAssetTitle(title: string, type: ResourceType): string {
+  const cleaned = title.replace(/\s+/g, " ").replace(/^(压缩机诊断讲义|诊断训练\s*PPT|分层练习|知识脉络|讲义|PPT)\s*[·:：-]?\s*/u, "").trim();
+  const subject = cleaned || typeLabel(type);
+  return subject.length > 19 ? `${subject.slice(0, 18)}…` : subject;
+}
+
+function defaultAssetTags(asset: ResourceAsset): string[] {
+  return asset.tags?.length ? asset.tags : ["设备诊断", typeLabel(asset.type)];
 }
 
 function notifyEvidenceUpdated() {
@@ -152,25 +166,39 @@ function runIdOfAsset(assetId: string): string | null {
   return lastDash > 0 ? rest.slice(0, lastDash) : null;
 }
 
-/** Obsidian 式属性区：把读者真正需要的资源信息放在正文之前。 */
-function ResourceFrontmatter({ asset, onOpenValidation }: { asset: ResourceAsset; onOpenValidation: (runId: string) => void }) {
+/** 轻量元数据区：保留 Obsidian 的属性感，但使用项目已有的浅蓝色语言。 */
+function ResourceFrontmatter({ asset, onOpenValidation, onSaveTags }: { asset: ResourceAsset; onOpenValidation: (runId: string) => void; onSaveTags: (tags: string[]) => Promise<void> }) {
   const runId = runIdOfAsset(asset.id);
   const createdAt = new Intl.DateTimeFormat("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit" }).format(asset.createdAt);
   const status = asset.auditStatus === "passed" ? "已通过检查" : "等待检查";
+  const [editingTags, setEditingTags] = useState(false);
+  const [tags, setTags] = useState(() => defaultAssetTags(asset));
+  const [tagDraft, setTagDraft] = useState("");
+  const [savingTags, setSavingTags] = useState(false);
+  useEffect(() => { setTags(defaultAssetTags(asset)); setEditingTags(false); setTagDraft(""); }, [asset.id, asset.tags, asset.type]);
+  const saveTags = async (nextTags = tags) => {
+    const next = Array.from(new Set(nextTags.map((tag) => tag.trim()).filter(Boolean))).slice(0, 12);
+    setSavingTags(true);
+    try { await onSaveTags(next); setTags(next); setEditingTags(false); setTagDraft(""); } finally { setSavingTags(false); }
+  };
+  const addDraftTag = () => {
+    const value = tagDraft.trim();
+    if (!value) return;
+    setTags((current) => Array.from(new Set([...current, value])).slice(0, 12));
+    setTagDraft("");
+  };
   return <section className="resource-frontmatter shrink-0" aria-label="资源元数据">
-    <div className="flex items-center justify-between gap-3">
-      <div className="flex items-center gap-2 text-[11px] font-medium text-[#607269]"><span className="resource-frontmatter-dot" />属性</div>
+    <div className="flex items-center justify-end gap-3">
       {runId ? <button type="button" onClick={() => onOpenValidation(runId)} className="resource-frontmatter-action">查看验证记录</button> : null}
     </div>
-    <h1 className="mt-2.5 text-[19px] font-semibold tracking-[-0.025em] text-[#26362f]">{asset.title}</h1>
+    <h1 className="mt-1.5 text-[18px] font-semibold tracking-[-0.025em] text-[#334155]">{asset.title}</h1>
     <dl className="resource-frontmatter-grid mt-4">
       <div><dt>类型</dt><dd>{typeLabel(asset.type)}</dd></div>
       <div><dt>状态</dt><dd className={asset.auditStatus === "passed" ? "text-[#397b61]" : "text-[#9a6b32]"}>{status}</dd></div>
       <div><dt>难度</dt><dd>{asset.difficulty.toFixed(2)}</dd></div>
       <div><dt>关联知识点</dt><dd>{asset.knowledgePointIds.length ? `${asset.knowledgePointIds.length} 个` : "未关联"}</dd></div>
       <div><dt>创建时间</dt><dd>{createdAt}</dd></div>
-      <div><dt>内容来源</dt><dd>协同生成 · 可追溯</dd></div>
-      <div className="resource-frontmatter-tags"><dt>标签</dt><dd><span>设备诊断</span><span>{typeLabel(asset.type)}</span>{asset.knowledgePointIds.length ? <span>{asset.knowledgePointIds.length} 个知识点</span> : null}</dd></div>
+      <div className="resource-frontmatter-tags"><div className="flex items-center justify-between gap-3"><dt>标签</dt><div className="flex items-center gap-1.5"><button type="button" onClick={() => { if (editingTags) void saveTags(); else setEditingTags(true); }} disabled={savingTags} className="resource-frontmatter-edit"><Pencil className="h-3 w-3" />{savingTags ? "保存中" : editingTags ? "完成" : "编辑"}</button></div></div><dd>{tags.map((tag) => editingTags ? <button key={tag} type="button" onClick={() => setTags((current) => current.filter((item) => item !== tag))} className="resource-tag-chip resource-tag-chip-edit" title="删除标签">{tag}<span aria-hidden="true">×</span></button> : <span key={tag} className="resource-tag-chip">{tag}</span>)}{editingTags ? <div className="resource-tag-add"><input value={tagDraft} onChange={(event) => setTagDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); addDraftTag(); } }} placeholder="添加标签" aria-label="添加标签" /><button type="button" onClick={addDraftTag} aria-label="添加标签"><Plus className="h-3 w-3" /></button></div> : null}</dd></div>
     </dl>
   </section>;
 }
@@ -187,6 +215,7 @@ export function ResourceWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
   const [notesWidth, setNotesWidth] = useState(330);
   const [resizing, setResizing] = useState(false);
   const [qaOpen, setQaOpen] = useState(false);
+  const [selectedQuote, setSelectedQuote] = useState("");
 
   const activeAssets = useMemo(() => assets.filter((asset) => asset.type === activeType), [assets, activeType]);
   const selectedAsset = assets.find((asset) => asset.id === selectedId) ?? null;
@@ -209,6 +238,7 @@ export function ResourceWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
 
   useEffect(() => { void loadAssets().catch((error) => setNotice(error instanceof Error ? error.message : "学习资产读取失败")).finally(() => setLoading(false)); }, [loadAssets]);
   useEffect(() => { if (selectedId) void loadReader(selectedId).catch((error) => setNotice(error instanceof Error ? error.message : "资源内容读取失败")); else setReader(null); }, [loadReader, selectedId]);
+  useEffect(() => { setSelectedQuote(""); }, [selectedId]);
   useEffect(() => {
     if (!resizing) return;
     const move = (event: MouseEvent) => setNotesWidth(Math.max(280, Math.min(480, window.innerWidth - event.clientX)));
@@ -237,6 +267,15 @@ export function ResourceWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
     } catch (error) { setNotice(error instanceof Error ? error.message : "资源删除失败"); }
   };
 
+  const saveAssetTags = async (tags: string[]) => {
+    if (!selectedAsset) return;
+    const response = await fetch(`${apiBase}/api/learning/assets/${encodeURIComponent(selectedAsset.id)}`, { method: "PATCH", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tags }) });
+    const data = await response.json() as { success?: boolean; error?: string; asset?: ResourceAsset };
+    if (!response.ok || !data.success || !data.asset) throw new Error(data.error || "标签保存失败");
+    setAssets((current) => current.map((asset) => asset.id === data.asset!.id ? data.asset as ResourceAsset : asset));
+    setReader((current) => current && current.asset.id === data.asset!.id ? { ...current, asset: data.asset as ResourceAsset } : current);
+  };
+
   const exportAsset = (format: "md" | "txt" | "json" | "ppt") => {
     if (!selectedAsset) return;
     const link = document.createElement("a");
@@ -261,32 +300,32 @@ export function ResourceWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
   return <main className={`app-shell flex h-screen min-h-0 flex-col overflow-hidden bg-background ${resizing ? "select-none" : ""}`}>
     <header className="flex h-16 shrink-0 items-center justify-between border-b px-5 sm:px-7">
       <div className="flex items-center gap-2.5"><AvatarBubble user={user} size="h-9 w-9 text-xs" /><span><span className="block text-sm font-semibold tracking-tight">智辩无幻</span><span className="block text-[11px] text-muted-foreground">{user.displayName}</span></span></div>
-      <nav aria-label="学习空间" className="flex items-center rounded-lg border bg-muted/40 p-1 text-sm"><button type="button" onClick={() => setSettingsOpen(true)} className="rounded-md px-3 py-1.5 text-muted-foreground hover:text-foreground">设置</button><button type="button" onClick={() => setProfileOpen(true)} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">学习情况</button><button type="button" onClick={() => onNavigate("path")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">路径</button><button type="button" onClick={() => onNavigate("study")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">学习</button><button type="button" className="rounded-md bg-background px-4 py-1.5 font-medium shadow-sm">资源</button><button type="button" onClick={() => onNavigate("validation")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">验证</button></nav>
+      <nav aria-label="学习空间" className="flex items-center rounded-lg border bg-muted/40 p-1 text-sm"><button type="button" onClick={() => setSettingsOpen(true)} className="rounded-md px-3 py-1.5 text-muted-foreground hover:text-foreground">设置</button><button type="button" onClick={() => setProfileOpen(true)} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">画像</button><button type="button" onClick={() => onNavigate("path")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">路径</button><button type="button" onClick={() => onNavigate("study")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">学习</button><button type="button" className="rounded-md bg-background px-4 py-1.5 font-medium shadow-sm">资源</button><button type="button" onClick={() => onNavigate("validation")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">验证</button></nav>
       <button type="button" onClick={logout} className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-2 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"><LogOut className="h-3.5 w-3.5" />退出</button>
     </header>
 
     <div className="resource-layout flex min-h-0 min-w-[1180px] flex-1 overflow-hidden">
-      <aside aria-label="资源目录" className="flex w-[264px] shrink-0 flex-col border-r bg-slate-50/80">
-        <nav aria-label="资源类型" className="shrink-0 border-b bg-background px-3 py-3">
-          <div className="flex items-center justify-between px-2 pb-2 text-[11px] font-semibold tracking-wide text-[#66766d]"><span>文件</span><span className="text-[10px] font-normal text-[#95a199]">{assets.length} 份</span></div>
-          {typeItems.map((item) => { const Icon = item.icon; const active = activeType === item.type; const count = assets.filter((asset) => asset.type === item.type).length; return <button key={item.type} type="button" onClick={() => selectType(item.type)} className={`flex w-full items-center gap-2.5 border-l px-2.5 py-2 text-left text-xs font-medium transition-colors ${active ? "border-foreground bg-muted/70 text-foreground" : "border-transparent text-muted-foreground hover:bg-muted/60 hover:text-foreground"}`}><Icon className="h-4 w-4 shrink-0" /><span className="flex-1">{item.label}</span>{count > 0 ? <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] leading-none">{count}</span> : null}</button>; })}
+      <aside aria-label="资源目录" className="flex w-[224px] shrink-0 flex-col border-r bg-slate-50/80">
+        <nav aria-label="资源类型" className="resource-folder-nav shrink-0 border-b px-3 py-3">
+          <div className="resource-folder-heading"><span>资源库</span><span>{assets.length} 份</span></div>
+          {typeItems.map((item) => { const Icon = item.icon; const active = activeType === item.type; const count = assets.filter((asset) => asset.type === item.type).length; return <button key={item.type} type="button" onClick={() => selectType(item.type)} className={`resource-folder-row ${active ? "resource-folder-row-active" : ""}`}><Icon className="h-4 w-4 shrink-0" /><span className="flex-1">{item.label}</span>{count > 0 ? <span className="resource-folder-count">{count}</span> : null}</button>; })}
         </nav>
-        <div className="min-h-0 flex-1 overflow-y-auto p-2">{loading ? <div className="px-2 py-4 text-xs text-muted-foreground">正在读取资源</div> : activeAssets.length === 0 ? <div className="border border-dashed px-3 py-8 text-center text-xs leading-5 text-muted-foreground">还没有{typeLabel(activeType)}，从学习页生成后会出现在这里。</div> : <div className="space-y-0.5">{activeAssets.map((asset) => <article key={asset.id} className={`group border-l px-2.5 py-2 transition-colors ${selectedId === asset.id ? "border-[#4f8f79] bg-[#fffef9]" : "border-transparent hover:border-[#98b6a6] hover:bg-[#fbfcf8]"}`}><button type="button" onClick={() => setSelectedId(asset.id)} className="block w-full text-left"><div className="line-clamp-2 text-xs font-medium leading-5">{asset.title}</div><div className="mt-1 text-[10px] text-muted-foreground">{new Intl.DateTimeFormat("zh-CN", { month: "numeric", day: "numeric" }).format(asset.createdAt)}</div></button><button type="button" onClick={() => void deleteAsset(asset)} className="mt-1 inline-flex items-center gap-1 text-[10px] text-muted-foreground opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100"><Trash2 className="h-3 w-3" />删除</button></article>)}</div>}</div>
+        <div className="resource-file-list min-h-0 flex-1 overflow-y-auto p-2">{loading ? <div className="px-2 py-4 text-xs text-muted-foreground">正在读取资源</div> : activeAssets.length === 0 ? <div className="border border-dashed px-3 py-8 text-center text-xs leading-5 text-muted-foreground">还没有{typeLabel(activeType)}，从学习页生成后会出现在这里。</div> : <div className="space-y-0.5">{activeAssets.map((asset) => <article key={asset.id} className={`resource-file-row group ${selectedId === asset.id ? "resource-file-row-active" : ""}`}><button type="button" onClick={() => setSelectedId(asset.id)} className="flex min-w-0 flex-1 items-start gap-2 text-left" title={asset.title}><FileText className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#8aa0b7]" /><span className="min-w-0"><span className="block truncate text-xs font-medium leading-5">{conciseAssetTitle(asset.title, asset.type)}</span><span className="mt-0.5 block text-[10px] text-muted-foreground">{new Intl.DateTimeFormat("zh-CN", { month: "numeric", day: "numeric" }).format(asset.createdAt)}</span></span></button><button type="button" onClick={() => void deleteAsset(asset)} className="mt-1 inline-flex items-center gap-1 text-[10px] text-muted-foreground opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100" aria-label={`删除${asset.title}`}><Trash2 className="h-3 w-3" /></button></article>)}</div>}</div>
         <div className="shrink-0 border-t p-3"><button type="button" onClick={() => setQaOpen(true)} className="resource-sidebar-action"><MessageCircleQuestion className="h-3.5 w-3.5" />资源问答</button></div>
       </aside>
 
       <section className="flex min-w-[460px] flex-1 flex-col overflow-hidden bg-card" aria-label="资源阅读与作答">
         {notice ? <div className="shrink-0 border-b border-destructive/20 bg-destructive/5 px-5 py-2 text-xs text-destructive">{notice}</div> : null}
-        {selectedAsset ? <ResourceFrontmatter asset={selectedAsset} onOpenValidation={(runId) => {
+        {selectedAsset ? <ResourceFrontmatter asset={selectedAsset} onSaveTags={saveAssetTags} onOpenValidation={(runId) => {
           try { window.localStorage.setItem("im-training-agent:validation-prefill", JSON.stringify({ runId })); } catch { /* 忽略 */ }
           onNavigate("validation");
         }} /> : null}
-        {reader?.asset.type === "lecture" ? <LectureReader reader={reader} onExport={exportAsset} /> : reader?.asset.type === "tiered_quiz" ? <QuizReader apiBase={apiBase} reader={reader} onReaderChange={setReader} /> : reader?.asset.type === "presentation" ? <PresentationReader reader={reader} onExport={exportAsset} /> : reader ? <GenericReader apiBase={apiBase} reader={reader} onReaderChange={setReader} onExport={exportAsset} /> : loading ? <div className="flex h-full items-center justify-center text-sm text-muted-foreground">正在读取资源</div> : <EmptyReader label={typeLabel(activeType)} />}
+        {reader?.asset.type === "lecture" ? <LectureReader reader={reader} onExport={exportAsset} onQuote={setSelectedQuote} /> : reader?.asset.type === "tiered_quiz" ? <QuizReader apiBase={apiBase} reader={reader} onReaderChange={setReader} /> : reader?.asset.type === "presentation" ? <PresentationReader reader={reader} onExport={exportAsset} /> : reader ? <GenericReader apiBase={apiBase} reader={reader} onReaderChange={setReader} onExport={exportAsset} /> : loading ? <div className="flex h-full items-center justify-center text-sm text-muted-foreground">正在读取资源</div> : <EmptyReader label={typeLabel(activeType)} />}
       </section>
 
       <div role="separator" aria-orientation="vertical" onMouseDown={() => setResizing(true)} className="w-1.5 shrink-0 cursor-col-resize bg-border/60 transition-colors hover:bg-foreground/30" />
       <aside style={{ width: notesWidth }} className="flex shrink-0 flex-col border-l bg-muted/15" aria-label="资源笔记或解析">
-        {reader?.asset.type === "lecture" ? <LectureNotes apiBase={apiBase} reader={reader} onReaderChange={setReader} onReinforce={() => reinforceFromAsset(reader.asset, reader.feedback?.masteryLevel ?? null)} /> : reader?.asset.type === "tiered_quiz" ? <QuizAnswerPanel reader={reader} /> : reader ? <GenericFeedback apiBase={apiBase} reader={reader} onReaderChange={setReader} onReinforce={() => reinforceFromAsset(reader.asset, reader.feedback?.masteryLevel ?? null)} /> : <div className="flex h-full items-center justify-center px-8 text-center text-sm text-muted-foreground">选择一份资源后，在这里查看笔记、反馈或答案解析。</div>}
+        {reader?.asset.type === "lecture" ? <LectureNotes apiBase={apiBase} reader={reader} selectedQuote={selectedQuote} onClearQuote={() => setSelectedQuote("")} onReaderChange={setReader} onReinforce={() => reinforceFromAsset(reader.asset, reader.feedback?.masteryLevel ?? null)} /> : reader?.asset.type === "tiered_quiz" ? <QuizAnswerPanel reader={reader} /> : reader ? <GenericFeedback apiBase={apiBase} reader={reader} onReaderChange={setReader} onReinforce={() => reinforceFromAsset(reader.asset, reader.feedback?.masteryLevel ?? null)} /> : <div className="flex h-full items-center justify-center px-8 text-center text-sm text-muted-foreground">选择一份资源后，在这里查看笔记、反馈或答案解析。</div>}
       </aside>
     </div>
     {settingsOpen && <SettingsDialog apiBase={apiBase} onClose={() => setSettingsOpen(false)} />}
@@ -300,7 +339,7 @@ function EmptyReader({ label }: { label: string }) {
 }
 
 // 讲义为持续下滑的富文本长文：标题即章节锚点（自动编号），顶部细条显示阅读进度，右侧目录滚动定位。
-function LectureReader({ reader, onExport }: { reader: ReaderData; onExport: (format: "md" | "txt" | "json" | "ppt") => void }) {
+function LectureReader({ reader, onExport, onQuote }: { reader: ReaderData; onExport: (format: "md" | "txt" | "json" | "ppt") => void; onQuote: (quote: string) => void }) {
   const blocks = useMemo(() => [...reader.asset.blocks].sort((a, b) => a.position - b.position), [reader.asset]);
   const headings = blocks.filter((block) => block.type === "heading");
   const sectionNumber = useMemo(() => {
@@ -317,10 +356,17 @@ function LectureReader({ reader, onExport }: { reader: ReaderData; onExport: (fo
     const max = el.scrollHeight - el.clientHeight;
     setProgress(max > 4 ? Math.min(1, el.scrollTop / max) : 0);
   };
+  const captureSelection = () => {
+    const selection = window.getSelection();
+    const text = selection?.toString().trim() ?? "";
+    const anchor = selection?.anchorNode;
+    if (text.length >= 2 && anchor && scrollRef.current?.contains(anchor)) onQuote(text.slice(0, 1_200));
+  };
   return <div className="flex min-h-0 flex-1 flex-col">
     <div className="flex shrink-0 items-center justify-between gap-3 border-b px-5 py-3">
       <div className="min-w-0"><div className="text-[10px] font-medium tracking-wide text-[#74837b]">阅读正文</div></div>
-      <div className="flex shrink-0 items-center gap-1.5">
+      <div className="flex shrink-0 items-center gap-2.5">
+        <span className="hidden text-[10px] text-muted-foreground xl:inline">选中文字可引用</span>
         {headings.length > 0 && <div className="relative">
           <button type="button" onClick={() => setTocOpen((open) => !open)} className="h-8 rounded-lg border px-3 text-xs hover:bg-muted">章节</button>
           {tocOpen && <div className="absolute right-0 top-10 z-20 max-h-64 w-60 overflow-y-auto rounded-xl border bg-card p-1.5 shadow-lg">{headings.map((block, index) => <button key={block.id} type="button" onClick={() => { document.getElementById(`sec-${block.id}`)?.scrollIntoView({ behavior: "smooth", block: "start" }); setTocOpen(false); }} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs hover:bg-muted"><span className="w-4 shrink-0 text-right font-mono text-[10px] text-muted-foreground">{index + 1}</span><span className="line-clamp-2">{String(block.content)}</span></button>)}</div>}
@@ -328,7 +374,7 @@ function LectureReader({ reader, onExport }: { reader: ReaderData; onExport: (fo
         <button type="button" onClick={() => onExport("md")} className="flex h-8 items-center gap-1 rounded-lg border px-2.5 text-xs hover:bg-muted"><Download className="h-3.5 w-3.5" />Markdown</button>
       </div>
     </div>
-    <div ref={scrollRef} onScroll={handleScroll} className="min-h-0 flex-1 overflow-y-auto bg-background/40">
+    <div ref={scrollRef} onScroll={handleScroll} onMouseUp={captureSelection} className="min-h-0 flex-1 overflow-y-auto bg-background/40">
       <div className="sticky top-0 z-10 h-0.5 bg-transparent"><div className="h-full rounded-r-full bg-gradient-to-r from-blue-500 to-indigo-500 transition-[width] duration-150" style={{ width: `${Math.round(progress * 100)}%` }} /></div>
       <article className="mx-auto max-w-3xl px-8 py-8">
         {reader.asset.learningObjectives.length > 0 && <div className="mb-8 border-y border-blue-100 bg-blue-50/45 px-5 py-4"><div className="flex items-center gap-2 text-[11px] font-semibold tracking-wide text-blue-700"><Target className="h-3.5 w-3.5" />学习目标</div><ul className="mt-3 space-y-2">{reader.asset.learningObjectives.map((objective) => <li key={objective} className="flex gap-2.5 text-[13px] leading-6 text-blue-950"><span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-blue-500" />{objective}</li>)}</ul></div>}
@@ -398,23 +444,36 @@ function PresentationReader({ reader, onExport }: { reader: ReaderData; onExport
   </div>;
 }
 
-const NOTE_PAGE_KEY = "main";
-
-function LectureNotes({ apiBase, reader, onReaderChange, onReinforce }: { apiBase: string; reader: ReaderData; onReaderChange: (data: ReaderData) => void; onReinforce: () => void }) {
-  const stored = reader.pageNotes.find((note) => note.pageKey === NOTE_PAGE_KEY)?.content ?? "";
-  const [draft, setDraft] = useState(stored);
+function LectureNotes({ apiBase, reader, selectedQuote, onClearQuote, onReaderChange, onReinforce }: { apiBase: string; reader: ReaderData; selectedQuote: string; onClearQuote: () => void; onReaderChange: (data: ReaderData) => void; onReinforce: () => void }) {
+  const [draft, setDraft] = useState("");
+  const [editingKey, setEditingKey] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
-  useEffect(() => { setDraft(reader.pageNotes.find((note) => note.pageKey === NOTE_PAGE_KEY)?.content ?? ""); setSaved(false); }, [reader.asset.id, reader.pageNotes]);
+  const [noteError, setNoteError] = useState("");
+  const notes = reader.pageNotes.filter((note) => note.content.trim()).sort((a, b) => b.updatedAt - a.updatedAt);
+  useEffect(() => { setDraft(""); setEditingKey(null); setSaved(false); }, [reader.asset.id]);
+  const startNewNote = () => { setEditingKey(null); setDraft(""); setSaved(false); setNoteError(""); };
+  const editNote = (note: PageNote) => { setEditingKey(note.pageKey); setDraft(note.content); setSaved(false); setNoteError(""); };
+  const insertQuote = () => {
+    if (!selectedQuote) return;
+    const quote = selectedQuote.split("\n").map((line) => `> ${line}`).join("\n");
+    setDraft((current) => current.trim() ? `${current.trim()}\n\n${quote}\n\n` : `${quote}\n\n`);
+    onClearQuote();
+  };
   const save = async () => {
+    if (!draft.trim()) return;
     setSaving(true);
+    setNoteError("");
     try {
-      const response = await fetch(`${apiBase}/api/learning/assets/${encodeURIComponent(reader.asset.id)}/pages/${encodeURIComponent(NOTE_PAGE_KEY)}/note`, { method: "PUT", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content: draft }) });
+      const pageKey = editingKey ?? `note-${Date.now()}`;
+      const response = await fetch(`${apiBase}/api/learning/assets/${encodeURIComponent(reader.asset.id)}/pages/${encodeURIComponent(pageKey)}/note`, { method: "PUT", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content: draft }) });
       const data = await response.json() as { success?: boolean; note?: PageNote; error?: string };
       if (!response.ok || !data.success || !data.note) throw new Error(data.error || "笔记保存失败");
       onReaderChange({ ...reader, pageNotes: [...reader.pageNotes.filter((note) => note.pageKey !== data.note!.pageKey), data.note] });
+      setEditingKey(data.note.pageKey);
       setSaved(true);
-    } finally { setSaving(false); }
+    } catch (error) { setNoteError(error instanceof Error ? error.message : "笔记保存失败"); }
+    finally { setSaving(false); }
   };
   const feedback = async (level: "high" | "medium" | "low") => {
     const response = await fetch(`${apiBase}/api/learning/assets/${encodeURIComponent(reader.asset.id)}/feedback`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ completed: true, masteryLevel: level }) });
@@ -424,7 +483,15 @@ function LectureNotes({ apiBase, reader, onReaderChange, onReinforce }: { apiBas
     notifyEvidenceUpdated();
   };
   const level = reader.feedback?.masteryLevel;
-  return <div className="flex min-h-0 flex-1 flex-col"><div className="border-b bg-background px-5 py-3.5"><div className="text-sm font-semibold">讲义笔记</div></div><div className="min-h-0 flex-1 p-4"><textarea value={draft} onChange={(event) => { setDraft(event.target.value); setSaved(false); }} placeholder="例如：我理解了……；还不确定……；下一步要验证……" className="h-full min-h-[220px] w-full resize-none rounded-xl border bg-card p-4 text-sm leading-7 outline-none placeholder:text-muted-foreground focus:ring-2 focus:ring-foreground/10" /><div className="mt-2 text-right text-[11px] text-muted-foreground">{draft.length} 字</div></div><div className="border-t bg-background p-4"><button type="button" disabled={saving} onClick={() => void save()} className="flex h-9 w-full items-center justify-center gap-1.5 rounded-lg border text-xs font-medium hover:bg-muted disabled:opacity-50">{saved ? <Check className="h-3.5 w-3.5" /> : <Save className="h-3.5 w-3.5" />}{saved ? "笔记已保存" : saving ? "正在保存" : "保存笔记"}</button><div className="mt-5 border-t pt-4"><div className="text-sm font-semibold">阅读反馈</div><div className="mt-3 grid grid-cols-3 gap-2"><button type="button" onClick={() => void feedback("high")} className={`h-8 rounded-md border px-1 text-[11px] font-medium ${level === "high" ? "border-emerald-600 bg-emerald-600 text-white" : "hover:bg-emerald-50"}`}>完全掌握</button><button type="button" onClick={() => void feedback("medium")} className={`h-8 rounded-md border px-1 text-[11px] font-medium ${level === "medium" ? "border-amber-500 bg-amber-500 text-white" : "hover:bg-amber-50"}`}>掌握一般</button><button type="button" onClick={() => void feedback("low")} className={`h-8 rounded-md border px-1 text-[11px] font-medium ${level === "low" ? "border-rose-600 bg-rose-600 text-white" : "hover:bg-rose-50"}`}>掌握不好</button></div><button type="button" onClick={onReinforce} className="mt-2.5 flex h-9 w-full items-center justify-center gap-1.5 rounded-lg border border-foreground/25 bg-muted/40 text-xs font-medium hover:bg-muted"><Target className="h-3.5 w-3.5" />基于反馈生成针对性练习</button></div></div></div>;
+  return <div className="resource-notes flex min-h-0 flex-1 flex-col">
+    <div className="resource-notes-header"><div><div className="text-sm font-semibold">讲义笔记</div><div className="mt-0.5 text-[10px] text-muted-foreground">{notes.length ? `${notes.length} 条笔记` : "还没有笔记"}</div></div><button type="button" onClick={startNewNote} className="resource-note-new"><Plus className="h-3.5 w-3.5" />新建</button></div>
+    <div className="min-h-0 flex-1 overflow-y-auto p-4">
+      {selectedQuote ? <div className="resource-selection-quote"><div className="flex items-center gap-1.5 text-[10px] font-medium text-blue-700"><Quote className="h-3 w-3" />已选正文</div><blockquote className="mt-2 line-clamp-4 text-xs leading-5 text-slate-600">{selectedQuote}</blockquote><button type="button" onClick={insertQuote} className="mt-2 text-[11px] font-medium text-blue-700 hover:text-blue-800">引用到当前笔记</button></div> : null}
+      <div className="resource-note-editor"><div className="resource-note-editor-label">{editingKey ? "编辑笔记" : "新笔记"}</div><textarea value={draft} onChange={(event) => { setDraft(event.target.value); setSaved(false); }} placeholder="写下你的笔记" aria-label="笔记内容" />{noteError ? <div className="mb-2 text-[10px] text-rose-600">{noteError}</div> : null}<div className="flex items-center justify-between gap-2"><span className="text-[10px] text-muted-foreground">{draft.length} 字</span><button type="button" disabled={saving || !draft.trim()} onClick={() => void save()} className="resource-note-save">{saved ? <Check className="h-3.5 w-3.5" /> : <Save className="h-3.5 w-3.5" />}{saved ? "已保存" : saving ? "保存中" : "保存笔记"}</button></div></div>
+      {notes.length > 0 ? <div className="mt-4 space-y-2"><div className="resource-note-list-label">已保存</div>{notes.map((note) => <button key={note.pageKey} type="button" onClick={() => editNote(note)} className={`resource-note-card ${editingKey === note.pageKey ? "resource-note-card-active" : ""}`}><span className="line-clamp-3">{note.content.replace(/^> /gm, "")}</span><time>{new Intl.DateTimeFormat("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(note.updatedAt)}</time></button>)}</div> : null}
+    </div>
+    <div className="resource-notes-feedback border-t bg-background p-4"><div className="text-xs font-semibold">阅读反馈</div><div className="mt-3 grid grid-cols-3 gap-2"><button type="button" onClick={() => void feedback("high")} className={`h-8 rounded-md border px-1 text-[11px] font-medium ${level === "high" ? "border-emerald-600 bg-emerald-600 text-white" : "hover:bg-emerald-50"}`}>完全掌握</button><button type="button" onClick={() => void feedback("medium")} className={`h-8 rounded-md border px-1 text-[11px] font-medium ${level === "medium" ? "border-amber-500 bg-amber-500 text-white" : "hover:bg-amber-50"}`}>掌握一般</button><button type="button" onClick={() => void feedback("low")} className={`h-8 rounded-md border px-1 text-[11px] font-medium ${level === "low" ? "border-rose-600 bg-rose-600 text-white" : "hover:bg-rose-50"}`}>掌握不好</button></div><button type="button" onClick={onReinforce} className="mt-2.5 flex h-9 w-full items-center justify-center gap-1.5 rounded-lg border border-foreground/25 bg-muted/40 text-xs font-medium hover:bg-muted"><Target className="h-3.5 w-3.5" />基于反馈生成针对性练习</button></div>
+  </div>;
 }
 
 const QUESTION_TYPE_LABELS: Record<QuizQuestionType, string> = { choice: "选择", blank: "填空", short_answer: "简答" };

@@ -111,6 +111,8 @@ export interface ResourceDocument {
   taskId: string;
   type: LearningResourceType;
   title: string;
+  /** 用户可编辑的轻量标签，随资源 JSON 一并持久化。 */
+  tags?: string[];
   difficulty: number;
   /** 难度校准依据（总规 §7.2），无校准信息时缺省 */
   difficultyCalibration?: {

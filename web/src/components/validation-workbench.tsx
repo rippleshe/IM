@@ -103,7 +103,7 @@ const NODE_LABELS: Record<string, string> = {
 };
 
 const ARTIFACT_LABELS: Record<string, string> = {
-  learner_snapshot: "学习情况记录",
+  learner_snapshot: "画像记录",
   evidence_set: "证据集合",
   domain_brief: "领域分析",
   resource_draft: "资源初稿",
@@ -260,7 +260,7 @@ export function ValidationWorkbench({ apiBase, user, onLogout, onNavigate, onUse
   return <main className="app-shell flex h-screen min-h-0 flex-col overflow-hidden bg-background">
     <header className="flex h-16 shrink-0 items-center justify-between border-b px-5 sm:px-7">
       <div className="flex items-center gap-2.5"><AvatarBubble user={user} size="h-9 w-9 text-xs" /><span className="min-w-0"><span className="block text-sm font-semibold tracking-tight">智辩无幻</span><span className="block text-[11px] text-muted-foreground">{user.displayName}</span></span></div>
-      <nav aria-label="学习空间" className="flex items-center rounded-lg border bg-muted/40 p-1 text-sm"><button type="button" onClick={() => setSettingsOpen(true)} className="rounded-md px-3 py-1.5 text-muted-foreground hover:text-foreground">设置</button><button type="button" onClick={() => setProfileOpen(true)} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">学习情况</button><button type="button" onClick={() => onNavigate("path")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">路径</button><button type="button" onClick={() => onNavigate("study")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">学习</button><button type="button" onClick={() => onNavigate("resources")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">资源</button><button type="button" className="rounded-md bg-background px-4 py-1.5 font-medium shadow-sm">验证</button></nav>
+      <nav aria-label="学习空间" className="flex items-center rounded-lg border bg-muted/40 p-1 text-sm"><button type="button" onClick={() => setSettingsOpen(true)} className="rounded-md px-3 py-1.5 text-muted-foreground hover:text-foreground">设置</button><button type="button" onClick={() => setProfileOpen(true)} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">画像</button><button type="button" onClick={() => onNavigate("path")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">路径</button><button type="button" onClick={() => onNavigate("study")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">学习</button><button type="button" onClick={() => onNavigate("resources")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">资源</button><button type="button" className="rounded-md bg-background px-4 py-1.5 font-medium shadow-sm">验证</button></nav>
       <button type="button" onClick={() => void logout()} className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-2 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"><LogOut className="h-3.5 w-3.5" />退出</button>
      </header>
 
@@ -336,7 +336,7 @@ export function ValidationWorkbench({ apiBase, user, onLogout, onNavigate, onUse
                     {artifact ? <>
                       <p><span className="text-muted-foreground">对外结论：</span>{readableAuditText(artifact.publicRationale.decision)}</p>
                       {artifact.publicRationale.observations.length > 0 ? <p><span className="text-muted-foreground">处理说明：</span>{artifact.publicRationale.observations.map(readableAuditText).join("；")}</p> : null}
-                      <p><span className="text-muted-foreground">参考内容：</span>{artifact.inputRefs.length > 0 ? artifact.inputRefs.length + " 个前置结果" : "学习情况和检索结果"}</p>
+                      <p><span className="text-muted-foreground">参考内容：</span>{artifact.inputRefs.length > 0 ? artifact.inputRefs.length + " 个前置结果" : "画像与检索结果"}</p>
                       <p className="break-all"><span className="text-muted-foreground">完整性校验码：</span><code className="text-[10px]">{artifact.contentHash.slice(0, 32)}…</code></p>
                       <p><span className="text-muted-foreground">处理方式：</span>{producerLabel(artifact.producer.kind)}{artifact.producer.kind === "agent" && artifact.producer.model ? `（${artifact.producer.model}）` : ""}</p>
                       {artifact.publicRationale.uncertainty.length > 0 ? <p className="text-amber-700"><span className="text-muted-foreground">需要留意：</span>{artifact.publicRationale.uncertainty.map(readableAuditText).join("；")}</p> : null}

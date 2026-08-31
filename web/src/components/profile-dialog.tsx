@@ -111,7 +111,6 @@ function readableLearningText(text: string): string {
     .replace(/pMastery/gi, "掌握情况")
     .replace(/readiness/gi, "准备度")
     .replace(/BKT/g, "学习记录模型")
-    .replace(/画像/g, "学习情况")
     .replace(/协同/g, "任务处理");
 }
 
@@ -169,9 +168,9 @@ export function ProfileDialog({ apiBase, user, headerRight, extraMetrics = [], o
       const data = await response.json() as { success?: boolean; error?: string; profile?: LearningProfile; updated?: boolean };
       if (!response.ok || !data.success || !data.profile) throw new Error(data.error || "画像生成失败");
       setProfile(data.profile);
-      setUpdateStatus(data.updated ? "学习情况已依据新增记录更新" : "没有新的学习记录，学习情况保持不变");
+      setUpdateStatus(data.updated ? "画像已依据新增记录更新" : "没有新的学习记录，画像保持不变");
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "学习情况更新失败");
+      setNotice(error instanceof Error ? error.message : "画像更新失败");
     } finally {
       setRegenerating(false);
     }
@@ -184,10 +183,10 @@ export function ProfileDialog({ apiBase, user, headerRight, extraMetrics = [], o
     ...extraMetrics,
   ];
 
-  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/25 p-6" role="dialog" aria-modal="true" aria-label="学习情况">
+  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/25 p-6" role="dialog" aria-modal="true" aria-label="画像">
     <section className="flex max-h-[calc(100vh-4rem)] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border bg-card shadow-2xl">
       <header className="flex shrink-0 items-center justify-between border-b px-7 py-5">
-        <div className="flex items-center gap-2 text-base font-semibold"><Sparkles className="h-4.5 w-4.5" />学习情况</div>
+        <div className="flex items-center gap-2 text-base font-semibold"><Sparkles className="h-4.5 w-4.5" />画像</div>
         <button type="button" onClick={onClose} className="rounded-md px-3 py-1.5 text-sm text-muted-foreground hover:bg-muted">关闭</button>
       </header>
 
@@ -210,10 +209,10 @@ export function ProfileDialog({ apiBase, user, headerRight, extraMetrics = [], o
         {notice ? <p className="mt-3 rounded-lg border border-destructive/25 bg-destructive/5 px-3 py-2 text-xs text-destructive">{notice}</p> : null}
 
         <div className="mt-6">
-          <div className="text-xs font-medium text-muted-foreground">学习概况</div>
+          <div className="text-xs font-medium text-muted-foreground">画像概况</div>
           {loading
             ? <div className="mt-2 h-16 animate-pulse rounded-xl bg-muted/60" />
-            : <p className="mt-2 rounded-xl bg-muted/50 p-4 text-sm leading-7">{readableLearningText(profile?.summary || "暂无学习概况。")}</p>}
+            : <p className="mt-2 rounded-xl bg-muted/50 p-4 text-sm leading-7">{readableLearningText(profile?.summary || "暂无画像概况。")}</p>}
         </div>
 
         <div className="mt-5">
@@ -290,7 +289,7 @@ export function ProfileDialog({ apiBase, user, headerRight, extraMetrics = [], o
       <footer className="shrink-0 border-t bg-background px-7 py-4">
         <button type="button" onClick={() => void regenerateProfile()} disabled={regenerating} className="flex h-10 w-full items-center justify-center gap-2 rounded-lg border px-4 text-sm font-medium hover:bg-muted disabled:opacity-60">
           {regenerating ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-          根据最新数据更新学习情况
+          根据最新数据更新画像
         </button>
         {updateStatus ? <p className="mt-2 text-center text-xs text-muted-foreground">{updateStatus}</p> : null}
       </footer>

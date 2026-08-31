@@ -96,13 +96,7 @@ export function buildResourceDraft(
 ): ResourceDocument {
   const isLecture = type === 'lecture';
   const isPresentation = type === 'presentation';
-  const title = isLecture
-    ? `压缩机诊断讲义：${query}`
-    : isPresentation
-    ? `诊断训练 PPT：${query}`
-    : type === 'tiered_quiz'
-    ? `分层练习：${query}`
-    : `知识脉络：${query}`;
+  const title = conciseResourceTitle(query, type);
   const knowledgePoint = normalizeKnowledgePointId(knowledgePointId) || 'compressor-diagnosis-evidence';
   const opening: ResourceBlock = {
     id: `resource-block-${randomUUID()}`,
@@ -721,7 +715,8 @@ export function buildLlmResourceDocument(
     id: `resource-${randomUUID()}`,
     taskId,
     type,
-    title: llm.title.trim().slice(0, 80) || `${RESOURCE_TYPE_LABEL[type]}：${query}`,
+    title: conciseResourceTitle(llm.title, type, query),
+    tags: [RESOURCE_TYPE_LABEL[type]],
     difficulty: 0.5,
     learningObjectives: llm.objectives.map((item) => String(item).trim().slice(0, 60)).filter(Boolean).slice(0, 4),
     knowledgePointIds: [knowledgePoint],
@@ -735,6 +730,19 @@ export function buildLlmResourceDocument(
 const RESOURCE_TYPE_LABEL: Record<LearningResourceType, string> = {
   lecture: '讲义', presentation: 'PPT', tiered_quiz: '分层练习', concept_map: '知识脉络',
 };
+
+/** 资源标题是侧栏导航的一部分：去掉请求式前缀与重复类型词，保留一个短而可辨认的主题。 */
+function conciseResourceTitle(value: string, type: LearningResourceType, fallbackQuery = value): string {
+  const prefix = RESOURCE_TYPE_LABEL[type];
+  const cleaned = String(value ?? '')
+    .replace(/\s+/g, ' ')
+    .replace(/^(请|帮我|给我|生成|做一份|写一份|制作)\s*/u, '')
+    .replace(/^(压缩机诊断讲义|诊断训练\s*PPT|分层练习|知识脉络)\s*[:：-]?\s*/u, '')
+    .trim();
+  const fallback = String(fallbackQuery ?? '').replace(/\s+/g, ' ').trim();
+  const subject = cleaned || fallback || '设备诊断基础';
+  return `${prefix} · ${subject}`.slice(0, 24).replace(/[：:·\s]+$/u, '');
+}
 
 function analysisCodeBlock(knowledgePoint: string): ResourceBlock {
   return {

@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Bot,
-  Check,
   Download,
   FilePlus2,
   ListTree,
@@ -20,7 +19,7 @@ import {
 import type { AuthenticatedUser } from "@/components/auth-entry";
 import { SettingsDialog } from "@/components/settings-dialog";
 import { AvatarBubble, ProfileDialog } from "@/components/profile-dialog";
-import { RecommendationBadge, type PathGraph, type PathNode, TreeCanvas } from "@/components/learning-path-workbench";
+import { PathNodeDetails, RecommendationBadge, type PathGraph, type PathNode, TreeCanvas } from "@/components/learning-path-workbench";
 import { RichText, DescriptionList } from "@/components/rich-text";
 
 type ResourceType = "lecture" | "tiered_quiz" | "presentation" | "concept_map";
@@ -42,7 +41,7 @@ const resourceOptions: Array<{ value: ResourceType; label: string }> = [
 ];
 
 const nodeLabels: Record<string, { name: string; agentId: AgentId }> = {
-  "assess.learner": { name: "分析学习情况", agentId: "learning_planning" },
+  "assess.learner": { name: "分析画像", agentId: "learning_planning" },
   "retrieve.structured": { name: "查找数据依据", agentId: "evidence_retrieval" },
   "retrieve.document": { name: "查找资料依据", agentId: "evidence_retrieval" },
   "analyze.domain": { name: "分析专业内容", agentId: "domain_expert" },
@@ -80,7 +79,7 @@ function readableProcessText(text: string): string {
     .replace(/合规与隐私智能体/g, "隐私保护助手")
     .replace(/结构化证据检索/g, "查找数据依据")
     .replace(/文档证据检索/g, "查找资料依据")
-    .replace(/学情建模/g, "分析学习情况")
+    .replace(/学情建模/g, "分析画像")
     .replace(/领域分析/g, "分析专业内容")
     .replace(/资源生成/g, "制作学习材料")
     .replace(/隐私合规/g, "隐私检查")
@@ -139,6 +138,7 @@ export function LearningWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
   const [liveEvents, setLiveEvents] = useState<Array<{ id: string; type: string; nodeKey: string | null; summary: string }>>([]);
   const [liveSummary, setLiveSummary] = useState("");
   const [notice, setNotice] = useState("");
+  const [savingNodeId, setSavingNodeId] = useState<string | null>(null);
   const [mentionOpen, setMentionOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -396,12 +396,14 @@ export function LearningWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
   };
 
   const updateNode = async (node: PathNode, patch: { userStatus?: PathNode["userStatus"]; mastered?: boolean }) => {
+    setSavingNodeId(node.id);
     try {
       const response = await fetch(`${apiBase}/api/learning/path-graph/nodes/${node.id}`, { method: "PATCH", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) });
       const data = await response.json() as { success?: boolean; error?: string; node?: PathNode };
       if (!response.ok || !data.success || !data.node) throw new Error(data.error || "节点状态保存失败");
       setPath((current) => ({ ...current, nodes: current.nodes.map((item) => item.id === node.id ? data.node as PathNode : item) }));
     } catch (error) { setNotice(error instanceof Error ? error.message : "节点状态保存失败"); }
+    finally { setSavingNodeId(null); }
   };
 
   const exportAsset = (asset: StudyAsset, format: "md" | "txt" | "json" | "ppt") => window.open(`${apiBase}/api/learning/assets/${encodeURIComponent(asset.id)}/export?format=${format}`, "_blank", "noopener,noreferrer");
@@ -410,7 +412,7 @@ export function LearningWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
   return <main className={`app-shell flex h-screen min-h-0 flex-col overflow-hidden bg-background ${resizing ? "select-none" : ""}`}>
     <header className="flex h-16 shrink-0 items-center justify-between border-b px-5 sm:px-7">
       <div className="flex items-center gap-2.5"><AvatarBubble user={user} size="h-9 w-9 text-xs" /><span className="min-w-0"><span className="block text-sm font-semibold tracking-tight">智辩无幻</span><span className="block text-[11px] text-muted-foreground">{user.displayName}</span></span></div>
-      <nav aria-label="学习空间" className="flex items-center rounded-lg border bg-muted/40 p-1 text-sm"><button type="button" onClick={() => setSettingsOpen(true)} className="rounded-md px-3 py-1.5 text-muted-foreground hover:text-foreground">设置</button><button type="button" onClick={() => setProfileOpen(true)} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">学习情况</button><button type="button" onClick={() => onNavigate("path")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">路径</button><button type="button" className="rounded-md bg-background px-4 py-1.5 font-medium shadow-sm">学习</button><button type="button" onClick={() => onNavigate("resources")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">资源</button><button type="button" onClick={() => onNavigate("validation")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">验证</button></nav>
+      <nav aria-label="学习空间" className="flex items-center rounded-lg border bg-muted/40 p-1 text-sm"><button type="button" onClick={() => setSettingsOpen(true)} className="rounded-md px-3 py-1.5 text-muted-foreground hover:text-foreground">设置</button><button type="button" onClick={() => setProfileOpen(true)} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">画像</button><button type="button" onClick={() => onNavigate("path")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">路径</button><button type="button" className="rounded-md bg-background px-4 py-1.5 font-medium shadow-sm">学习</button><button type="button" onClick={() => onNavigate("resources")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">资源</button><button type="button" onClick={() => onNavigate("validation")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">验证</button></nav>
       <button type="button" onClick={logout} className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-2 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"><LogOut className="h-3.5 w-3.5" />退出</button>
     </header>
 
@@ -466,7 +468,7 @@ export function LearningWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
       </section>
 
       <div role="separator" aria-orientation="vertical" onMouseDown={() => setResizing("right")} className="w-1.5 shrink-0 cursor-col-resize bg-border/60 transition-colors hover:bg-foreground/30" />
-      <aside style={{ width: rightWidth }} className="flex shrink-0 flex-col bg-muted/15" aria-label="当前学习路径"><div className="workspace-pane-titlebar flex shrink-0 items-center justify-between border-b bg-background px-4 py-3.5"><div className="flex items-center gap-2"><Network className="h-4 w-4" /><h2 className="text-sm font-semibold">学习路径</h2></div><span className="text-xs text-muted-foreground">{path.nodes.length} 个节点</span></div><div className="min-h-0 basis-[59%] p-3">{path.nodes.length ? <TreeCanvas graph={path} selectedNodeId={selectedNodeId} onSelect={(node) => setSelectedNodeId(node.id)} /> : <div className="flex h-full items-center justify-center rounded-xl border border-dashed text-xs text-muted-foreground">尚未建立学习路径</div>}</div><div className="min-h-0 basis-[41%] overflow-y-auto border-t bg-background p-4">{selectedNode ? <div><div className="flex items-start justify-between gap-3"><div><div className="text-[10px] text-muted-foreground">当前节点</div><h3 className="mt-1 text-sm font-semibold leading-5">{selectedNode.title}</h3></div><span className={`mt-1 h-2.5 w-2.5 shrink-0 rounded-full ${selectedNode.mastered ? "bg-emerald-600" : selectedNode.userStatus === "completed" ? "bg-blue-600" : selectedNode.userStatus === "learning" ? "bg-amber-500" : "bg-zinc-300"}`} /></div>{selectedNode.recommendation ? <div className="mt-3"><RecommendationBadge recommendation={selectedNode.recommendation} /></div> : null}<p className="mt-3 text-xs leading-5 text-muted-foreground">{selectedNode.description}</p><button type="button" onClick={() => addMention(selectedNode)} className="mt-3 inline-flex h-8 w-full items-center justify-center gap-1 rounded-lg border text-xs font-medium hover:bg-muted">引用到问题</button><div className="mt-2 flex gap-2"><button type="button" onClick={() => void updateNode(selectedNode, { userStatus: selectedNode.userStatus === "completed" ? "learning" : "completed" })} className="inline-flex h-8 flex-1 items-center justify-center gap-1 rounded-lg border text-xs hover:bg-muted"><Check className="h-3.5 w-3.5" />{selectedNode.userStatus === "completed" ? "继续学习" : "学完"}</button><button type="button" onClick={() => void updateNode(selectedNode, { mastered: !selectedNode.mastered, userStatus: selectedNode.mastered ? selectedNode.userStatus : "completed" })} className="inline-flex h-8 flex-1 items-center justify-center gap-1 rounded-lg border text-xs hover:bg-muted">{selectedNode.mastered ? "取消掌握" : "掌握"}</button></div></div> : <div className="flex h-full items-center justify-center text-xs text-muted-foreground">选择一个节点</div>}</div></aside>
+      <aside style={{ width: rightWidth }} className="flex shrink-0 flex-col bg-muted/15" aria-label="当前学习路径"><div className="workspace-pane-titlebar flex shrink-0 items-center justify-between border-b bg-background px-4 py-3.5"><div className="flex items-center gap-2"><Network className="h-4 w-4" /><h2 className="text-sm font-semibold">学习路径</h2></div><span className="text-xs text-muted-foreground">{path.nodes.length} 个节点</span></div><div className="min-h-0 basis-[59%] p-3">{path.nodes.length ? <TreeCanvas graph={path} selectedNodeId={selectedNodeId} onSelect={(node) => setSelectedNodeId(node.id)} /> : <div className="flex h-full items-center justify-center rounded-xl border border-dashed text-xs text-muted-foreground">尚未建立学习路径</div>}</div><div className="min-h-0 basis-[41%] overflow-y-auto border-t bg-background p-4">{selectedNode ? <PathNodeDetails apiBase={apiBase} node={selectedNode} primaryLabel="引用到问题" onPrimary={() => addMention(selectedNode)} onUpdateNode={updateNode} saving={savingNodeId === selectedNode.id} compact /> : <div className="flex h-full items-center justify-center text-xs text-muted-foreground">选择一个节点</div>}</div></aside>
     </div>
 
     {profileOpen && <ProfileDialog apiBase={apiBase} user={user} onUserChange={onUserChange} onClose={() => setProfileOpen(false)} />}

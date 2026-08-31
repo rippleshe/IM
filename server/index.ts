@@ -132,7 +132,7 @@ function resourceToPresentation(resource: ResourceDocument): string {
   }
   if (slides.length > 1 && slides[0]?.body.length === 0) slides.shift();
   const htmlSlides = slides.map((slide, index) => `<section class="slide"><div class="slide-number">${index + 1} / ${slides.length}</div><h1>${escapeHtml(slide.title)}</h1><div class="body">${slide.body.map((line) => `<p>${escapeHtml(line)}</p>`).join('')}</div></section>`).join('\n');
-  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>${escapeHtml(resource.title)}</title><style>body{margin:0;background:#e9edf2;font-family:Arial,"Microsoft YaHei",sans-serif}.slide{box-sizing:border-box;width:1280px;height:720px;margin:28px auto;padding:76px 92px;background:#fff;color:#18212b;page-break-after:always;position:relative}.slide h1{font-size:42px;line-height:1.25;border-bottom:4px solid #2563eb;padding-bottom:20px;margin:0 0 34px}.body{font-size:25px;line-height:1.65}.body p{margin:0 0 16px;white-space:pre-wrap}.slide-number{position:absolute;right:92px;top:30px;color:#64748b;font-size:16px}@media print{body{background:#fff}.slide{margin:0}}</style></head><body>${htmlSlides}</body></html>`;
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>${escapeHtml(resource.title)}</title><style>body{margin:0;background:#e9edf2;font-family:"Microsoft YaHei","Segoe UI",sans-serif}.slide{box-sizing:border-box;width:1280px;height:720px;margin:28px auto;padding:76px 92px;background:#fff;color:#18212b;page-break-after:always;position:relative}.slide h1{font-size:42px;line-height:1.25;border-bottom:4px solid #2563eb;padding-bottom:20px;margin:0 0 34px}.body{font-size:25px;line-height:1.65}.body p{margin:0 0 16px;white-space:pre-wrap}.slide-number{position:absolute;right:92px;top:30px;color:#64748b;font-size:16px}@media print{body{background:#fff}.slide{margin:0}}</style></head><body>${htmlSlides}</body></html>`;
 }
 
 function readCookie(header: string | undefined, name: string): string | undefined {
@@ -627,6 +627,25 @@ app.get('/api/learning/assets/:assetId/reader', async (req, res) => {
     pageNotes: await learningStore.listAssetPageNotes(learner.id, asset.id),
     quizAttempts: asset.type === 'tiered_quiz' ? await learningStore.listQuizAttempts(learner.id, asset.id) : [],
   });
+});
+
+app.patch('/api/learning/assets/:assetId', async (req, res) => {
+  const learner = await requireLearner(req, res);
+  if (!learner) return;
+  const title = typeof req.body?.title === 'string' ? req.body.title : undefined;
+  const tags = Array.isArray(req.body?.tags)
+    ? req.body.tags.filter((tag: unknown): tag is string => typeof tag === 'string')
+    : undefined;
+  if (title === undefined && tags === undefined) {
+    res.status(400).json({ success: false, error: '没有可更新的资源信息' });
+    return;
+  }
+  const asset = await learningStore.updateAssetMetadata(learner.id, req.params.assetId, { title, tags });
+  if (!asset) {
+    res.status(404).json({ success: false, error: '未找到该学习资产' });
+    return;
+  }
+  res.json({ success: true, asset });
 });
 
 app.put('/api/learning/assets/:assetId/pages/:pageKey/note', async (req, res) => {

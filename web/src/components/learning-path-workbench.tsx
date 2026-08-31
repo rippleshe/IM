@@ -138,7 +138,6 @@ function readablePathActivityText(text: string): string {
     .replace(/学情与路径智能体/g, "学习规划助手")
     .replace(/知识检索智能体/g, "资料检索助手")
     .replace(/交叉验证智能体/g, "内容检查助手")
-    .replace(/画像/g, "学习情况")
     .replace(/协同/g, "任务处理");
 }
 
@@ -168,13 +167,66 @@ function NodeDecisionBasis({ apiBase, knowledgePointId }: { apiBase: string; kno
     : decision.recommendedResourceType === "tiered_quiz" ? "分层习题"
     : decision.recommendedResourceType === "presentation" ? "PPT"
     : decision.recommendedResourceType === "concept_map" ? "知识脉络" : "资源";
-  return <div className="mt-3 rounded-xl border bg-muted/20 p-3 text-[11px] leading-4">
+  return <div className="path-node-decision mt-3 text-[11px] leading-4">
     <div className="flex items-center justify-between">
       <span className="font-medium">最近学习建议</span>
       <span className="text-[10px] text-muted-foreground">{new Intl.DateTimeFormat("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).format(decision.createdAt)}</span>
     </div>
     <p className="mt-1.5 text-muted-foreground">根据最近一次{TRIGGER_LABELS[decision.triggerType] ?? "学习反馈"}，下一步建议：<b className="font-semibold text-foreground">{DECISION_LABELS[decision.decision] ?? "继续学习"}</b>{decision.recommendedResourceType ? `，优先${resourceLabel}` : ""}。</p>
-    <p className="mt-1 text-muted-foreground">完成下一次学习或练习后，这条建议会自动更新。</p>
+    <p className="mt-1 text-muted-foreground">完成下一次学习或练习后自动更新。</p>
+  </div>;
+}
+
+function nodeStatusLabel(node: PathNode): string {
+  if (node.mastered) return "已掌握";
+  if (node.userStatus === "completed") return "已学完";
+  if (node.userStatus === "learning") return "学习中";
+  return "未开始";
+}
+
+export function PathNodeDetails({
+  apiBase,
+  node,
+  onPrimary,
+  primaryLabel,
+  onRequestNodeAddition,
+  onUpdateNode,
+  saving = false,
+  compact = false,
+}: {
+  apiBase: string;
+  node: PathNode;
+  onPrimary: () => void;
+  primaryLabel: string;
+  onRequestNodeAddition?: (kind: string) => void;
+  onUpdateNode: (node: PathNode, patch: Partial<Pick<PathNode, "userStatus" | "mastered">>) => void;
+  saving?: boolean;
+  compact?: boolean;
+}) {
+  return <div className={`path-node-detail ${compact ? "path-node-detail-compact" : ""}`}>
+    <div className="flex items-start justify-between gap-3">
+      <div className="min-w-0">
+        <div className="path-node-kicker">当前节点</div>
+        <h3 className="path-node-title mt-1">{node.title}</h3>
+      </div>
+      <span className={`path-node-status path-node-status-${node.mastered ? "mastered" : node.userStatus}`}>{nodeStatusLabel(node)}</span>
+    </div>
+    {node.recommendation ? <div className={`path-node-recommendation path-node-recommendation-${node.recommendation.level} mt-3`}><RecommendationBadge recommendation={node.recommendation} /></div> : null}
+    <div className="path-node-focus mt-4">
+      <div className="path-node-section-label">这一节点要学会</div>
+      <DescriptionList text={node.description} compact={compact} />
+    </div>
+    <NodeDecisionBasis apiBase={apiBase} knowledgePointId={node.knowledgePointId} />
+    <div className="path-node-actions mt-4">
+      <button type="button" onClick={onPrimary} className="path-node-primary inline-flex h-8 items-center justify-center gap-1.5 rounded-lg px-3 text-xs font-medium">{primaryLabel}</button>
+      {onRequestNodeAddition ? <div className="flex flex-wrap gap-1.5">
+        {(["前置", "分支", "应用"] as const).map((kind) => <button key={kind} type="button" onClick={() => onRequestNodeAddition(kind)} className="path-node-chip inline-flex h-7 items-center gap-1 rounded-md px-2 text-[11px]"><Plus className="h-3 w-3" />{kind}</button>)}
+      </div> : null}
+      <div className="flex gap-2">
+        <button type="button" disabled={saving} onClick={() => onUpdateNode(node, { userStatus: node.userStatus === "completed" ? "learning" : "completed" })} className="path-node-secondary inline-flex h-8 flex-1 items-center justify-center gap-1 rounded-lg px-2 text-xs disabled:opacity-50"><Check className="h-3.5 w-3.5" />{node.userStatus === "completed" ? "继续学习" : "标记学完"}</button>
+        <button type="button" disabled={saving} onClick={() => onUpdateNode(node, { mastered: !node.mastered, userStatus: node.mastered ? node.userStatus : "completed" })} className={`path-node-secondary inline-flex h-8 flex-1 items-center justify-center gap-1 rounded-lg px-2 text-xs disabled:opacity-50 ${node.mastered ? "path-node-secondary-active" : ""}`}><Trophy className="h-3.5 w-3.5" />{node.mastered ? "取消掌握" : "标记掌握"}</button>
+      </div>
+    </div>
   </div>;
 }
 
@@ -493,7 +545,7 @@ export function LearningPathWorkbench({ apiBase, user, onLogout, onNavigate, onU
   return <main className="app-shell flex h-screen min-h-0 flex-col overflow-hidden bg-background text-foreground">
     <header className="flex h-16 shrink-0 items-center justify-between border-b px-5 sm:px-7">
       <div className="flex items-center gap-2.5"><AvatarBubble user={user} size="h-9 w-9 text-xs" /><span className="min-w-0"><span className="block text-sm font-semibold tracking-tight">智辩无幻</span><span className="block text-[11px] text-muted-foreground">{user.displayName}</span></span></div>
-      <nav aria-label="学习空间" className="flex items-center rounded-lg border bg-muted/40 p-1 text-sm"><button type="button" onClick={() => setSettingsOpen(true)} className="rounded-md px-3 py-1.5 text-muted-foreground hover:text-foreground">设置</button><button type="button" onClick={() => setProfileOpen(true)} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">学习情况</button><button type="button" className="rounded-md bg-background px-4 py-1.5 font-medium shadow-sm">路径</button><button type="button" onClick={() => onNavigate?.("study")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">学习</button><button type="button" onClick={() => onNavigate?.("resources")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">资源</button><button type="button" onClick={() => onNavigate?.("validation")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">验证</button></nav>
+      <nav aria-label="学习空间" className="flex items-center rounded-lg border bg-muted/40 p-1 text-sm"><button type="button" onClick={() => setSettingsOpen(true)} className="rounded-md px-3 py-1.5 text-muted-foreground hover:text-foreground">设置</button><button type="button" onClick={() => setProfileOpen(true)} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">画像</button><button type="button" className="rounded-md bg-background px-4 py-1.5 font-medium shadow-sm">路径</button><button type="button" onClick={() => onNavigate?.("study")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">学习</button><button type="button" onClick={() => onNavigate?.("resources")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">资源</button><button type="button" onClick={() => onNavigate?.("validation")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">验证</button></nav>
       <button type="button" onClick={logout} className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-2 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"><LogOut className="h-3.5 w-3.5" />退出</button>
     </header>
 
@@ -525,7 +577,7 @@ export function LearningPathWorkbench({ apiBase, user, onLogout, onNavigate, onU
         <div className="workspace-pane-titlebar flex shrink-0 items-center justify-between border-b bg-background px-5 py-3.5"><div className="flex items-center gap-2"><Network className="h-4 w-4" /><h2 className="text-sm font-semibold">我的学习路径</h2></div><span className="text-xs text-muted-foreground">{completedNodes}/{path.nodes.length}</span></div>
         <div className="flex min-h-0 basis-[62%] flex-col p-4 pb-2"><div className="mb-3 flex shrink-0 items-center justify-between"><div className="flex items-center gap-3 text-[11px] text-muted-foreground"><span className="flex items-center gap-1"><i className="h-2 w-2 rounded-full bg-zinc-300" />未开始</span><span className="flex items-center gap-1"><i className="h-2 w-2 rounded-full bg-blue-600" />学完</span><span className="flex items-center gap-1"><i className="h-2 w-2 rounded-full bg-emerald-600" />掌握</span><span className="flex items-center gap-1"><i className="h-1.5 w-1.5 rounded-full bg-amber-500" />建议补强</span><span className="flex items-center gap-1"><i className="h-1.5 w-1.5 rounded-full bg-emerald-500" />可进阶</span></div></div>{loading ? <div className="flex min-h-0 flex-1 items-center justify-center"><Loader2 className="h-4 w-4 animate-spin text-muted-foreground" /></div> : path.nodes.length === 0 ? <div className="flex min-h-0 flex-1 items-center justify-center rounded-xl border border-dashed text-sm text-muted-foreground">尚未建立学习路径</div> : <TreeCanvas graph={path} selectedNodeId={selectedNodeId} onSelect={selectNode} />}</div>
         <div className="min-h-0 basis-[38%] overflow-y-auto border-t bg-background p-4">
-          {selectedNode ? <div className="mx-auto max-w-2xl"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><div className="text-[10px] text-muted-foreground">当前节点</div><h3 className="mt-1 text-base font-semibold">{selectedNode.title}</h3></div><span className={`mt-1 h-2.5 w-2.5 shrink-0 rounded-full ${statusDot(selectedNode)}`} /></div>{selectedNode.recommendation ? <div className="mt-3"><RecommendationBadge recommendation={selectedNode.recommendation} /></div> : null}<NodeDecisionBasis apiBase={apiBase} knowledgePointId={selectedNode.knowledgePointId} /><div className="mt-3"><DescriptionList text={selectedNode.description} /></div><div className="mt-4 flex flex-wrap gap-2"><button type="button" onClick={() => carryIntoChat(selectedNode)} className="inline-flex h-8 items-center gap-1 rounded-lg border px-3 text-xs font-medium hover:bg-muted">带入对话</button><button type="button" onClick={() => requestNodeAddition("前置")} className="inline-flex h-8 items-center gap-1 rounded-lg border px-3 text-xs hover:bg-muted"><Plus className="h-3.5 w-3.5" />前置</button><button type="button" onClick={() => requestNodeAddition("分支")} className="inline-flex h-8 items-center gap-1 rounded-lg border px-3 text-xs hover:bg-muted"><Plus className="h-3.5 w-3.5" />分支</button><button type="button" onClick={() => requestNodeAddition("应用")} className="inline-flex h-8 items-center gap-1 rounded-lg border px-3 text-xs hover:bg-muted"><Plus className="h-3.5 w-3.5" />应用</button></div><div className="mt-3 flex gap-2"><button type="button" disabled={savingNodeId === selectedNode.id} onClick={() => void updateNode(selectedNode, { userStatus: selectedNode.userStatus === "completed" ? "learning" : "completed" })} className="inline-flex h-8 flex-1 items-center justify-center gap-1 rounded-lg border text-xs font-medium hover:bg-muted disabled:opacity-50"><Check className="h-3.5 w-3.5" />{selectedNode.userStatus === "completed" ? "继续学习" : "标记学完"}</button><button type="button" disabled={savingNodeId === selectedNode.id} onClick={() => void updateNode(selectedNode, { mastered: !selectedNode.mastered, userStatus: selectedNode.mastered ? selectedNode.userStatus : "completed" })} className={`inline-flex h-8 flex-1 items-center justify-center gap-1 rounded-lg border text-xs font-medium hover:bg-muted disabled:opacity-50 ${selectedNode.mastered ? "border-emerald-300 bg-emerald-50 text-emerald-700" : ""}`}><Trophy className="h-3.5 w-3.5" />{selectedNode.mastered ? "取消掌握" : "标记掌握"}</button></div></div> : <div className="flex h-full items-center justify-center text-sm text-muted-foreground">选择一个节点查看详情</div>}
+          {selectedNode ? <PathNodeDetails apiBase={apiBase} node={selectedNode} primaryLabel="带入对话" onPrimary={() => carryIntoChat(selectedNode)} onRequestNodeAddition={requestNodeAddition} onUpdateNode={updateNode} saving={savingNodeId === selectedNode.id} /> : <div className="flex h-full items-center justify-center text-sm text-muted-foreground">选择一个节点查看详情</div>}
         </div>
       </aside>
     </div>
