@@ -86,7 +86,7 @@ export function DiagnosticFlow({ apiBase, user, onFinished }: DiagnosticFlowProp
     }
   };
 
-  return <main className="flex min-h-screen items-center justify-center bg-background px-5 py-10 text-foreground">
+  return <main className="app-entry flex min-h-screen items-center justify-center bg-background px-5 py-10 text-foreground">
     <div className="w-full max-w-3xl rounded-2xl border bg-card shadow-sm">
       {loading ? (
         <div className="flex items-center justify-center gap-2 px-10 py-20 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />正在准备入学诊断…</div>
@@ -103,7 +103,7 @@ export function DiagnosticFlow({ apiBase, user, onFinished }: DiagnosticFlowProp
               const percent = item.total > 0 ? Math.round((item.correct / item.total) * 100) : 0;
               return <div key={item.dimension} className="flex items-center gap-3 text-xs">
                 <span className="w-20 shrink-0 text-muted-foreground">{DIMENSION_LABELS[item.dimension] ?? item.dimension}</span>
-                <span className="h-2 flex-1 overflow-hidden rounded-full bg-muted"><span className="block h-full rounded-full bg-foreground/70" style={{ width: `${percent}%` }} /></span>
+                <span className="h-2 flex-1 overflow-hidden rounded-full bg-muted"><span className="block h-full rounded-full bg-blue-300" style={{ width: `${percent}%` }} /></span>
                 <span className="w-16 text-right font-medium">{item.correct}/{item.total}</span>
               </div>;
             })}
@@ -118,7 +118,7 @@ export function DiagnosticFlow({ apiBase, user, onFinished }: DiagnosticFlowProp
               </div>
             </div>)}
           </div>
-          <button type="button" onClick={() => onFinished({ ...user, diagnosticCompleted: true })} className="mt-7 flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-foreground text-sm font-medium text-background hover:opacity-90">
+          <button type="button" onClick={() => onFinished({ ...user, diagnosticCompleted: true })} className="mt-7 flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-blue-400 text-sm font-medium text-white shadow-sm shadow-blue-200 hover:bg-blue-500">
             进入学习工作台 <ArrowRight className="h-4 w-4" />
           </button>
         </div>
@@ -128,13 +128,13 @@ export function DiagnosticFlow({ apiBase, user, onFinished }: DiagnosticFlowProp
             <span>入学诊断 · {DIMENSION_LABELS[question.dimension] ?? question.dimension} · {question.level}</span>
             <span>{index + 1} / {questions.length}</span>
           </div>
-          <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-foreground/70 transition-all" style={{ width: `${Math.round(((index + 1) / questions.length) * 100)}%` }} /></div>
+          <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-blue-300 transition-all" style={{ width: `${Math.round(((index + 1) / questions.length) * 100)}%` }} /></div>
           <h1 className="mt-7 text-lg font-semibold leading-7">{question.prompt}</h1>
           <div className="mt-6 space-y-2.5">
             {question.options.map((option) => {
               const selected = answers[question.id] === option.id;
               return <button key={option.id} type="button" onClick={() => choose(option.id)} className={`flex w-full items-start gap-3 rounded-xl border p-4 text-left text-sm leading-6 transition-all ${selected ? "border-foreground/70 bg-muted shadow-sm" : "hover:border-foreground/35 hover:bg-muted/25 hover:shadow-sm"}`}>
-                <span className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md border text-[11px] font-semibold transition-colors ${selected ? "border-foreground bg-foreground text-background" : "border-border text-muted-foreground"}`}>{option.id}</span>
+                <span className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md border text-[11px] font-semibold transition-colors ${selected ? "border-blue-400 bg-blue-400 text-white" : "border-border text-muted-foreground"}`}>{option.id}</span>
                 <span>{option.text}</span>
               </button>;
             })}
@@ -143,7 +143,7 @@ export function DiagnosticFlow({ apiBase, user, onFinished }: DiagnosticFlowProp
           <div className="mt-7 flex items-center justify-between">
             <button type="button" disabled={index === 0} onClick={() => setIndex((current) => Math.max(0, current - 1))} className="inline-flex h-9 items-center gap-1.5 rounded-lg border px-3.5 text-xs font-medium hover:bg-muted disabled:opacity-40"><ArrowLeft className="h-3.5 w-3.5" />上一题</button>
             {allAnswered
-              ? <button type="button" disabled={submitting} onClick={() => void submit()} className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-foreground px-4 text-xs font-medium text-background disabled:opacity-50">{submitting ? <><Loader2 className="h-3.5 w-3.5 animate-spin" />正在判分</> : "提交诊断"}</button>
+              ? <button type="button" disabled={submitting} onClick={() => void submit()} className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-blue-400 px-4 text-xs font-medium text-white shadow-sm shadow-blue-200 disabled:opacity-50">{submitting ? <><Loader2 className="h-3.5 w-3.5 animate-spin" />正在判分</> : "提交诊断"}</button>
               : <span className="text-xs text-muted-foreground">已答 {answeredCount}/{questions.length} 题</span>}
           </div>
         </div>

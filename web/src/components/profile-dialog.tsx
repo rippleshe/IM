@@ -32,8 +32,8 @@ type ProfileDialogProps = {
 };
 
 const AVATAR_FALLBACK: Record<AuthenticatedUser["avatarKey"], string> = {
-  graphite: "bg-zinc-900 text-white", ocean: "bg-sky-600 text-white", violet: "bg-violet-600 text-white",
-  forest: "bg-emerald-600 text-white", amber: "bg-amber-500 text-white", rose: "bg-rose-600 text-white",
+  graphite: "bg-blue-50 text-blue-800", ocean: "bg-sky-100 text-sky-800", violet: "bg-violet-100 text-violet-800",
+  forest: "bg-emerald-100 text-emerald-700", amber: "bg-amber-100 text-amber-700", rose: "bg-rose-100 text-rose-700",
 };
 
 /** 把用户选择的图片读入 canvas，居中裁方并缩到 128px，输出 jpeg data URL（约 <30KB）。 */

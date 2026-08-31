@@ -66,6 +66,7 @@ function MermaidDiagram({ code }: { code: string }) {
   const [failed, setFailed] = useState(false);
   useEffect(() => {
     let active = true;
+    const renderId = `mermaid-${Math.random().toString(36).slice(2)}`;
     void (async () => {
       try {
         const mermaid = (await import("mermaid")).default;
@@ -82,7 +83,7 @@ function MermaidDiagram({ code }: { code: string }) {
             fontFamily: "inherit",
           },
         });
-        const { svg: rendered } = await mermaid.render(`mermaid-${Math.random().toString(36).slice(2)}`, code);
+        const { svg: rendered } = await mermaid.render(renderId, code);
         // mermaid 解析失败时不总是抛错，有时直接返回错误图——按内容识别并降级为源码展示
         if (active) {
           if (rendered.includes("Syntax error") || rendered.includes("mermaid-error")) setFailed(true);
@@ -90,6 +91,9 @@ function MermaidDiagram({ code }: { code: string }) {
         }
       } catch {
         if (active) setFailed(true);
+      } finally {
+        // mermaid.render 会在 body 中创建临时节点；无论成功或失败都要清理，避免错误 SVG 残留在页面顶部。
+        document.getElementById(`d${renderId}`)?.remove();
       }
     })();
     return () => { active = false; };
@@ -238,19 +242,19 @@ export function ResourceWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
 
   const logout = async () => { await fetch(`${apiBase}/api/auth/logout`, { method: "POST", credentials: "include" }).catch(() => undefined); onLogout(); };
 
-  return <main className={`flex h-screen min-h-0 flex-col overflow-hidden bg-background ${resizing ? "select-none" : ""}`}>
+  return <main className={`app-shell flex h-screen min-h-0 flex-col overflow-hidden bg-background ${resizing ? "select-none" : ""}`}>
     <header className="flex h-16 shrink-0 items-center justify-between border-b px-5 sm:px-7">
       <div className="flex items-center gap-2.5"><AvatarBubble user={user} size="h-9 w-9 text-xs" /><span><span className="block text-sm font-semibold tracking-tight">IM-Training-Agent</span><span className="block text-[11px] text-muted-foreground">{user.displayName}</span></span></div>
       <nav aria-label="学习空间" className="flex items-center rounded-lg border bg-muted/40 p-1 text-sm"><button type="button" onClick={() => setSettingsOpen(true)} className="rounded-md px-3 py-1.5 text-muted-foreground hover:text-foreground">设置</button><button type="button" onClick={() => setProfileOpen(true)} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">学习情况</button><button type="button" onClick={() => onNavigate("path")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">路径</button><button type="button" onClick={() => onNavigate("study")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">学习</button><button type="button" className="rounded-md bg-background px-4 py-1.5 font-medium shadow-sm">资源</button><button type="button" onClick={() => onNavigate("validation")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">验证</button></nav>
       <button type="button" onClick={logout} className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-2 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"><LogOut className="h-3.5 w-3.5" />退出</button>
     </header>
 
-    <div className="flex min-h-0 min-w-[1180px] flex-1 overflow-hidden">
+    <div className="resource-layout flex min-h-0 min-w-[1180px] flex-1 overflow-hidden">
       <aside aria-label="资源目录" className="flex w-[264px] shrink-0 flex-col border-r bg-slate-50/80">
         <nav aria-label="资源类型" className="shrink-0 border-b bg-background px-3 py-3">
-          {typeItems.map((item) => { const Icon = item.icon; const active = activeType === item.type; const count = assets.filter((asset) => asset.type === item.type).length; return <button key={item.type} type="button" onClick={() => selectType(item.type)} className={`flex w-full items-center gap-2.5 border-l-2 px-2.5 py-2 text-left text-xs font-medium transition-colors ${active ? "border-foreground bg-muted/70 text-foreground" : "border-transparent text-muted-foreground hover:bg-muted/60 hover:text-foreground"}`}><Icon className="h-4 w-4 shrink-0" /><span className="flex-1">{item.label}</span>{count > 0 ? <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] leading-none">{count}</span> : null}</button>; })}
+          {typeItems.map((item) => { const Icon = item.icon; const active = activeType === item.type; const count = assets.filter((asset) => asset.type === item.type).length; return <button key={item.type} type="button" onClick={() => selectType(item.type)} className={`flex w-full items-center gap-2.5 border-l px-2.5 py-2 text-left text-xs font-medium transition-colors ${active ? "border-foreground bg-muted/70 text-foreground" : "border-transparent text-muted-foreground hover:bg-muted/60 hover:text-foreground"}`}><Icon className="h-4 w-4 shrink-0" /><span className="flex-1">{item.label}</span>{count > 0 ? <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] leading-none">{count}</span> : null}</button>; })}
         </nav>
-        <div className="min-h-0 flex-1 overflow-y-auto p-2">{loading ? <div className="px-2 py-4 text-xs text-muted-foreground">正在读取资源</div> : activeAssets.length === 0 ? <div className="border border-dashed px-3 py-8 text-center text-xs leading-5 text-muted-foreground">还没有{typeLabel(activeType)}，从学习页生成后会出现在这里。</div> : <div className="space-y-0.5">{activeAssets.map((asset) => <article key={asset.id} className={`group border-l-2 px-2.5 py-2 transition-colors ${selectedId === asset.id ? "border-foreground bg-background" : "border-transparent hover:border-foreground/30 hover:bg-background/70"}`}><button type="button" onClick={() => setSelectedId(asset.id)} className="block w-full text-left"><div className="line-clamp-2 text-xs font-medium leading-5">{asset.title}</div><div className="mt-1 text-[10px] text-muted-foreground">{new Intl.DateTimeFormat("zh-CN", { month: "numeric", day: "numeric" }).format(asset.createdAt)}</div></button><button type="button" onClick={() => void deleteAsset(asset)} className="mt-1 inline-flex items-center gap-1 text-[10px] text-muted-foreground opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100"><Trash2 className="h-3 w-3" />删除</button></article>)}</div>}</div>
+        <div className="min-h-0 flex-1 overflow-y-auto p-2">{loading ? <div className="px-2 py-4 text-xs text-muted-foreground">正在读取资源</div> : activeAssets.length === 0 ? <div className="border border-dashed px-3 py-8 text-center text-xs leading-5 text-muted-foreground">还没有{typeLabel(activeType)}，从学习页生成后会出现在这里。</div> : <div className="space-y-0.5">{activeAssets.map((asset) => <article key={asset.id} className={`group border-l px-2.5 py-2 transition-colors ${selectedId === asset.id ? "border-foreground bg-background" : "border-transparent hover:border-foreground/30 hover:bg-background/70"}`}><button type="button" onClick={() => setSelectedId(asset.id)} className="block w-full text-left"><div className="line-clamp-2 text-xs font-medium leading-5">{asset.title}</div><div className="mt-1 text-[10px] text-muted-foreground">{new Intl.DateTimeFormat("zh-CN", { month: "numeric", day: "numeric" }).format(asset.createdAt)}</div></button><button type="button" onClick={() => void deleteAsset(asset)} className="mt-1 inline-flex items-center gap-1 text-[10px] text-muted-foreground opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100"><Trash2 className="h-3 w-3" />删除</button></article>)}</div>}</div>
       </aside>
 
       <section className="flex min-w-[460px] flex-1 flex-col overflow-hidden bg-card" aria-label="资源阅读与作答">
@@ -310,7 +314,7 @@ function LectureReader({ reader, onExport }: { reader: ReaderData; onExport: (fo
     <div ref={scrollRef} onScroll={handleScroll} className="min-h-0 flex-1 overflow-y-auto bg-background/40">
       <div className="sticky top-0 z-10 h-0.5 bg-transparent"><div className="h-full rounded-r-full bg-gradient-to-r from-blue-500 to-indigo-500 transition-[width] duration-150" style={{ width: `${Math.round(progress * 100)}%` }} /></div>
       <article className="mx-auto max-w-3xl px-8 py-8">
-        {reader.asset.learningObjectives.length > 0 && <div className="mb-8 rounded-xl border border-blue-100 bg-gradient-to-br from-blue-50/80 to-indigo-50/50 p-5"><div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-blue-700"><Target className="h-3.5 w-3.5" />学习目标</div><ul className="mt-3 space-y-2">{reader.asset.learningObjectives.map((objective) => <li key={objective} className="flex gap-2.5 text-[13px] leading-6 text-slate-700"><span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-blue-500" />{objective}</li>)}</ul></div>}
+        {reader.asset.learningObjectives.length > 0 && <div className="mb-8 rounded-xl border border-blue-100 bg-gradient-to-br from-blue-50/80 to-indigo-50/50 p-5"><div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-blue-700"><Target className="h-3.5 w-3.5" />学习目标</div><ul className="mt-3 space-y-2">{reader.asset.learningObjectives.map((objective) => <li key={objective} className="flex gap-2.5 text-[13px] leading-6 text-blue-950"><span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-blue-500" />{objective}</li>)}</ul></div>}
         <div className="space-y-7">{blocks.map((block) => <section key={block.id} id={block.type === "heading" ? `sec-${block.id}` : undefined} className="scroll-mt-4">{renderBlockContent(block, sectionNumber.get(block.id))}</section>)}</div>
         <div className="h-12" />
       </article>
@@ -450,7 +454,7 @@ function QuizReader({ apiBase, reader, onReaderChange }: { apiBase: string; read
     switch (state) {
       case "correct": return "border-emerald-400 bg-emerald-50/80";
       case "wrong": return "border-rose-300 bg-rose-50/80";
-      case "selected": return "border-foreground/70 bg-muted shadow-sm";
+      case "selected": return "border-blue-300 bg-blue-50 shadow-sm";
       default: return "hover:border-foreground/35 hover:bg-muted/25 hover:shadow-sm";
     }
   };
@@ -458,7 +462,7 @@ function QuizReader({ apiBase, reader, onReaderChange }: { apiBase: string; read
     switch (state) {
       case "correct": return "border-emerald-500 bg-emerald-500 text-white";
       case "wrong": return "border-rose-500 bg-rose-500 text-white";
-      case "selected": return "border-foreground bg-foreground text-background";
+      case "selected": return "border-blue-400 bg-blue-400 text-white";
       default: return "border-border text-muted-foreground";
     }
   };
@@ -475,8 +479,8 @@ function QuizReader({ apiBase, reader, onReaderChange }: { apiBase: string; read
       {showReference && !answered ? <div className="rounded-xl border bg-muted/30 p-4"><div className="text-xs font-semibold">参考答案要点</div><p className="mt-2 text-sm leading-6 text-muted-foreground">{question.answerId}</p><div className="mt-4 flex gap-2"><button type="button" onClick={() => void submit(true)} className="h-9 flex-1 rounded-lg border border-emerald-300 bg-emerald-50 text-xs font-medium text-emerald-700 hover:bg-emerald-100">我答出了关键要点</button><button type="button" onClick={() => void submit(false)} className="h-9 flex-1 rounded-lg border border-amber-300 bg-amber-50 text-xs font-medium text-amber-700 hover:bg-amber-100">还有要点没答到</button></div></div> : null}
       {answered ? <div className={`rounded-xl border px-4 py-3 text-xs leading-5 ${latest!.correct ? "border-emerald-200 bg-emerald-50/50 text-emerald-800" : "border-amber-200 bg-amber-50/50 text-amber-800"}`}>你的回答：{latest!.answerId || "（未作答）"}</div> : null}
     </div> : null}
-    {questionType !== "short_answer" ? <button type="button" disabled={!canSubmit || submitting} onClick={() => void submit()} className="mt-8 inline-flex h-10 items-center justify-center rounded-lg bg-foreground px-5 text-sm font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-35">{submitting ? "正在提交" : answered ? "再次提交" : "提交答案"}</button> : null}
-    </article></div><div className="shrink-0 border-t bg-background px-5 py-4"><div className="flex flex-wrap gap-2">{questions.map((item, itemIndex) => { const attempt = reader.quizAttempts.filter((record) => record.questionId === item.id).at(-1); return <button key={item.id} type="button" onClick={() => jump(itemIndex)} className={`flex h-9 w-9 items-center justify-center rounded-lg border text-xs font-medium transition-colors ${itemIndex === index ? "border-foreground bg-foreground text-background" : attempt?.correct ? "border-emerald-300 bg-emerald-50 text-emerald-700" : attempt ? "border-rose-300 bg-rose-50 text-rose-700" : "hover:bg-muted"}`}>{itemIndex + 1}</button>; })}</div></div></div>;
+    {questionType !== "short_answer" ? <button type="button" disabled={!canSubmit || submitting} onClick={() => void submit()} className="mt-8 inline-flex h-10 items-center justify-center rounded-lg bg-blue-400 px-5 text-sm font-medium text-white shadow-sm shadow-blue-200 transition-colors hover:bg-blue-500 disabled:opacity-35">{submitting ? "正在提交" : answered ? "再次提交" : "提交答案"}</button> : null}
+    </article></div><div className="shrink-0 border-t bg-background px-5 py-4"><div className="flex flex-wrap gap-2">{questions.map((item, itemIndex) => { const attempt = reader.quizAttempts.filter((record) => record.questionId === item.id).at(-1); return <button key={item.id} type="button" onClick={() => jump(itemIndex)} className={`flex h-9 w-9 items-center justify-center rounded-lg border text-xs font-medium transition-colors ${itemIndex === index ? "border-blue-400 bg-blue-400 text-white" : attempt?.correct ? "border-emerald-300 bg-emerald-50 text-emerald-700" : attempt ? "border-rose-300 bg-rose-50 text-rose-700" : "hover:bg-muted"}`}>{itemIndex + 1}</button>; })}</div></div></div>;
 }
 
 function QuizAnswerPanel({ reader }: { reader: ReaderData }) {

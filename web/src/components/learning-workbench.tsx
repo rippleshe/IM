@@ -57,13 +57,13 @@ const nodeLabels: Record<string, { name: string; agentId: AgentId }> = {
 type RunNodeState = "running" | "succeeded" | "failed" | "revising";
 
 function agentTone(id: string | undefined) {
-  if (id === "orchestrator") return "bg-zinc-900 text-white";
-  if (id === "evidence_retrieval") return "bg-sky-600 text-white";
-  if (id === "domain_expert") return "bg-violet-600 text-white";
-  if (id === "resource_generation") return "bg-amber-500 text-white";
-  if (id === "cross_validation") return "bg-emerald-600 text-white";
-  if (id === "privacy_compliance") return "bg-rose-600 text-white";
-  return "bg-slate-600 text-white";
+  if (id === "orchestrator") return "bg-slate-100 text-slate-700";
+  if (id === "evidence_retrieval") return "bg-sky-100 text-sky-700";
+  if (id === "domain_expert") return "bg-violet-100 text-violet-700";
+  if (id === "resource_generation") return "bg-amber-100 text-amber-700";
+  if (id === "cross_validation") return "bg-emerald-100 text-emerald-700";
+  if (id === "privacy_compliance") return "bg-rose-100 text-rose-700";
+  return "bg-slate-100 text-slate-700";
 }
 
 function resourceLabel(type: ResourceType) {
@@ -407,14 +407,14 @@ export function LearningWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
   const exportAsset = (asset: StudyAsset, format: "md" | "txt" | "json" | "ppt") => window.open(`${apiBase}/api/learning/assets/${encodeURIComponent(asset.id)}/export?format=${format}`, "_blank", "noopener,noreferrer");
   const logout = async () => { await fetch(`${apiBase}/api/auth/logout`, { method: "POST", credentials: "include" }).catch(() => undefined); onLogout(); };
 
-  return <main className={`flex h-screen min-h-0 flex-col overflow-hidden bg-background ${resizing ? "select-none" : ""}`}>
+  return <main className={`app-shell flex h-screen min-h-0 flex-col overflow-hidden bg-background ${resizing ? "select-none" : ""}`}>
     <header className="flex h-16 shrink-0 items-center justify-between border-b px-5 sm:px-7">
       <div className="flex items-center gap-2.5"><AvatarBubble user={user} size="h-9 w-9 text-xs" /><span className="min-w-0"><span className="block text-sm font-semibold tracking-tight">IM-Training-Agent</span><span className="block text-[11px] text-muted-foreground">{user.displayName}</span></span></div>
       <nav aria-label="学习空间" className="flex items-center rounded-lg border bg-muted/40 p-1 text-sm"><button type="button" onClick={() => setSettingsOpen(true)} className="rounded-md px-3 py-1.5 text-muted-foreground hover:text-foreground">设置</button><button type="button" onClick={() => setProfileOpen(true)} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">学习情况</button><button type="button" onClick={() => onNavigate("path")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">路径</button><button type="button" className="rounded-md bg-background px-4 py-1.5 font-medium shadow-sm">学习</button><button type="button" onClick={() => onNavigate("resources")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">资源</button><button type="button" onClick={() => onNavigate("validation")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">验证</button></nav>
       <button type="button" onClick={logout} className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-2 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"><LogOut className="h-3.5 w-3.5" />退出</button>
     </header>
 
-    <div className="flex min-h-0 min-w-[1000px] flex-1 overflow-hidden">
+    <div className="study-layout flex min-h-0 min-w-[1000px] flex-1 overflow-hidden">
       <aside style={{ width: leftWidth }} className="flex shrink-0 flex-col border-r bg-card" aria-label="任务上下文">
         <div className="flex shrink-0 items-center justify-between border-b px-4 py-3.5"><div className="flex items-center gap-2"><ListTree className="h-4 w-4" /><h1 className="text-sm font-semibold">任务进度</h1></div><span className="text-xs text-muted-foreground">{studyRunning ? "进行中" : finishedRunId ? "已完成" : "待发起"}</span></div>
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
@@ -491,7 +491,7 @@ function MessageCard({ message, onExport }: { message: StudyMessage; onExport: (
   const kind = message.metadata.kind;
   const asset = message.metadata.asset;
   if (isUser) {
-    return <article className="ml-auto max-w-[84%]"><div className="rounded-2xl rounded-tr-md bg-foreground px-4 py-3 text-sm leading-6 text-background"><MessageRichText text={message.content} invert /></div><div className="mt-1 text-right text-[10px] text-muted-foreground">{new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit" }).format(message.createdAt)}</div></article>;
+    return <article className="ml-auto max-w-[84%]"><div className="rounded-2xl rounded-tr-md border border-blue-200 bg-blue-50 px-4 py-3 text-sm leading-6 text-blue-950"><MessageRichText text={message.content} /></div><div className="mt-1 text-right text-[10px] text-muted-foreground">{new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit" }).format(message.createdAt)}</div></article>;
   }
   if (kind === "asset" && asset) {
     return <article className="max-w-[94%]"><div className="rounded-2xl rounded-tl-md border bg-muted/20 px-4 py-3"><div className="mb-2 flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground"><Download className="h-3.5 w-3.5" />已生成资源</div><AssetCard asset={asset} onExport={onExport} /></div><div className="mt-1 text-[10px] text-muted-foreground">{new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit" }).format(message.createdAt)}</div></article>;

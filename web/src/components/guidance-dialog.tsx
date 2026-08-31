@@ -149,7 +149,7 @@ export function GuidanceDialog({ apiBase, pathNodeId, user, onClose, onGenerateR
           <div className="space-y-4">
             {turns.map((turn, index) => <div key={index} className="space-y-2">
               <div className="rounded-2xl rounded-tl-md border bg-muted/30 px-4 py-3 text-sm leading-6"><p className="text-[11px] font-medium text-muted-foreground">追问 {index + 1}</p><p className="mt-1">{turn.question}</p></div>
-              <div className="ml-auto max-w-[88%] rounded-2xl rounded-tr-md bg-foreground px-4 py-3 text-sm leading-6 text-background"><p className="whitespace-pre-wrap">{turn.answer}</p></div>
+              <div className="ml-auto max-w-[88%] rounded-2xl rounded-tr-md border border-blue-200 bg-blue-50 px-4 py-3 text-sm leading-6 text-blue-950"><p className="whitespace-pre-wrap">{turn.answer}</p></div>
               <div className="rounded-xl border bg-background px-3.5 py-2.5 text-xs">
                 <span className={`mr-2 inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ${turn.verdict === "correct" ? "bg-emerald-100 text-emerald-700" : turn.verdict === "partial" ? "bg-amber-100 text-amber-700" : "bg-rose-100 text-rose-700"}`}>{VERDICT_LABELS[turn.verdict]}</span>
                 <span className="leading-5 text-muted-foreground">{turn.comment}</span>
@@ -182,7 +182,7 @@ export function GuidanceDialog({ apiBase, pathNodeId, user, onClose, onGenerateR
           {error && <p className="mb-2 rounded-lg border border-destructive/25 bg-destructive/5 px-3 py-2 text-xs text-destructive">{error}</p>}
           <div className="flex items-end gap-2 rounded-2xl border bg-card p-2 focus-within:ring-2 focus-within:ring-foreground/10">
             <textarea value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void submitAnswer(); } }} rows={2} placeholder="说说你的理解" className="max-h-28 min-h-[42px] flex-1 resize-none bg-transparent px-2 py-2 text-sm leading-5 outline-none placeholder:text-muted-foreground" />
-            <button type="button" disabled={!draft.trim() || submitting} onClick={() => void submitAnswer()} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-foreground text-background disabled:opacity-35" aria-label="提交回答">{submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}</button>
+            <button type="button" disabled={!draft.trim() || submitting} onClick={() => void submitAnswer()} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-blue-400 text-white shadow-sm shadow-blue-200 disabled:opacity-35" aria-label="提交回答">{submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}</button>
           </div>
         </div>
       ) : null}

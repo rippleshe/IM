@@ -481,23 +481,23 @@ export function LearningPathWorkbench({ apiBase, user, onLogout, onNavigate, onU
   const logout = async () => { await fetch(`${apiBase}/api/auth/logout`, { method: "POST", credentials: "include" }).catch(() => undefined); onLogout(); };
   const selectNode = (node: PathNode) => setSelectedNodeId(node.id);
 
-  return <main className="flex h-screen min-h-0 flex-col overflow-hidden bg-background text-foreground">
+  return <main className="app-shell flex h-screen min-h-0 flex-col overflow-hidden bg-background text-foreground">
     <header className="flex h-16 shrink-0 items-center justify-between border-b px-5 sm:px-7">
       <div className="flex items-center gap-2.5"><AvatarBubble user={user} size="h-9 w-9 text-xs" /><span className="min-w-0"><span className="block text-sm font-semibold tracking-tight">IM-Training-Agent</span><span className="block text-[11px] text-muted-foreground">{user.displayName}</span></span></div>
       <nav aria-label="学习空间" className="flex items-center rounded-lg border bg-muted/40 p-1 text-sm"><button type="button" onClick={() => setSettingsOpen(true)} className="rounded-md px-3 py-1.5 text-muted-foreground hover:text-foreground">设置</button><button type="button" onClick={() => setProfileOpen(true)} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">学习情况</button><button type="button" className="rounded-md bg-background px-4 py-1.5 font-medium shadow-sm">路径</button><button type="button" onClick={() => onNavigate?.("study")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">学习</button><button type="button" onClick={() => onNavigate?.("resources")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">资源</button><button type="button" onClick={() => onNavigate?.("validation")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">验证</button></nav>
       <button type="button" onClick={logout} className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-2 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"><LogOut className="h-3.5 w-3.5" />退出</button>
     </header>
 
-    <div className="grid min-h-0 flex-1 grid-cols-[minmax(360px,40%)_minmax(0,1fr)] overflow-hidden">
+    <div className="path-layout grid min-h-0 flex-1 grid-cols-[minmax(360px,40%)_minmax(0,1fr)] overflow-hidden">
        <section className="flex min-h-0 min-w-0 flex-col bg-card" aria-label="路径调整对话与处理过程">
         <div className="flex shrink-0 items-center justify-between border-b px-5 py-3.5 sm:px-6"><div className="flex items-center gap-2"><MessageSquareText className="h-4 w-4" /><h1 className="text-sm font-semibold">路径调整</h1></div></div>
          <div ref={feedRef} role="log" aria-live="polite" aria-busy={sending} className="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-6">
           <div className="mx-auto max-w-2xl space-y-5">
             {loading ? <div className="flex min-h-[250px] items-center justify-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4" />正在加载路径对话</div> : messages.length === 0 ? null : messages.map((chat) => chat.role === "user"
-              ? <article key={chat.id} className="ml-auto max-w-[84%]"><div className="rounded-2xl rounded-tr-md bg-foreground px-4 py-3 text-sm leading-6 text-background"><RichText text={chat.content} invert /></div><div className="mt-1 text-right text-[10px] text-muted-foreground">{new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit" }).format(chat.createdAt)}</div></article>
+              ? <article key={chat.id} className="ml-auto max-w-[84%]"><div className="rounded-2xl rounded-tr-md border border-blue-200 bg-blue-50 px-4 py-3 text-sm leading-6 text-blue-950"><RichText text={chat.content} /></div><div className="mt-1 text-right text-[10px] text-muted-foreground">{new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit" }).format(chat.createdAt)}</div></article>
               : <article key={chat.id} className="max-w-[94%]">
                 <div className="flex items-start gap-2.5">
-                  <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-zinc-900 text-white"><Bot className="h-4 w-4" /></span>
+                  <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-blue-200 bg-blue-50 text-blue-600"><Bot className="h-4 w-4" /></span>
                   <div className="min-w-0 flex-1">
                     <div className="text-[11px] font-medium text-muted-foreground">路径助手</div>
                     <div className="mt-1 rounded-2xl rounded-tl-md border bg-card px-4 py-3 text-sm leading-6"><RichText text={chat.content} /></div>

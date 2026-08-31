@@ -91,11 +91,11 @@ export function AuthEntry({ apiBase, user, onAuthenticated }: AuthEntryProps) {
 
   const onboarding = Boolean(user && !user.onboardingCompleted);
   return (
-    <main className="min-h-screen bg-background px-5 py-10 text-foreground">
+    <main className="app-entry min-h-screen bg-background px-5 py-10 text-foreground">
       <div className="mx-auto flex min-h-[calc(100vh-5rem)] max-w-5xl items-center justify-center">
         <div className="grid w-full max-w-4xl overflow-hidden rounded-2xl border bg-card shadow-sm md:grid-cols-[0.92fr_1.08fr]">
           <section className="flex flex-col border-b bg-muted/35 p-7 md:border-b-0 md:border-r md:p-10">
-            <div className="flex items-center gap-2 text-sm font-semibold"><span className="flex h-7 w-7 items-center justify-center rounded-md bg-foreground text-background">IM</span>设备数据诊断训练</div>
+            <div className="flex items-center gap-2 text-sm font-semibold"><span className="flex h-7 w-7 items-center justify-center rounded-md border border-blue-200 bg-blue-50 text-blue-700">IM</span>设备数据诊断训练</div>
             <div className="my-auto max-w-sm text-center">
               <h1 className="whitespace-nowrap text-2xl font-semibold leading-tight tracking-tight">从数据理解，走到诊断工具。</h1>
               <p className="mt-4 text-sm leading-6 text-muted-foreground">建立你的学习路径，使用学习助手生成讲义、习题、PPT、知识关系图和带来源的问答。</p>
