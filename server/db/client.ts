@@ -1,6 +1,6 @@
 /**
  * PostgreSQL 连接与 drizzle 实例（docs/挑战杯技术开发总规.md §2.3）
- * 仅在完成 SQLite→PostgreSQL 迁移校验（scripts/migrate-sqlite-to-pg.ts）后切换运行数据源。
+ * 运行时唯一数据源：PostgreSQL 16 + pgvector。
  */
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';

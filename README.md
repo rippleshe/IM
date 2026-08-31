@@ -183,7 +183,7 @@ pnpm install
 
 ### 模型配置
 
-默认主模型为通义千问 `qwen-plus`，通过 DashScope 的 OpenAI-compatible API 调用。真实密钥放在本地 `.env`：
+项目提供 DashScope `qwen-plus` 作为无运行时设置时的基础回退，也支持在设置页接入任意 OpenAI-compatible 模型服务。添加服务时系统会读取服务商的模型目录；上下文窗口和输出预算在服务端自动同步、缓存和降级处理，不要求用户填写，也不在普通界面展示。实际执行模型始终以设置页选择为准。真实密钥只放在本地 `.env` 或 Git 忽略的运行时配置中：
 
 ```bash
 DASHSCOPE_API_KEY=your-dashscope-api-key
@@ -191,7 +191,7 @@ DASHSCOPE_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 QWEN_MODEL=qwen-plus
 ```
 
-也可以在根目录 `models.config.ts` 扩展其他 Provider。
+也可以在根目录 `models.config.ts` 提供部署时的模型服务初始值；设置页保存的本机配置会覆盖同名初始值。
 
 ### 启动后端
 
@@ -218,12 +218,9 @@ pnpm --dir web dev
 ```bash
 docker compose up -d postgres redis   # 启动数据库与队列
 pnpm db:migrate                       # 应用 PostgreSQL schema 迁移
-pnpm migrate:sqlite-to-pg --dry-run   # 只读校验源 SQLite：各表指纹与行数
-pnpm migrate:sqlite-to-pg             # 幂等迁移：表级事务、分批 COPY、行数/时间边界校验、迁移报告
-pnpm migrate:sqlite-to-pg --cutover   # 全部校验通过后标记切换运行数据源
 ```
 
-`.env` 中配置 `DATABASE_URL` 与 `REDIS_URL`（见 `.env.example`）。注意：若本机 5432/6379 已被原生服务占用，在 `.env` 中改用 `POSTGRES_PORT`/`REDIS_PORT` 指定空闲端口。迁移完成并通过校验前，运行时数据源保持 SQLite；迁移全程只读源库，SQLite 仅作可恢复备份。
+`.env` 中配置 `DATABASE_URL` 与 `REDIS_URL`（见 `.env.example`）。运行时只连接 PostgreSQL 16 + pgvector；若本机 5432/6379 已被原生服务占用，在 `.env` 中改用 `POSTGRES_PORT`/`REDIS_PORT` 指定空闲端口。
 
 ### 同时启动
 
@@ -239,7 +236,7 @@ pnpm dev:full
 pnpm data:metropt
 ```
 
-脚本从 UCI 官方地址下载约 208 MB 的 CC BY 4.0 数据包、校验 SHA256，并只解出 CSV。CSV 被 Git 忽略；后端下次启动时会自动导入 SQLite。也可以通过 `IM_TRAINING_AGENT_METROPT_CSV` 指向已有文件。
+脚本从 UCI 官方地址下载约 208 MB 的 CC BY 4.0 数据包、校验 SHA256，并只解出 CSV。CSV 被 Git 忽略；后端下次启动时会自动导入 PostgreSQL。也可以通过 `IM_TRAINING_AGENT_METROPT_CSV` 指向已有文件。
 
 ## 6. 目录结构
 

@@ -118,7 +118,7 @@ export async function hybridDocumentRowsPg(
     info.degraded = true;
   }
 
-  // 双路皆空：ILIKE 兜底（与 SQLite 版 FTS→LIKE 回退语义一致）
+  // 双路皆空：ILIKE 兜底
   if (Object.keys(rankings).length === 0) {
     const terms = query.toLowerCase().split(/\s+/).filter((term) => term.length > 1).slice(0, 6);
     if (terms.length === 0) return { rows: [], hybrid: info };

@@ -22,10 +22,11 @@ IM-Training-Agent 是面向挑战杯“领域知识个性化生成与多智能�
 
 ## 四、模型与密钥
 
-1. 默认主模型为通义千问 DashScope OpenAI-compatible API，默认模型 `qwen-plus`。
+1. 基础回退模型为通义千问 DashScope OpenAI-compatible API；工作台实际默认模型以 Git 忽略的运行时配置和设置页为准，不得在业务代码中绑定某个本机服务商或模型。
 2. API Key 只能放在 `.env`、本机环境变量或其他被 Git 忽略的安全位置。
 3. **严禁把真实 API Key、Token、Cookie、密码提交到 Git、README、示例代码或日志中。**
 4. `.env.example` 只能放占位符，不得出现真实密钥。
+5. 模型目录与能力优先从服务商兼容接口同步；上下文和输出限制属于服务端内部能力，不作为普通用户配置项。接口未返回能力时使用已有缓存和安全预算。
 
 ## 五、Git 工作流
 

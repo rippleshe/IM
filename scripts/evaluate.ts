@@ -19,7 +19,6 @@ import {
 } from '../src/learning/evaluation.js';
 import { calibrateDifficulty } from '../src/learning/difficulty.js';
 import type { ScaffoldStrength } from '../src/learning/difficulty.js';
-import { dataSource, datasetDb } from '../server/study-context.js';
 import { getLearningDatabase } from '../server/db/client.js';
 import { evaluationCases, evaluationResults } from '../server/db/schema.js';
 
@@ -49,19 +48,13 @@ const KP_KEYWORDS: Record<string, string[]> = {
  * "知识库中是否存在讲解该知识点的卡片"，LIKE 包含检查是它的忠实实现。
  */
 async function supportedKnowledgePoints(caseItem: EvaluationCase): Promise<string[]> {
+  const { pool } = getLearningDatabase();
   const hit = async (keyword: string): Promise<boolean> => {
-    if (dataSource === 'postgres') {
-      const { pool } = getLearningDatabase();
-      const row = (await pool.query(
-        'SELECT COUNT(*)::int AS n FROM document_chunks WHERE title ILIKE $1 OR content ILIKE $1',
-        [`%${keyword}%`],
-      )).rows[0] as { n: number };
-      return Number(row.n) > 0;
-    }
-    const row = datasetDb!.prepare(
-      'SELECT COUNT(*) AS n FROM document_chunks WHERE title LIKE ? OR content LIKE ?',
-    ).get(`%${keyword}%`, `%${keyword}%`) as { n?: number } | undefined;
-    return Number(row?.n ?? 0) > 0;
+    const row = (await pool.query(
+      'SELECT COUNT(*)::int AS n FROM document_chunks WHERE title ILIKE $1 OR content ILIKE $1',
+      [`%${keyword}%`],
+    )).rows[0] as { n: number };
+    return Number(row.n) > 0;
   };
   const supported: string[] = [];
   for (const kp of caseItem.requiredKnowledgePoints) {

@@ -1,6 +1,6 @@
 /**
  * 知识切片同步 + 向量回填（docs/挑战杯技术开发总规.md §7.5 混合召回的数据侧）：
- * 1. 读取 SQLite document_chunks（knowledge-cards 与 metropt-3 两个受管来源）。
+ * 1. 读取 PostgreSQL document_chunks（knowledge-cards 与 metropt-3 两个受管来源）。
  * 2. 以 sha256(正文) 为键维护 data/embeddings-cache.json 向量缓存，内容未变的切片不重复调用嵌入 API。
  * 3. 全量 upsert 到 PG document_chunks（含 search_text 与 embedding），并删除 PG 中已不存在的行。
  *
@@ -13,22 +13,20 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { Pool } from 'pg';
 
-import { getDatasetDatabasePath, openSqlite } from '../src/learning/sqlite.js';
-
 const MANAGED_SOURCES = ['knowledge-cards', 'metropt-3'];
 const EMBED_MODEL = 'text-embedding-v4';
 const EMBED_DIMENSIONS = 1024;
 const BATCH_SIZE = 10;
 const CACHE_PATH = path.resolve(process.cwd(), 'data', 'embeddings-cache.json');
 
-type SqliteChunk = {
+type DocumentChunk = {
   id: string;
-  source_id: string;
-  source_path: string;
+  sourceId: string;
+  sourcePath: string;
   title: string;
   content: string;
   locator: string;
-  trust_level: string;
+  trustLevel: string;
 };
 
 type EmbeddingCache = Record<string, number[]>;
@@ -63,15 +61,14 @@ async function embedBatch(apiKey: string, texts: string[], attempt = 0): Promise
 async function main(): Promise<void> {
   const noEmbed = process.argv.includes('--no-embed');
   const apiKey = process.env['DASHSCOPE_API_KEY'];
-  const sqlite = openSqlite(getDatasetDatabasePath());
-  const chunks = sqlite
-    .prepare(`SELECT id, source_id, source_path, title, content, locator, trust_level FROM document_chunks WHERE source_id IN (${MANAGED_SOURCES.map(() => '?').join(',')}) ORDER BY id`)
-    .all(...MANAGED_SOURCES) as unknown as SqliteChunk[];
-  console.log(`SQLite 受管切片 ${chunks.length} 条（${MANAGED_SOURCES.join('、')}）`);
-  if (chunks.length === 0) return;
-
   const pool = new Pool({ connectionString: process.env['DATABASE_URL'], max: 4 });
   try {
+    const chunks = (await pool.query<DocumentChunk>(
+      `SELECT id, source_id AS "sourceId", source_path AS "sourcePath", title, content, locator, trust_level AS "trustLevel"
+       FROM document_chunks WHERE source_id = ANY($1) ORDER BY id`, [MANAGED_SOURCES],
+    )).rows;
+    console.log(`PostgreSQL 受管切片 ${chunks.length} 条（${MANAGED_SOURCES.join('、')}）`);
+    if (chunks.length === 0) return;
     // 复用 PG 里已有向量：内容哈希一致就不重新计费。
     const existing = await pool.query<{ id: string; content: string; embedding: string | null }>(
       `SELECT id, content, embedding::text AS embedding FROM document_chunks WHERE source_id = ANY($1) AND embedding IS NOT NULL`,
@@ -87,7 +84,7 @@ async function main(): Promise<void> {
       }
     }
 
-    const chunkByKey = new Map<string, SqliteChunk>();
+    const chunkByKey = new Map<string, DocumentChunk>();
     for (const chunk of chunks) {
       chunkByKey.set(createHash('sha256').update(chunk.content).digest('hex'), chunk);
     }
@@ -134,13 +131,13 @@ async function main(): Promise<void> {
         if (vector) withVector += 1;
         await client.query(insert, [
           chunk.id,
-          chunk.source_id,
-          chunk.source_path,
+          chunk.sourceId,
+          chunk.sourcePath,
           chunk.title,
           chunk.content,
           `${chunk.title}\n${chunk.content}`,
           chunk.locator,
-          chunk.trust_level || 'high',
+          chunk.trustLevel || 'high',
           vector ? `[${vector.join(',')}]` : null,
           Date.now(),
         ]);

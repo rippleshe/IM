@@ -19,7 +19,7 @@ import {
 import type { AuthenticatedUser } from "@/components/auth-entry";
 import { SettingsDialog } from "@/components/settings-dialog";
 import { AvatarBubble, ProfileDialog } from "@/components/profile-dialog";
-import { RichText } from "@/components/rich-text";
+import { RichText, DescriptionList } from "@/components/rich-text";
 
 type PathStatus = "not_started" | "learning" | "completed";
 type PathRelation = "prerequisite" | "branch" | "application" | "review";
@@ -60,8 +60,17 @@ export function RecommendationBadge({ recommendation }: { recommendation: NodeRe
   const view = recommendationView(recommendation.level);
   return <div className="flex items-start gap-2">
     <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] leading-4 ${view.chipClass}`}>{view.label}</span>
-    <span className="text-[11px] leading-4 text-muted-foreground">{recommendation.reason}</span>
+    <span className="text-[11px] leading-4 text-muted-foreground">{recommendationMessage(recommendation.level)}</span>
   </div>;
+}
+
+function recommendationMessage(level: NodeRecommendation["level"]): string {
+  switch (level) {
+    case "reinforce": return "先补一份讲义，再做一组练习把基础稳住。";
+    case "advance": return "基础已经比较稳，可以尝试下一个节点。";
+    case "maintain": return "继续保持当前节奏，完成一组练习巩固。";
+    default: return "还没有足够的学习记录，先完成一次学习或练习。";
+  }
 }
 
 export type PathEdge = {
@@ -120,9 +129,18 @@ const DECISION_LABELS: Record<string, string> = {
 
 const TRIGGER_LABELS: Record<string, string> = {
   quiz_attempt: "习题作答",
-  asset_feedback: "资源掌握反馈",
-  guidance_session: "启发式追问",
+  asset_feedback: "资料反馈",
+  guidance_session: "学习追问",
 };
+
+function readablePathActivityText(text: string): string {
+  return text
+    .replace(/学情与路径智能体/g, "学习规划助手")
+    .replace(/知识检索智能体/g, "资料检索助手")
+    .replace(/交叉验证智能体/g, "内容检查助手")
+    .replace(/画像/g, "学习情况")
+    .replace(/协同/g, "任务处理");
+}
 
 /** 里程碑 G（路径页小改）：节点建议的“依据”——最近一次持久化学习决策与 BKT 前后值 */
 function NodeDecisionBasis({ apiBase, knowledgePointId }: { apiBase: string; knowledgePointId: string }) {
@@ -146,20 +164,17 @@ function NodeDecisionBasis({ apiBase, knowledgePointId }: { apiBase: string; kno
   }, [apiBase, knowledgePointId]);
 
   if (!loaded || !decision) return null;
-  const before = decision.rationale.bktBefore;
-  const after = decision.rationale.bktAfter;
   const resourceLabel = decision.recommendedResourceType === "lecture" ? "讲义"
     : decision.recommendedResourceType === "tiered_quiz" ? "分层习题"
     : decision.recommendedResourceType === "presentation" ? "PPT"
     : decision.recommendedResourceType === "concept_map" ? "知识脉络" : "资源";
   return <div className="mt-3 rounded-xl border bg-muted/20 p-3 text-[11px] leading-4">
     <div className="flex items-center justify-between">
-      <span className="font-medium">依据：最近一次{TRIGGER_LABELS[decision.triggerType] ?? "学习反馈"}</span>
+      <span className="font-medium">最近学习建议</span>
       <span className="text-[10px] text-muted-foreground">{new Intl.DateTimeFormat("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).format(decision.createdAt)}</span>
     </div>
-    {before && after ? <p className="mt-1.5 text-muted-foreground">掌握概率 {before.pMastery.toFixed(2)} → {after.pMastery.toFixed(2)}，置信度 {before.confidence.toFixed(2)} → {after.confidence.toFixed(2)}</p> : null}
-    {decision.rationale.reasons?.length ? <p className="mt-1 text-muted-foreground">{decision.rationale.reasons.join("；")}</p> : null}
-    <p className="mt-1">系统决策：<b className="font-semibold">{DECISION_LABELS[decision.decision] ?? decision.decision}</b>{decision.recommendedResourceType ? ` · 建议下一份${resourceLabel}` : ""}</p>
+    <p className="mt-1.5 text-muted-foreground">根据最近一次{TRIGGER_LABELS[decision.triggerType] ?? "学习反馈"}，下一步建议：<b className="font-semibold text-foreground">{DECISION_LABELS[decision.decision] ?? "继续学习"}</b>{decision.recommendedResourceType ? `，优先${resourceLabel}` : ""}。</p>
+    <p className="mt-1 text-muted-foreground">完成下一次学习或练习后，这条建议会自动更新。</p>
   </div>;
 }
 
@@ -187,13 +202,13 @@ function nodeClassName(node: PathNode, selected: boolean) {
 
 function ProfileRadar({ items }: { items: ProfileMetric["radar"] }) {
   const points = items.slice(0, 5);
-  if (points.length < 3) return <div className="rounded-xl border border-dashed px-3 py-7 text-center text-xs text-muted-foreground">积累更多学习证据后生成能力雷达</div>;
+  if (points.length < 3) return <div className="rounded-xl border border-dashed px-3 py-7 text-center text-xs text-muted-foreground">积累更多学习记录后生成能力概览</div>;
   const center = 50;
   const radius = 30;
   const angle = (index: number) => -Math.PI / 2 + (index * Math.PI * 2) / points.length;
   const point = (index: number, scale: number) => `${center + Math.cos(angle(index)) * radius * scale},${center + Math.sin(angle(index)) * radius * scale}`;
   return <div className="flex items-center gap-3">
-    <svg viewBox="0 0 100 100" className="h-32 w-32 shrink-0" aria-label="学习画像雷达图">
+    <svg viewBox="0 0 100 100" className="h-32 w-32 shrink-0" aria-label="学习能力概览">
       <polygon points={points.map((_, index) => point(index, 1)).join(" ")} fill="none" stroke="currentColor" strokeWidth="0.7" className="text-border" />
       <polygon points={points.map((_, index) => point(index, 0.5)).join(" ")} fill="none" stroke="currentColor" strokeWidth="0.55" className="text-border" />
       <polygon points={points.map((item, index) => point(index, Math.max(0.08, Math.min(1, item.score)))).join(" ")} fill="currentColor" fillOpacity="0.15" stroke="currentColor" strokeWidth="1.2" className="text-foreground" />
@@ -450,14 +465,14 @@ export function LearningPathWorkbench({ apiBase, user, onLogout, onNavigate, onU
     try {
       const response = await fetch(`${apiBase}/api/learning/chat`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content }) });
       const data = await response.json() as { success?: boolean; error?: string; userMessage?: ChatMessage; assistantMessage?: ChatMessage; path?: PathGraph; profile?: ProfileMetric | null };
-      if (!response.ok || !data.success || !data.userMessage || !data.assistantMessage) throw new Error(data.error || "路径协同失败");
+      if (!response.ok || !data.success || !data.userMessage || !data.assistantMessage) throw new Error(data.error || "路径调整失败");
       setMessages((current) => [...current.filter((item) => item.id !== temporaryUser.id), data.userMessage as ChatMessage, data.assistantMessage as ChatMessage]);
       if (data.path) setPath(data.path);
       if (data.profile) setProfile(data.profile);
     } catch (error) {
       setMessages((current) => current.filter((item) => item.id !== temporaryUser.id));
       setDraft(content);
-      setNotice(error instanceof Error ? error.message : "路径协同失败");
+      setNotice(error instanceof Error ? error.message : "路径调整失败");
     } finally {
       setSending(false);
     }
@@ -469,12 +484,12 @@ export function LearningPathWorkbench({ apiBase, user, onLogout, onNavigate, onU
   return <main className="flex h-screen min-h-0 flex-col overflow-hidden bg-background text-foreground">
     <header className="flex h-16 shrink-0 items-center justify-between border-b px-5 sm:px-7">
       <div className="flex items-center gap-2.5"><AvatarBubble user={user} size="h-9 w-9 text-xs" /><span className="min-w-0"><span className="block text-sm font-semibold tracking-tight">IM-Training-Agent</span><span className="block text-[11px] text-muted-foreground">{user.displayName}</span></span></div>
-      <nav aria-label="学习空间" className="flex items-center rounded-lg border bg-muted/40 p-1 text-sm"><button type="button" onClick={() => setSettingsOpen(true)} className="rounded-md px-3 py-1.5 text-muted-foreground hover:text-foreground">设置</button><button type="button" onClick={() => setProfileOpen(true)} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">画像</button><button type="button" className="rounded-md bg-background px-4 py-1.5 font-medium shadow-sm">路径</button><button type="button" onClick={() => onNavigate?.("study")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">学习</button><button type="button" onClick={() => onNavigate?.("resources")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">资源</button><button type="button" onClick={() => onNavigate?.("validation")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">验证</button></nav>
+      <nav aria-label="学习空间" className="flex items-center rounded-lg border bg-muted/40 p-1 text-sm"><button type="button" onClick={() => setSettingsOpen(true)} className="rounded-md px-3 py-1.5 text-muted-foreground hover:text-foreground">设置</button><button type="button" onClick={() => setProfileOpen(true)} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">学习情况</button><button type="button" className="rounded-md bg-background px-4 py-1.5 font-medium shadow-sm">路径</button><button type="button" onClick={() => onNavigate?.("study")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">学习</button><button type="button" onClick={() => onNavigate?.("resources")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">资源</button><button type="button" onClick={() => onNavigate?.("validation")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">验证</button></nav>
       <button type="button" onClick={logout} className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-2 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"><LogOut className="h-3.5 w-3.5" />退出</button>
     </header>
 
     <div className="grid min-h-0 flex-1 grid-cols-[minmax(360px,40%)_minmax(0,1fr)] overflow-hidden">
-       <section className="flex min-h-0 min-w-0 flex-col bg-card" aria-label="路径调整对话与多智能体协同过程">
+       <section className="flex min-h-0 min-w-0 flex-col bg-card" aria-label="路径调整对话与处理过程">
         <div className="flex shrink-0 items-center justify-between border-b px-5 py-3.5 sm:px-6"><div className="flex items-center gap-2"><MessageSquareText className="h-4 w-4" /><h1 className="text-sm font-semibold">路径调整</h1></div></div>
          <div ref={feedRef} role="log" aria-live="polite" aria-busy={sending} className="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-6">
           <div className="mx-auto max-w-2xl space-y-5">
@@ -484,14 +499,14 @@ export function LearningPathWorkbench({ apiBase, user, onLogout, onNavigate, onU
                 <div className="flex items-start gap-2.5">
                   <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-zinc-900 text-white"><Bot className="h-4 w-4" /></span>
                   <div className="min-w-0 flex-1">
-                    <div className="text-[11px] font-medium text-muted-foreground">路径协同智能体</div>
+                    <div className="text-[11px] font-medium text-muted-foreground">路径助手</div>
                     <div className="mt-1 rounded-2xl rounded-tl-md border bg-card px-4 py-3 text-sm leading-6"><RichText text={chat.content} /></div>
-                    {chat.metadata.activities?.length || chat.metadata.pathChanged ? <div className="mt-2 rounded-xl border bg-muted/25 p-3 text-xs text-muted-foreground"><div className="mb-1.5 font-medium text-foreground">协同过程{chat.metadata.pathChanged ? " · 路径已更新" : ""}</div>{chat.metadata.activities?.map((activity) => <div className="flex gap-2 py-1.5" key={`${chat.id}-${activity.agentId}`}><span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-foreground/45" /><span><b className="font-medium text-foreground">{activity.name}</b>：{activity.action}</span></div>)}</div> : null}
+                    {chat.metadata.activities?.length || chat.metadata.pathChanged ? <div className="mt-2 rounded-xl border bg-muted/25 p-3 text-xs text-muted-foreground"><div className="mb-1.5 font-medium text-foreground">处理过程{chat.metadata.pathChanged ? " · 路径已更新" : ""}</div>{chat.metadata.activities?.map((activity) => <div className="flex gap-2 py-1.5" key={`${chat.id}-${activity.agentId}`}><span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-foreground/45" /><span><b className="font-medium text-foreground">{readablePathActivityText(activity.name)}</b>：{readablePathActivityText(activity.action)}</span></div>)}</div> : null}
                   </div>
                 </div>
                 <div className="mt-1 pl-[42px] text-[10px] text-muted-foreground">{new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit" }).format(chat.createdAt)}</div>
               </article>)}
-            {sending && <div className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" />智能体正在协同处理</div>}
+            {sending && <div className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" />正在为你调整路径</div>}
           </div>
         </div>
         <div className="shrink-0 border-t bg-background p-4 sm:px-6">{notice && <div className="mb-2 rounded-lg border border-destructive/25 bg-destructive/5 px-3 py-2 text-xs text-destructive">{notice}</div>}<div className="mx-auto flex max-w-2xl items-end gap-2 rounded-2xl border bg-card p-2 focus-within:ring-2 focus-within:ring-foreground/10"><textarea value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void sendMessage(); } }} rows={2} placeholder="输入想如何调整路径" className="max-h-32 min-h-[42px] flex-1 resize-none bg-transparent px-2 py-2 text-sm leading-5 outline-none placeholder:text-muted-foreground" /><button type="button" disabled={!draft.trim() || sending} onClick={() => void sendMessage()} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-foreground text-background disabled:cursor-not-allowed disabled:opacity-35"><Send className="h-4 w-4" /></button></div></div>
@@ -501,7 +516,7 @@ export function LearningPathWorkbench({ apiBase, user, onLogout, onNavigate, onU
         <div className="flex shrink-0 items-center justify-between border-b bg-background px-5 py-3.5"><div className="flex items-center gap-2"><Network className="h-4 w-4" /><h2 className="text-sm font-semibold">我的学习路径</h2></div><span className="text-xs text-muted-foreground">{completedNodes}/{path.nodes.length}</span></div>
         <div className="flex min-h-0 basis-[62%] flex-col p-4 pb-2"><div className="mb-3 flex shrink-0 items-center justify-between"><div className="flex items-center gap-3 text-[11px] text-muted-foreground"><span className="flex items-center gap-1"><i className="h-2 w-2 rounded-full bg-zinc-300" />未开始</span><span className="flex items-center gap-1"><i className="h-2 w-2 rounded-full bg-blue-600" />学完</span><span className="flex items-center gap-1"><i className="h-2 w-2 rounded-full bg-emerald-600" />掌握</span><span className="flex items-center gap-1"><i className="h-1.5 w-1.5 rounded-full bg-amber-500" />建议补强</span><span className="flex items-center gap-1"><i className="h-1.5 w-1.5 rounded-full bg-emerald-500" />可进阶</span></div></div>{loading ? <div className="flex min-h-0 flex-1 items-center justify-center"><Loader2 className="h-4 w-4 animate-spin text-muted-foreground" /></div> : path.nodes.length === 0 ? <div className="flex min-h-0 flex-1 items-center justify-center rounded-xl border border-dashed text-sm text-muted-foreground">尚未建立学习路径</div> : <TreeCanvas graph={path} selectedNodeId={selectedNodeId} onSelect={selectNode} />}</div>
         <div className="min-h-0 basis-[38%] overflow-y-auto border-t bg-background p-4">
-          {selectedNode ? <div className="mx-auto max-w-2xl"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><div className="text-[10px] text-muted-foreground">当前节点</div><h3 className="mt-1 text-base font-semibold">{selectedNode.title}</h3></div><span className={`mt-1 h-2.5 w-2.5 shrink-0 rounded-full ${statusDot(selectedNode)}`} /></div>{selectedNode.recommendation ? <div className="mt-3"><RecommendationBadge recommendation={selectedNode.recommendation} /></div> : null}<NodeDecisionBasis apiBase={apiBase} knowledgePointId={selectedNode.knowledgePointId} /><p className="mt-3 text-sm leading-6 text-muted-foreground">{selectedNode.description}</p><div className="mt-4 flex flex-wrap gap-2"><button type="button" onClick={() => carryIntoChat(selectedNode)} className="inline-flex h-8 items-center gap-1 rounded-lg border px-3 text-xs font-medium hover:bg-muted">带入对话</button><button type="button" onClick={() => requestNodeAddition("前置")} className="inline-flex h-8 items-center gap-1 rounded-lg border px-3 text-xs hover:bg-muted"><Plus className="h-3.5 w-3.5" />前置</button><button type="button" onClick={() => requestNodeAddition("分支")} className="inline-flex h-8 items-center gap-1 rounded-lg border px-3 text-xs hover:bg-muted"><Plus className="h-3.5 w-3.5" />分支</button><button type="button" onClick={() => requestNodeAddition("应用")} className="inline-flex h-8 items-center gap-1 rounded-lg border px-3 text-xs hover:bg-muted"><Plus className="h-3.5 w-3.5" />应用</button></div><div className="mt-3 flex gap-2"><button type="button" disabled={savingNodeId === selectedNode.id} onClick={() => void updateNode(selectedNode, { userStatus: selectedNode.userStatus === "completed" ? "learning" : "completed" })} className="inline-flex h-8 flex-1 items-center justify-center gap-1 rounded-lg border text-xs font-medium hover:bg-muted disabled:opacity-50"><Check className="h-3.5 w-3.5" />{selectedNode.userStatus === "completed" ? "继续学习" : "标记学完"}</button><button type="button" disabled={savingNodeId === selectedNode.id} onClick={() => void updateNode(selectedNode, { mastered: !selectedNode.mastered, userStatus: selectedNode.mastered ? selectedNode.userStatus : "completed" })} className={`inline-flex h-8 flex-1 items-center justify-center gap-1 rounded-lg border text-xs font-medium hover:bg-muted disabled:opacity-50 ${selectedNode.mastered ? "border-emerald-300 bg-emerald-50 text-emerald-700" : ""}`}><Trophy className="h-3.5 w-3.5" />{selectedNode.mastered ? "取消掌握" : "标记掌握"}</button></div></div> : <div className="flex h-full items-center justify-center text-sm text-muted-foreground">选择一个节点查看详情</div>}
+          {selectedNode ? <div className="mx-auto max-w-2xl"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><div className="text-[10px] text-muted-foreground">当前节点</div><h3 className="mt-1 text-base font-semibold">{selectedNode.title}</h3></div><span className={`mt-1 h-2.5 w-2.5 shrink-0 rounded-full ${statusDot(selectedNode)}`} /></div>{selectedNode.recommendation ? <div className="mt-3"><RecommendationBadge recommendation={selectedNode.recommendation} /></div> : null}<NodeDecisionBasis apiBase={apiBase} knowledgePointId={selectedNode.knowledgePointId} /><div className="mt-3"><DescriptionList text={selectedNode.description} /></div><div className="mt-4 flex flex-wrap gap-2"><button type="button" onClick={() => carryIntoChat(selectedNode)} className="inline-flex h-8 items-center gap-1 rounded-lg border px-3 text-xs font-medium hover:bg-muted">带入对话</button><button type="button" onClick={() => requestNodeAddition("前置")} className="inline-flex h-8 items-center gap-1 rounded-lg border px-3 text-xs hover:bg-muted"><Plus className="h-3.5 w-3.5" />前置</button><button type="button" onClick={() => requestNodeAddition("分支")} className="inline-flex h-8 items-center gap-1 rounded-lg border px-3 text-xs hover:bg-muted"><Plus className="h-3.5 w-3.5" />分支</button><button type="button" onClick={() => requestNodeAddition("应用")} className="inline-flex h-8 items-center gap-1 rounded-lg border px-3 text-xs hover:bg-muted"><Plus className="h-3.5 w-3.5" />应用</button></div><div className="mt-3 flex gap-2"><button type="button" disabled={savingNodeId === selectedNode.id} onClick={() => void updateNode(selectedNode, { userStatus: selectedNode.userStatus === "completed" ? "learning" : "completed" })} className="inline-flex h-8 flex-1 items-center justify-center gap-1 rounded-lg border text-xs font-medium hover:bg-muted disabled:opacity-50"><Check className="h-3.5 w-3.5" />{selectedNode.userStatus === "completed" ? "继续学习" : "标记学完"}</button><button type="button" disabled={savingNodeId === selectedNode.id} onClick={() => void updateNode(selectedNode, { mastered: !selectedNode.mastered, userStatus: selectedNode.mastered ? selectedNode.userStatus : "completed" })} className={`inline-flex h-8 flex-1 items-center justify-center gap-1 rounded-lg border text-xs font-medium hover:bg-muted disabled:opacity-50 ${selectedNode.mastered ? "border-emerald-300 bg-emerald-50 text-emerald-700" : ""}`}><Trophy className="h-3.5 w-3.5" />{selectedNode.mastered ? "取消掌握" : "标记掌握"}</button></div></div> : <div className="flex h-full items-center justify-center text-sm text-muted-foreground">选择一个节点查看详情</div>}
         </div>
       </aside>
     </div>

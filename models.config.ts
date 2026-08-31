@@ -27,8 +27,10 @@ export const exampleModelProvidersConfig: ModelProvidersConfig = {
       complexity: 'heavy',
       specialties: ['chat', 'general', 'planning', 'reasoning', 'analysis', 'writing', 'coding'],
       tags: ['tools'],
-      contextWindow: 131072,
-      maxOutputTokens: 8192,
+      // 部署初始能力缓存；运行时会优先用服务商模型目录中的能力元数据刷新。
+      // 兼容接口未提供限制时才保留该缓存，并按实际请求预留输出空间。
+      contextWindow: 1_000_000,
+      maxOutputTokens: 32_768,
     },
   ],
 };

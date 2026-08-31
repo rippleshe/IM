@@ -1,12 +1,12 @@
 import dotenv from 'dotenv';
 dotenv.config();
 
-import { existsSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
 import {
   LEARNING_AGENT_IDS,
+  discoverProviderModels,
   getAgentExecutionSettings,
   getRequestedModel,
   getSettingsPayload,
@@ -17,6 +17,7 @@ import {
   parseJson,
   runtimeModelConfig,
   runtimeWorkbenchSettings,
+  refreshModelCapabilities,
   saveRuntimeModelConfig,
   saveRuntimeWorkbenchSettings,
   withTimeout,
@@ -30,27 +31,38 @@ import cors from 'cors';
 
 const app = express();
 const allowedOrigins = new Set(['http://localhost:3000', 'http://127.0.0.1:3000']);
-app.use(cors({
-  origin(origin, callback) {
-    callback(null, !origin || allowedOrigins.has(origin));
-  },
-  credentials: true,
+const localWebOrigin = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
+app.use(cors((req, callback) => {
+  const origin = req.header('origin');
+  let sameHost = false;
+  if (origin) {
+    try {
+      const parsed = new URL(origin);
+      sameHost = (parsed.protocol === 'http:' || parsed.protocol === 'https:') && parsed.hostname === req.hostname;
+    } catch {
+      sameHost = false;
+    }
+  }
+  callback(null, {
+    origin: !origin || allowedOrigins.has(origin) || localWebOrigin.test(origin) || sameHost,
+    credentials: true,
+  });
 }));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.static(path.join(path.dirname(fileURLToPath(import.meta.url)), 'public')));
 
-import { importMetroPt3Csv } from '../src/learning/metropt3.js';
 import { importMetroPt3CsvPg } from './db/pg-evidence.js';
 import { fallbackPathGraph, generateInitialPathGraph } from './initial-path.js';
 import { LEARNING_ASSISTANT_SYSTEM, RESOURCE_QA_SYSTEM } from './prompts.js';
-import { dataSource, evidenceService, learningStore, identityStore, datasetDb } from './study-context.js';
+import { dataSource, evidenceService, learningStore, identityStore } from './study-context.js';
+import { packConversationContext } from './conversation-context.js';
 import { assetAttemptStats, latestBktUpdate, listDecisions, prereqGapFor, recordLearningDecision } from './decision-service.js';
 import { getLearningDatabase } from './db/client.js';
 import { generateProfileSnapshot } from './profile-snapshot.js';
 import { buildProfileInsights } from './profile-insights.js';
 import { AVATAR_IMAGE_MAX_CHARS } from '../src/learning/identity.js';
 import type { AuthenticatedLearner, OnboardingInput } from '../src/learning/identity.js';
-import type { LearningPathEdgeView, LearningPathRevisionInput, LearningStore } from '../src/learning/store.js';
+import type { LearningPathEdgeView, LearningPathRevisionInput, LearnerProfileView } from '../src/learning/store.js';
 import type { ResourceDocument } from '../src/learning/types.js';
 
 const AUTH_COOKIE_NAME = 'im_training_agent_auth';
@@ -202,7 +214,7 @@ function normalizeLearningAssistantOutput(value: unknown): LearningAssistantOutp
     addEdges: normalizeEdges(rawRevision['addEdges']),
   };
   return {
-    reply: typeof source['reply'] === 'string' && source['reply'].trim() ? source['reply'].trim().slice(0, 1_200) : '我已读取你的问题，并会依据当前路径与学习证据继续协同。',
+    reply: typeof source['reply'] === 'string' && source['reply'].trim() ? source['reply'].trim().slice(0, 1_200) : '我已读取你的问题，会结合当前路径和学习记录继续处理。',
     revision,
   };
 }
@@ -210,7 +222,7 @@ function normalizeLearningAssistantOutput(value: unknown): LearningAssistantOutp
 async function respondToLearningConversation(learnerId: string, prompt: string): Promise<{
   assistant: LearningAssistantOutput;
   pathChanged: boolean;
-  profile: ReturnType<LearningStore['getProfile']>;
+  profile: LearnerProfileView;
   activities: Array<{ agentId: LearningAgentId; name: string; action: string }>;
 }> {
   const graph = await learningStore.getPathGraph(learnerId);
@@ -218,8 +230,8 @@ async function respondToLearningConversation(learnerId: string, prompt: string):
   const evidencePack = await evidenceService.buildEvidencePack(prompt, { learnerId });
   const route = getAgentExecutionSettings('learning_planning', undefined, undefined);
   const activities: Array<{ agentId: LearningAgentId; name: string; action: string }> = [
-    { agentId: 'learning_planning', name: '学情与路径智能体', action: '读取当前画像、路径节点和你的请求，定位需要调整的学习目标' },
-    { agentId: 'evidence_retrieval', name: '知识检索智能体', action: `从结构化数据与知识库检索 ${evidencePack.items.length} 条证据，并保留来源位置` },
+    { agentId: 'learning_planning', name: '学习规划助手', action: '读取当前学习情况、路径节点和你的请求，定位需要调整的学习目标' },
+    { agentId: 'evidence_retrieval', name: '资料检索助手', action: `从数据和资料中找到 ${evidencePack.items.length} 条依据，并保留来源位置` },
   ];
   let assistant: LearningAssistantOutput;
   try {
@@ -245,10 +257,10 @@ async function respondToLearningConversation(learnerId: string, prompt: string):
     }), 60_000, '协同回答超时');
     assistant = normalizeLearningAssistantOutput(parseJson<unknown>(response.text));
   } catch (error) {
-    assistant = { reply: '暂时无法连接协同模型；当前路径没有被修改。你可以稍后重试。', revision: {} };
+    assistant = { reply: '暂时无法连接学习助手；当前路径没有被修改。你可以稍后重试。', revision: {} };
   }
   const result = await learningStore.applyPathRevision(learnerId, assistant.revision ?? {});
-  activities.push({ agentId: 'cross_validation', name: '交叉验证智能体', action: result.changed ? '检查新增节点是否重复、前置关系是否成立，并写入路径' : '检查节点重复、依赖关系和现有路径后，确认无需改动' });
+  activities.push({ agentId: 'cross_validation', name: '内容检查助手', action: result.changed ? '检查新增节点是否重复、前置关系是否成立，并写入路径' : '检查节点重复、依赖关系和现有路径后，确认无需改动' });
   const profile = result.changed
     ? await withTimeout(generateProfileSnapshot(learnerId, route.model, route.thinking), 8_000, '画像更新超时').then((snapshot) => snapshot.profile).catch(() => learningStore.getProfile(learnerId))
     : await learningStore.getProfile(learnerId);
@@ -311,6 +323,18 @@ app.get('/api/learning/chat', async (req, res) => {
     success: true,
     messages: await learningStore.listChatMessages(learner.id, 80, surface),
   });
+});
+
+app.delete('/api/learning/chat', async (req, res) => {
+  const learner = await requireLearner(req, res);
+  if (!learner) return;
+  const surface = req.query['surface'];
+  if (surface !== 'path' && surface !== 'study' && surface !== 'resource_qa') {
+    res.status(400).json({ success: false, error: '请选择要清除的对话记录' });
+    return;
+  }
+  const deleted = await learningStore.clearChatMessages(learner.id, surface);
+  res.json({ success: true, deleted });
 });
 
 app.post('/api/learning/chat', async (req, res) => {
@@ -563,21 +587,19 @@ app.post('/api/learning/assets/:assetId/feedback', async (req, res) => {
   const masteryLevel = ['high', 'medium', 'low'].includes(req.body?.masteryLevel) ? req.body.masteryLevel as 'high' | 'medium' | 'low' : null;
   if (knowledgePointId && masteryLevel) {
     const state = await learningStore.getSkillState(learner.id, knowledgePointId);
-    if (dataSource === 'postgres') {
-      await recordLearningDecision({
-        learnerId: learner.id,
-        knowledgePointId,
-        triggerType: 'asset_feedback',
-        assetId: req.params.assetId,
-        bktBefore: { pMastery: state?.pMastery ?? 0.15, confidence: state?.confidence ?? 0.1 },
-        bktAfter: { pMastery: state?.pMastery ?? 0.15, confidence: state?.confidence ?? 0.1 },
-        masteryFeedback: masteryLevel,
-        difficultyRating: typeof req.body?.difficultyRating === 'number' ? req.body.difficultyRating : null,
-        resourceDifficulty: asset?.difficulty ?? null,
-        expectedSuccessRate: asset?.difficultyCalibration?.expectedSuccessRate ?? null,
-        prereqGap: await prereqGapFor(learner.id, knowledgePointId),
-      });
-    }
+    await recordLearningDecision({
+      learnerId: learner.id,
+      knowledgePointId,
+      triggerType: 'asset_feedback',
+      assetId: req.params.assetId,
+      bktBefore: { pMastery: state?.pMastery ?? 0.15, confidence: state?.confidence ?? 0.1 },
+      bktAfter: { pMastery: state?.pMastery ?? 0.15, confidence: state?.confidence ?? 0.1 },
+      masteryFeedback: masteryLevel,
+      difficultyRating: typeof req.body?.difficultyRating === 'number' ? req.body.difficultyRating : null,
+      resourceDifficulty: asset?.difficulty ?? null,
+      expectedSuccessRate: asset?.difficultyCalibration?.expectedSuccessRate ?? null,
+      prereqGap: await prereqGapFor(learner.id, knowledgePointId),
+    });
   }
   res.json({ success: true, profile: await learningStore.getProfile(learner.id) });
 });
@@ -586,10 +608,6 @@ app.post('/api/learning/assets/:assetId/feedback', async (req, res) => {
 app.get('/api/learning/decisions', async (req, res) => {
   const learner = await requireLearner(req, res);
   if (!learner) return;
-  if (dataSource !== 'postgres') {
-    res.json({ success: true, decisions: [] });
-    return;
-  }
   const limit = Number.parseInt(String(req.query['limit'] ?? ''), 10);
   res.json({ success: true, decisions: await listDecisions(learner.id, Number.isFinite(limit) ? Math.min(Math.max(limit, 1), 50) : 20) });
 });
@@ -637,32 +655,30 @@ app.post('/api/learning/assets/:assetId/quiz-attempts', async (req, res) => {
   try {
     const result = await learningStore.submitQuizAttempt(learner.id, req.params.assetId, questionId, answerId, durationMs, { selfAssessed });
     // 里程碑 E（G12）：作答 → BKT 前后值 → 持久化下一步学习决策
-    if (dataSource === 'postgres') {
-      const knowledgePointId = result.question && 'knowledgePointId' in result.question
-        ? String((result.question as { knowledgePointId?: unknown }).knowledgePointId ?? '')
-        : '';
-      const asset = await learningStore.getAsset(learner.id, req.params.assetId);
-      const kp = knowledgePointId || asset?.knowledgePointIds?.[0] || 'industrial-diagnosis-foundation';
-      const [bktUpdate, stats] = await Promise.all([
-        latestBktUpdate(learner.id, kp),
-        assetAttemptStats(learner.id, req.params.assetId),
-      ]);
-      const state = await learningStore.getSkillState(learner.id, kp);
-      await recordLearningDecision({
-        learnerId: learner.id,
-        knowledgePointId: kp,
-        triggerType: 'quiz_attempt',
-        assetId: req.params.assetId,
-        bktBefore: bktUpdate?.before ?? { pMastery: state?.pMastery ?? 0.15, confidence: state?.confidence ?? 0.1 },
-        bktAfter: bktUpdate?.after ?? { pMastery: state?.pMastery ?? 0.15, confidence: state?.confidence ?? 0.1 },
-        attemptCount: stats.attemptCount,
-        correctCount: stats.correctCount,
-        difficultyRating: null,
-        resourceDifficulty: asset?.difficulty ?? null,
-        expectedSuccessRate: asset?.difficultyCalibration?.expectedSuccessRate ?? null,
-        prereqGap: await prereqGapFor(learner.id, kp),
-      });
-    }
+    const knowledgePointId = result.question && 'knowledgePointId' in result.question
+      ? String((result.question as { knowledgePointId?: unknown }).knowledgePointId ?? '')
+      : '';
+    const asset = await learningStore.getAsset(learner.id, req.params.assetId);
+    const kp = knowledgePointId || asset?.knowledgePointIds?.[0] || 'industrial-diagnosis-foundation';
+    const [bktUpdate, stats] = await Promise.all([
+      latestBktUpdate(learner.id, kp),
+      assetAttemptStats(learner.id, req.params.assetId),
+    ]);
+    const state = await learningStore.getSkillState(learner.id, kp);
+    await recordLearningDecision({
+      learnerId: learner.id,
+      knowledgePointId: kp,
+      triggerType: 'quiz_attempt',
+      assetId: req.params.assetId,
+      bktBefore: bktUpdate?.before ?? { pMastery: state?.pMastery ?? 0.15, confidence: state?.confidence ?? 0.1 },
+      bktAfter: bktUpdate?.after ?? { pMastery: state?.pMastery ?? 0.15, confidence: state?.confidence ?? 0.1 },
+      attemptCount: stats.attemptCount,
+      correctCount: stats.correctCount,
+      difficultyRating: null,
+      resourceDifficulty: asset?.difficulty ?? null,
+      expectedSuccessRate: asset?.difficultyCalibration?.expectedSuccessRate ?? null,
+      prereqGap: await prereqGapFor(learner.id, kp),
+    });
     res.json({ success: true, ...result, profile: await learningStore.getProfile(learner.id) });
   } catch (error) {
     res.status(400).json({ success: false, error: error instanceof Error ? error.message : '提交答案失败' });
@@ -695,7 +711,63 @@ app.use('/api/settings', async (req, res, next) => {
 });
 
 app.get('/api/settings', async (_req, res) => {
+  const route = getAgentExecutionSettings('learning_planning', undefined, undefined);
+  await refreshModelCapabilities(route.model);
   res.json(getSettingsPayload());
+});
+
+/** 设置页主动探测：只有拿到模型真实响应才算“已连接”。 */
+function readableModelServiceError(error: unknown, fallback: string) {
+  const message = error instanceof Error ? error.message : String(error ?? '');
+  if (/超时|timeout|ETIMEDOUT/i.test(message)) return '模型服务响应超时，请稍后重试或检查服务状态';
+  if (/未返回可见正文/i.test(message)) return '模型服务已响应，但没有返回可见内容；请检查模型是否支持对话接口';
+  if (/fetch|ECONN|ENOTFOUND|network|socket/i.test(message)) return '无法连接模型服务，请检查接口地址和网络';
+  return fallback;
+}
+
+app.post('/api/settings/model-connection', async (_req, res) => {
+  const route = getAgentExecutionSettings('learning_planning', undefined, undefined);
+  if (!route.model) {
+    res.status(400).json({ success: false, error: '当前没有可用的已配置模型' });
+    return;
+  }
+  try {
+    await refreshModelCapabilities(route.model, true);
+    const response = await withTimeout(multiModelClient.simple({
+      messages: [{ role: 'user', content: '请只回复 OK' }],
+      model: route.model,
+      temperature: 0,
+      // 推理模型可能先输出隐藏推理；8 token 足以连通却不足以得到可见正文。
+      maxTokens: 256,
+    }), 20_000, '模型连接超时');
+    if (!response.text.trim()) throw new Error('模型未返回可见正文');
+    res.json({ success: true, provider: response.provider, model: response.model });
+  } catch (error) {
+    res.status(502).json({ success: false, error: readableModelServiceError(error, '模型调用失败，请检查 API Key、接口地址、模型名和账户额度') });
+  }
+});
+
+/** 添加服务时从兼容接口读取真实模型目录；能力参数只在服务端使用。 */
+app.post('/api/settings/provider-models', async (req, res) => {
+  const body = req.body ?? {};
+  const providerId = typeof body.id === 'string' ? body.id.trim().toLowerCase() : '';
+  const baseURL = typeof body.baseURL === 'string' ? body.baseURL.trim() : '';
+  const submittedApiKey = typeof body.apiKey === 'string' ? body.apiKey.trim() : '';
+  const existing = mergeModelConfig().providers.find((provider) => provider.id === providerId);
+  const apiKey = submittedApiKey || existing?.apiKey || '';
+  if (!/^https?:\/\//i.test(baseURL) || !apiKey) {
+    res.status(400).json({ success: false, error: '请先填写接口地址和 API Key' });
+    return;
+  }
+  try {
+    const models = await discoverProviderModels({ baseURL, apiKey, headers: existing?.headers });
+    res.json({
+      success: true,
+      models: models.map((model) => ({ id: model.id, displayName: model.displayName })),
+    });
+  } catch (error) {
+    res.status(502).json({ success: false, error: readableModelServiceError(error, '未能读取模型目录，请检查接口地址、密钥或服务商是否支持模型列表接口') });
+  }
 });
 
 app.get('/api/settings/data-privacy', async (req, res) => {
@@ -714,8 +786,8 @@ app.get('/api/settings/data-privacy', async (req, res) => {
     success: true,
     source: {
       kind: dataSource,
-      label: dataSource === 'postgres' ? 'PostgreSQL' : 'SQLite',
-      detail: dataSource === 'postgres' ? '当前运行数据源：PostgreSQL' : '当前运行数据源：本机 SQLite',
+      label: 'PostgreSQL',
+      detail: '当前运行数据源：PostgreSQL 16 + pgvector',
     },
     records: {
       assets: assets.length,
@@ -760,19 +832,35 @@ app.get('/api/settings/export', async (req, res) => {
 
 app.post('/api/settings/providers', async (req, res) => {
   const body = req.body ?? {};
-  const id = typeof body.id === 'string' ? body.id.trim().toLowerCase() : '';
+  const submittedId = typeof body.id === 'string' ? body.id.trim().toLowerCase() : '';
   const displayName = typeof body.displayName === 'string' ? body.displayName.trim() : '';
   const baseURL = typeof body.baseURL === 'string' ? body.baseURL.trim() : '';
   const modelId = typeof body.modelId === 'string' ? body.modelId.trim() : '';
-  const modelDisplayName = typeof body.modelDisplayName === 'string' ? body.modelDisplayName.trim() : modelId;
+  const modelDisplayName = typeof body.modelDisplayName === 'string' ? body.modelDisplayName.trim() : '';
   const submittedApiKey = typeof body.apiKey === 'string' ? body.apiKey.trim() : '';
 
-  if (!/^[a-z0-9][a-z0-9_-]*$/.test(id) || !displayName || !/^https?:\/\//i.test(baseURL) || !modelId) {
-    res.status(400).json({ success: false, error: '请填写有效的服务 ID、名称、接口地址和模型 ID' });
+  if (!displayName || !/^https?:\/\//i.test(baseURL) || !modelId || (submittedId && !/^[a-z0-9][a-z0-9_-]*$/.test(submittedId))) {
+    res.status(400).json({ success: false, error: '请填写有效的服务名称、接口地址和模型' });
     return;
   }
 
   const merged = mergeModelConfig();
+  const normalizedBaseURL = baseURL.replace(/\/+$/, '').toLowerCase();
+  const existingByURL = merged.providers.find((provider) => provider.baseURL.replace(/\/+$/, '').toLowerCase() === normalizedBaseURL);
+  let generatedId = 'model-service';
+  try {
+    generatedId = new URL(baseURL).hostname.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 48) || generatedId;
+  } catch {
+    // URL 已由上面的格式校验拦截；这里保留稳定兜底。
+  }
+  let id = submittedId || existingByURL?.id || generatedId;
+  if (!submittedId && !existingByURL) {
+    let suffix = 2;
+    while (merged.providers.some((provider) => provider.id === id && provider.baseURL.replace(/\/+$/, '').toLowerCase() !== normalizedBaseURL)) {
+      id = `${generatedId}-${suffix}`;
+      suffix += 1;
+    }
+  }
   const existingProvider = merged.providers.find((provider) => provider.id === id);
   const storedProvider = runtimeModelConfig.providers.find((provider) => provider.id === id);
   const apiKey = submittedApiKey || storedProvider?.apiKey || existingProvider?.apiKey || '';
@@ -788,12 +876,20 @@ app.post('/api/settings/providers', async (req, res) => {
     apiKey,
     isDefault: existingProvider?.isDefault,
   };
+  let discoveredModel: Awaited<ReturnType<typeof discoverProviderModels>>[number] | undefined;
+  try {
+    discoveredModel = (await discoverProviderModels(provider)).find((item) => item.id === modelId);
+  } catch {
+    // 兼容服务可以不实现 /models；保留手工模型 ID，并在真实调用时验证。
+  }
   const model = {
     id: modelId,
     provider: id,
-    displayName: modelDisplayName || modelId,
+    displayName: modelDisplayName || discoveredModel?.displayName || modelId,
     complexity: 'medium' as const,
     specialties: ['chat', 'general', 'reasoning', 'analysis', 'writing'],
+    ...(discoveredModel?.contextWindow ? { contextWindow: discoveredModel.contextWindow } : {}),
+    ...(discoveredModel?.maxOutputTokens ? { maxOutputTokens: discoveredModel.maxOutputTokens } : {}),
   };
 
   const providerIndex = runtimeModelConfig.providers.findIndex((item) => item.id === id);
@@ -806,6 +902,7 @@ app.post('/api/settings/providers', async (req, res) => {
   saveRuntimeModelConfig();
   modelRegistry.registerProvider(provider);
   modelRegistry.registerModel(model);
+  await refreshModelCapabilities(modelId, true);
   res.json(getSettingsPayload());
 });
 
@@ -855,6 +952,7 @@ app.post('/api/settings/default-execution', async (req, res) => {
   runtimeWorkbenchSettings.defaultModelId = modelId;
   runtimeWorkbenchSettings.defaultThinkingDepth = thinkingDepth as ThinkingDepth;
   saveRuntimeWorkbenchSettings();
+  await refreshModelCapabilities(modelId, true);
   res.json(getSettingsPayload());
 });
 
@@ -912,7 +1010,12 @@ app.post('/api/learning/resource-qa', async (req, res) => {
     return;
   }
   const userMessage = await learningStore.saveChatMessage(learner.id, 'user', question, { surface: 'resource_qa', assetId: selectedAsset?.id ?? null });
-  const history = await learningStore.listChatMessages(learner.id, 14, 'resource_qa');
+  const route = getAgentExecutionSettings('domain_expert', undefined, undefined);
+  const limits = await refreshModelCapabilities(route.model);
+  const history = packConversationContext((await learningStore.listChatMessages(learner.id, 200, 'resource_qa')).map((item) => ({
+    role: item.role,
+    content: item.content,
+  })), { contextWindow: limits.contextWindow, reservedTokens: limits.maxOutputTokens + 36_000 });
   // 选中资源优先、限制注入长度：保证上下文聚焦且不超窗
   const orderedAssets = selectedAsset
     ? [selectedAsset, ...assets.filter((asset) => asset.id !== selectedAsset.id)]
@@ -927,13 +1030,12 @@ app.post('/api/learning/resource-qa', async (req, res) => {
       .join('\n')
       .slice(0, asset.id === selectedAsset?.id ? 6_000 : 1_800),
   }));
-  const route = getAgentExecutionSettings('domain_expert', undefined, undefined);
   let answer = '';
   try {
     const response = await withTimeout(multiModelClient.simple({
       messages: [
         { role: 'system', content: RESOURCE_QA_SYSTEM },
-        { role: 'user', content: JSON.stringify({ question, selectedResourceId: selectedAsset?.id ?? null, resources: resourceContext, recentConversation: history.slice(-12).map((item) => ({ role: item.role, content: item.content.slice(0, 600) })) }) },
+        { role: 'user', content: JSON.stringify({ question, selectedResourceId: selectedAsset?.id ?? null, resources: resourceContext, recentConversation: history }) },
       ],
       model: route.model,
       temperature: Math.min(route.thinking.temperature, 0.35),
@@ -1024,18 +1126,11 @@ async function startServer(): Promise<void> {
     process.env['IM_TRAINING_AGENT_METROPT_CSV']
       || path.join(process.cwd(), 'data', 'datasets', 'metropt', 'MetroPT3(AirCompressor).csv'),
   );
-  if (dataSource === 'postgres') {
-    // PG 数据源：空表且有官方 CSV 时流式导入；已有数据（迁移或历史导入）则跳过
-    const result = await importMetroPt3CsvPg(getLearningDatabase().pool, metroCsvPath);
-    if (result.skipped) console.log(`MetroPT-3 时序数据已就绪：${result.imported.toLocaleString()} 行（复用 PostgreSQL 既有数据）`);
-    else if (result.imported > 0) console.log(`MetroPT-3 时序数据已导入 PostgreSQL：${result.imported.toLocaleString()} 行`);
-    else console.log('MetroPT-3 完整时序数据尚未安装；需要时运行 pnpm data:metropt。');
-  } else if (datasetDb && existsSync(metroCsvPath)) {
-    const result = await importMetroPt3Csv(datasetDb, metroCsvPath);
-    console.log(`MetroPT-3 时序数据已就绪：${result.imported.toLocaleString()} 行${result.skipped ? '（复用已有数据库）' : ''}`);
-  } else {
-    console.log('MetroPT-3 完整时序数据尚未安装；需要时运行 pnpm data:metropt。');
-  }
+  // 空表且有官方 CSV 时流式导入；已有数据则复用 PostgreSQL 既有内容。
+  const result = await importMetroPt3CsvPg(getLearningDatabase().pool, metroCsvPath);
+  if (result.skipped) console.log(`MetroPT-3 时序数据已就绪：${result.imported.toLocaleString()} 行（复用 PostgreSQL 既有数据）`);
+  else if (result.imported > 0) console.log(`MetroPT-3 时序数据已导入 PostgreSQL：${result.imported.toLocaleString()} 行`);
+  else console.log('MetroPT-3 完整时序数据尚未安装；需要时运行 pnpm data:metropt。');
   app.listen(PORT, () => {
     console.log(`\n🚀 IM-Training-Agent 服务已启动：http://localhost:${PORT}`);
     console.log('📚 学习产品 API 已就绪');

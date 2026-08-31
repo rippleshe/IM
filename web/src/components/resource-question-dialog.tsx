@@ -1,6 +1,6 @@
 "use client";
 
-import { Loader2, MessageCircleQuestion, Send, X } from "lucide-react";
+import { Loader2, MessageCircleQuestion, Send, Trash2, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { RichText } from "@/components/rich-text";
 
@@ -18,6 +18,7 @@ export function ResourceQuestionDialog({ apiBase, selectedAssetId, selectedAsset
   const [draft, setDraft] = useState("");
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
+  const [clearing, setClearing] = useState(false);
   const [notice, setNotice] = useState("");
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
@@ -58,11 +59,25 @@ export function ResourceQuestionDialog({ apiBase, selectedAssetId, selectedAsset
     } finally { setSending(false); }
   };
 
+  const clearConversation = async () => {
+    if (clearing || !messages.length) return;
+    if (!window.confirm("清除全部资源问答历史和后续模型对话上下文？不会删除学习资源。")) return;
+    setClearing(true);
+    setNotice("");
+    try {
+      const response = await fetch(`${apiBase}/api/learning/chat?surface=resource_qa`, { method: "DELETE", credentials: "include" });
+      const data = await response.json() as { success?: boolean; error?: string };
+      if (!response.ok || !data.success) throw new Error(data.error || "清除问答失败");
+      setMessages([]);
+    } catch (error) { setNotice(error instanceof Error ? error.message : "清除问答失败"); }
+    finally { setClearing(false); }
+  };
+
   return <div className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/20 p-4" role="dialog" aria-modal="true" aria-label="资源问答">
     <section className="flex h-[min(720px,calc(100vh-32px))] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border bg-background shadow-2xl">
       <header className="flex shrink-0 items-start justify-between gap-4 border-b px-5 py-4">
         <div>{selectedAssetTitle ? <h2 className="text-sm font-semibold">资源问答 · 聚焦《{selectedAssetTitle}》</h2> : <h2 className="text-sm font-semibold">资源问答</h2>}</div>
-        <button type="button" onClick={onClose} className="rounded-lg p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground" aria-label="关闭资源问答"><X className="h-4 w-4" /></button>
+        <div className="flex items-center gap-1"><button type="button" disabled={clearing || sending || messages.length === 0} onClick={() => void clearConversation()} className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"><Trash2 className="h-3.5 w-3.5" />{clearing ? "清除中" : "清除上下文"}</button><button type="button" onClick={onClose} className="rounded-lg p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground" aria-label="关闭资源问答"><X className="h-4 w-4" /></button></div>
       </header>
       <div ref={scrollRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto px-5 py-4">
         {loading ? <div className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />正在读取问答记录</div> : messages.length === 0 ? <div className="flex h-full flex-col items-center justify-center px-8 text-center text-sm leading-6 text-muted-foreground"><MessageCircleQuestion className="mb-3 h-7 w-7 text-muted-foreground/45" />还没有提问记录，例如：「这几份资源里对这个概念的解释有什么区别？」</div> : messages.map((message) => message.role === "user"

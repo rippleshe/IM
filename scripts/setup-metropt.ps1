@@ -52,4 +52,4 @@ try {
 }
 
 Write-Host "MetroPT-3 已安装：$datasetPath"
-Write-Host '下次启动后端时会自动导入 SQLite。'
+Write-Host '下次启动后端时会自动导入 PostgreSQL。'

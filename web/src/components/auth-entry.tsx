@@ -98,14 +98,14 @@ export function AuthEntry({ apiBase, user, onAuthenticated }: AuthEntryProps) {
             <div className="flex items-center gap-2 text-sm font-semibold"><span className="flex h-7 w-7 items-center justify-center rounded-md bg-foreground text-background">IM</span>设备数据诊断训练</div>
             <div className="my-auto max-w-sm text-center">
               <h1 className="whitespace-nowrap text-2xl font-semibold leading-tight tracking-tight">从数据理解，走到诊断工具。</h1>
-              <p className="mt-4 text-sm leading-6 text-muted-foreground">建立你的知识路径，调用协同智能体生成讲义、习题、PPT、知识图谱与可溯源问答。</p>
+              <p className="mt-4 text-sm leading-6 text-muted-foreground">建立你的学习路径，使用学习助手生成讲义、习题、PPT、知识关系图和带来源的问答。</p>
             </div>
           </section>
 
           <section className="p-7 md:p-10">
             {onboarding ? (
               <form onSubmit={submitOnboarding} className="space-y-5">
-                <div><p className="text-sm font-semibold">先建立你的起始画像</p></div>
+                <div><p className="text-sm font-semibold">先告诉我们你的学习起点</p></div>
                 <div className="grid gap-4 sm:grid-cols-2">
                   <label className="space-y-1.5 text-xs font-medium">当前身份
                     <select value={role} onChange={(event) => setRole(event.target.value)} className="h-9 w-full rounded-lg border bg-background px-2.5 text-sm font-normal outline-none focus-visible:ring-2 focus-visible:ring-ring/50"><option>在校学习者</option><option>转岗学习者</option><option>一线运维人员</option><option>培训者</option></select>

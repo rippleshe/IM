@@ -10,10 +10,10 @@ import { and, eq } from 'drizzle-orm';
 import type { Job } from 'bullmq';
 import { auditResource, type ClaimAuditRecord } from '../../src/learning/audit.js';
 import { verifyClaims } from '../../src/learning/claim-verification.js';
-import { crossValidate } from '../../src/learning/evidence.js';
+import { crossValidate } from '../../src/learning/evidence-rules.js';
 import { calibrateDifficulty, type DifficultyCalibration, type ScaffoldStrength } from '../../src/learning/difficulty.js';
 import { normalizeKnowledgePointId } from '../../src/learning/store.js';
-import { buildLlmResourceDocument, buildResourceDraft, parseLlmResourceDraft } from '../../src/learning/resource-builder.js';
+import { buildLlmResourceDocument, buildResourceDraft, parseLlmResourceDraft, validateLlmResourceDraftQuality } from '../../src/learning/resource-builder.js';
 import type { EvidencePack, LearningResourceType, ResourceDocument } from '../../src/learning/types.js';
 import {
   ASSESS_LEARNER_SYSTEM,
@@ -25,7 +25,7 @@ import {
   resourceGenerationUserHint,
 } from '../prompts.js';
 import { evidenceService, learningStore } from '../study-context.js';
-import { getAgentExecutionSettings, multiModelClient, parseJson, withTimeout } from '../study-runtime.js';
+import { getAgentExecutionSettings, multiModelClient, parseJson, refreshModelCapabilities, withTimeout } from '../study-runtime.js';
 import { getLearningDatabase } from '../db/client.js';
 import {
   auditDecisions,
@@ -94,13 +94,14 @@ function runDb() {
 
 async function callAgent(agentId: LearningAgentId, system: string, user: string, maxTokens = 3_000): Promise<string> {
   const route = getAgentExecutionSettings(agentId, undefined, undefined);
+  const limits = await refreshModelCapabilities(route.model);
   const response = await withTimeout(
     multiModelClient.simple({
       messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
       model: route.model,
       temperature: route.thinking.temperature,
       // 推理模型的思维段同样占用输出预算，节点的 JSON 正文必须留足余量
-      maxTokens: Math.min(route.thinking.maxTokens, maxTokens),
+      maxTokens: Math.min(route.thinking.maxTokens, maxTokens, limits.maxOutputTokens),
     }),
     90_000,
     '模型调用超时',
@@ -111,12 +112,13 @@ async function callAgent(agentId: LearningAgentId, system: string, user: string,
 /** 资源生成长文专用：不受角色路由的输出上限约束，超时与预算独立放宽 */
 async function callResourceGeneration(agentId: LearningAgentId, system: string, user: string, maxTokens: number): Promise<string> {
   const route = getAgentExecutionSettings(agentId, undefined, undefined);
+  const limits = await refreshModelCapabilities(route.model);
   const response = await withTimeout(
     multiModelClient.simple({
       messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
       model: route.model,
       temperature: route.thinking.temperature,
-      maxTokens,
+      maxTokens: Math.min(maxTokens, limits.maxOutputTokens),
     }),
     200_000,
     '资源生成超时',
@@ -288,6 +290,7 @@ async function runAssessLearner(run: StudyRunRow, node: RunNodeSpec, attempt: nu
         node: pathNode ? { title: pathNode.title, description: pathNode.description, recommendation: pathNode.recommendation } : null,
         profile: { accuracy: profile.accuracy, studyMinutes: profile.studyMinutes, assetsCount: profile.assetsCount, skills: profile.skills.slice(0, 6) },
         task: { resourceType: run.request.resourceType, content: taskLabel },
+        conversation: run.request.conversationContext ?? [],
       }));
     const parsed = parseJson<{ analysis?: unknown; requirements?: unknown }>(raw) ?? {};
     analysis = typeof parsed.analysis === 'string' ? parsed.analysis.slice(0, 300) : '';
@@ -391,7 +394,7 @@ async function runAnalyzeDomain(run: StudyRunRow, node: RunNodeSpec, attempt: nu
     systemPrompt = DOMAIN_ANALYST_SYSTEM;
     const raw = await callAgent('domain_expert',
       systemPrompt,
-      JSON.stringify({ task: run.request.task, evidence: evidenceDigest(merged) }));
+      JSON.stringify({ task: run.request.task, conversation: run.request.conversationContext ?? [], evidence: evidenceDigest(merged) }));
     const parsed = parseJson<{ points?: unknown; boundaries?: unknown }>(raw) ?? {};
     points = Array.isArray(parsed.points) ? parsed.points.map((item) => String(item).slice(0, 100)).filter(Boolean).slice(0, 5) : [];
     boundaries = Array.isArray(parsed.boundaries) ? parsed.boundaries.map((item) => String(item).slice(0, 100)).filter(Boolean).slice(0, 3) : [];
@@ -480,24 +483,67 @@ async function runGenerateResource(run: StudyRunRow, node: RunNodeSpec, attempt:
   // 检索后策略（升级计划 §4.7）：证据稀疏时禁止强事实表达，门禁不放松
   const forbidStrongClaims = run.verificationPolicy?.['forbidStrongFactualClaims'] === true;
   generationPrompt = resourceGenerationSystem({ type, isRevision, forbidStrongClaims });
+  const sharedInput = {
+    task: run.request.task,
+    pathNode: pathNode ? {
+      knowledgePointId: pathNode.knowledgePointId,
+      title: pathNode.title,
+      description: pathNode.description,
+      currentStatus: pathNode.userStatus,
+    } : null,
+    learner: {
+      analysis: assess.analysis,
+      requirements: assess.requirements,
+    },
+    difficultyCalibration: calibration,
+  };
   const payload = isRevision
     ? {
+        ...sharedInput,
         failedClaims: ctx.revision_failed ?? [],
-        designRequirements: assess.requirements,
+        domainPoints: domain.points,
+        domainBoundaries: domain.boundaries,
         evidence: evidenceDigest(merged, { itemCount: 14, contentLimit: 500 }),
       }
     : {
-        designRequirements: assess.requirements,
+        ...sharedInput,
         domainPoints: domain.points,
         domainBoundaries: domain.boundaries,
         evidence: evidenceDigest(merged, { itemCount: 14, contentLimit: 500 }),
       };
   try {
     const raw = await callResourceGeneration('resource_generation', generationPrompt, `${JSON.stringify(payload)}\n\n${resourceGenerationUserHint(isRevision)}`, GENERATION_MAX_TOKENS[type]);
-    const llm = parseLlmResourceDraft(type, parseJson<unknown>(raw));
+    let llm = parseLlmResourceDraft(type, parseJson<unknown>(raw));
+    let qualityIssues = llm ? validateLlmResourceDraftQuality(llm) : ['输出不是该资源类型要求的完整 JSON 结构'];
+    if (qualityIssues.length > 0) {
+      try {
+        const repairPrompt = resourceGenerationSystem({ type, isRevision, forbidStrongClaims, qualityIssues });
+        const repairPayload = {
+          ...payload,
+          qualityIssues,
+          previousDraft: llm ?? raw.slice(0, 20_000),
+        };
+        const repairedRaw = await callResourceGeneration(
+          'resource_generation',
+          repairPrompt,
+          `${JSON.stringify(repairPayload)}\n\n请依据 qualityIssues 重新交付完整成品。${resourceGenerationUserHint(isRevision)}`,
+          GENERATION_MAX_TOKENS[type],
+        );
+        const repaired = parseLlmResourceDraft(type, parseJson<unknown>(repairedRaw));
+        const repairedIssues = repaired ? validateLlmResourceDraftQuality(repaired) : ['返修输出仍无法解析'];
+        if (repaired && (!llm || repairedIssues.length <= qualityIssues.length)) {
+          llm = repaired;
+          qualityIssues = repairedIssues;
+          generationPrompt = repairPrompt;
+        }
+      } catch (repairError) {
+        console.warn('[generate.resource] 质量返修调用失败，保留可解析初稿交由发布审核：', repairError instanceof Error ? repairError.message : repairError);
+      }
+    }
     if (llm) {
       generated = buildLlmResourceDocument(`study-${run.id}-${attempt}`, run.request.task, type, merged, pathNode?.knowledgePointId, llm, { calibration });
       usedLlm = generated !== null;
+      if (qualityIssues.length > 0) note = `模型已完成质量返修，仍有 ${qualityIssues.length} 项由发布审核继续把关。`;
     } else {
       console.warn(`[generate.resource] 模型输出无法解析为 ${type} 草稿，回退模板：${raw.slice(0, 200)}`);
     }

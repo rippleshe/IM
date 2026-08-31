@@ -13,6 +13,8 @@ import { getLearningDatabase } from '../db/client.js';
 import { auditDecisions, claims, claimEvidence, debateIssues, evidenceItems, evidencePackItems, evidencePacks, studyRuns } from '../db/schema.js';
 import { formatSseEvent } from './protocol.js';
 import { PlanningError, parseStudyRunRequest, planStudyRun } from './planner.js';
+import { packConversationContext } from '../conversation-context.js';
+import { getAgentExecutionSettings, refreshModelCapabilities } from '../study-runtime.js';
 import { listRunArtifacts, persistArtifact } from './artifacts.js';
 import { getRunSnapshot } from './snapshots.js';
 import { buildClaimTrace } from './claim-trace.js';
@@ -203,6 +205,16 @@ export function createRunsRouter(requireLearner: RequireLearner): express.Router
     if (!learner) return;
     try {
       const request = parseStudyRunRequest(req.body);
+      // 协同运行在入队前冻结完整对话快照；清除群聊后，新运行自然从空上下文开始。
+      const route = getAgentExecutionSettings('learning_planning', undefined, undefined);
+      const limits = await refreshModelCapabilities(route.model);
+      request.conversationContext = packConversationContext(
+        (await learningStore.listChatMessages(learner.id, 200, 'study')).map((message) => ({
+          role: message.role,
+          content: message.content,
+        })),
+        { contextWindow: limits.contextWindow, reservedTokens: limits.maxOutputTokens + 12_000 },
+      );
       const runId = `study-run-${randomUUID()}`;
       // 幂等键（总规 §3）：同 learner 重复提交同一 key 直接返回既有运行
       const idempotencyKey = typeof req.headers['idempotency-key'] === 'string' && req.headers['idempotency-key'].trim()

@@ -4,7 +4,7 @@
  * 约定：
  * - PostgreSQL 是唯一业务数据源；Redis 只做队列/锁/事件分发。
  * - 所有学习数据表必须包含 learner_id，服务层按会话推导并强制隔离。
- * - 时间列统一 epoch 毫秒（bigint，与迁移源 SQLite 的 INTEGER 毫秒一一对应）。
+ * - 时间列统一 epoch 毫秒（bigint）。
  * - 枚举用 text + CHECK，避免 PG 枚举类型的迁移负担。
  * - 临时上传只存哈希、大小、有效期与审计结论，正文不落库。
  */
@@ -678,16 +678,3 @@ export const evaluationResults = pgTable('evaluation_results', {
   detail: jsonb('detail').notNull().default({}),
   createdAt: ms('created_at').notNull(),
 }, (t) => [index('idx_eval_results_case').on(t.caseId, t.createdAt)]);
-
-/* ------------------------------------------------------------------ */
-/* 迁移状态（总规 §6.3 幂等迁移）                                         */
-/* ------------------------------------------------------------------ */
-
-export const migrationState = pgTable('migration_state', {
-  tableName: text('table_name').primaryKey(),
-  sourceFile: text('source_file').notNull(),
-  sourceFingerprint: text('source_fingerprint').notNull(),
-  rowCount: bigint('row_count', { mode: 'number' }).notNull(),
-  verified: boolean('verified').notNull().default(false),
-  migratedAt: ms('migrated_at').notNull(),
-});

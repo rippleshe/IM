@@ -1,8 +1,6 @@
 /**
- * PostgreSQL 版身份与学习存储（docs/挑战杯技术开发总规.md §2.3、§6）
- *
- * 与 src/learning/identity.ts、src/learning/store.ts 的 SQLite 实现保持逐方法
- * 等价的公开 API；切换由 server/study-context.ts 按数据源完成，调用方无感。
+ * PostgreSQL 版身份与学习存储（docs/挑战杯技术开发总规.md §2.3、§6）。
+ * 运行时唯一数据实现；API 与 worker 共享这一异步存储。
  * 约定：时间列为 epoch 毫秒 bigint；JSON 列为 jsonb（直接读写对象）；布尔为 boolean。
  */
 import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
@@ -47,7 +45,7 @@ import type { ResourceDocument } from '../../src/learning/types.js';
 
 const SESSION_LIFETIME_MS = 30 * 24 * 60 * 60 * 1000;
 
-/** 事务包装：多语句写入的原子性（与 SQLite 版逐语句自动提交语义对齐，仅用于复合写） */
+/** 事务包装：多语句写入的原子性，仅用于复合写。 */
 export async function withTransaction<T>(pool: Pool, work: (client: PoolClient) => Promise<T>): Promise<T> {
   const client = await pool.connect();
   try {
@@ -490,6 +488,18 @@ export class PgLearningStore {
     return messages.filter((message) => surface === 'path'
       ? message.metadata['surface'] !== 'study' && message.metadata['surface'] !== 'resource_qa'
       : message.metadata['surface'] === surface);
+  }
+
+  async clearChatMessages(learnerId: string, surface: 'path' | 'study' | 'resource_qa'): Promise<number> {
+    const condition = surface === 'path'
+      ? "COALESCE(metadata_json->>'surface', '') NOT IN ('study', 'resource_qa')"
+      : "metadata_json->>'surface' = $2";
+    const values = surface === 'path' ? [learnerId] : [learnerId, surface];
+    const result = await this.pool.query(
+      `DELETE FROM learning_chat_messages WHERE learner_id = $1 AND ${condition}`,
+      values,
+    );
+    return result.rowCount ?? 0;
   }
 
   async replacePathGraph(

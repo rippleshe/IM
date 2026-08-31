@@ -74,7 +74,9 @@ export class MultiModelClient {
         model: modelId,
         messages: options.messages,
         temperature: options.temperature ?? 0.7,
-        max_tokens: options.maxTokens ?? selection.model.maxOutputTokens ?? 4096,
+        max_tokens: selection.model.maxOutputTokens
+          ? Math.min(options.maxTokens ?? selection.model.maxOutputTokens, selection.model.maxOutputTokens)
+          : options.maxTokens ?? 4096,
         top_p: options.topP,
         tools: options.tools,
         tool_choice: options.toolChoice,
@@ -107,7 +109,9 @@ export class MultiModelClient {
               model: fallback.id,
               messages: options.messages,
               temperature: options.temperature ?? 0.7,
-              max_tokens: options.maxTokens ?? fallback.maxOutputTokens ?? 4096,
+              max_tokens: fallback.maxOutputTokens
+                ? Math.min(options.maxTokens ?? fallback.maxOutputTokens, fallback.maxOutputTokens)
+                : options.maxTokens ?? 4096,
               top_p: options.topP,
               tools: options.tools,
               tool_choice: options.toolChoice,
@@ -199,8 +203,9 @@ export function createDefaultModelProvidersConfig(): ModelProvidersConfig {
         complexity: 'heavy',
         specialties: ['chat', 'general', 'planning', 'reasoning', 'analysis', 'writing', 'coding'],
         tags: ['tools'],
-        contextWindow: 131072,
-        maxOutputTokens: 8192,
+        // 内置部署基线；服务端运行时会用模型目录元数据自动刷新能力。
+        contextWindow: 1_000_000,
+        maxOutputTokens: 32_768,
       },
     ],
   };

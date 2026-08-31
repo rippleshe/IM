@@ -94,11 +94,23 @@ const NODE_LABELS: Record<string, string> = {
   "retrieve.document": "文档证据检索",
   "analyze.domain": "领域分析",
   "generate.resource": "资源生成",
-  "audit.claims": "Claim 逐条审核",
-  "debate.challenge": "反方质询",
-  "adjudicate.verdict": "证据裁决",
-  "privacy.compliance": "隐私合规",
-  "finalize.publish": "发布收尾",
+  "audit.claims": "逐条检查内容",
+  "debate.challenge": "复核疑点",
+  "adjudicate.verdict": "判断证据是否足够",
+  "privacy.compliance": "隐私检查",
+  "finalize.publish": "整理并保存结果",
+};
+
+const ARTIFACT_LABELS: Record<string, string> = {
+  learner_snapshot: "学习情况记录",
+  evidence_set: "证据集合",
+  domain_brief: "领域分析",
+  resource_draft: "资源初稿",
+  claim_audit: "内容检查",
+  challenge_set: "疑点复核",
+  adjudication: "证据判断",
+  privacy_decision: "隐私检查",
+  publication_decision: "发布决定",
 };
 
 const RESOURCE_LABELS: Record<string, string> = {
@@ -106,7 +118,51 @@ const RESOURCE_LABELS: Record<string, string> = {
 };
 
 function rateText(rate: number | null): string {
-  return rate === null ? "N/A（空分母）" : `${(rate * 100).toFixed(1)}%`;
+  return rate === null ? "暂无数据" : `${(rate * 100).toFixed(1)}%`;
+}
+
+function readableAuditText(text: string): string {
+  return text
+    .replace(/manual_review_required/g, "需要人工复核")
+    .replace(/revision budget/gi, "修改次数")
+    .replace(/revised|revision/gi, "需要修改")
+    .replace(/rejected/gi, "未通过")
+    .replace(/released/gi, "已通过")
+    .replace(/unsupported/gi, "缺少依据")
+    .replace(/partial/gi, "部分支持")
+    .replace(/conflict/gi, "相互矛盾")
+    .replace(/review/gi, "待复核")
+    .replace(/strict/gi, "从严检查")
+    .replace(/standard/gi, "标准检查")
+    .replace(/DAG/g, "处理流程")
+    .replace(/Claim/g, "内容")
+    .replace(/Agent/g, "智能体")
+    .replace(/反方质询/g, "疑点复核")
+    .replace(/证据裁决/g, "证据判断")
+    .replace(/发布收尾/g, "整理并保存结果")
+    .replace(/修订预算/g, "修改次数")
+    .replace(/修订/g, "修改")
+    .replace(/门禁/g, "检查")
+    .replace(/fail closed/gi, "未通过就不发布");
+}
+
+function artifactLabel(value: string | undefined): string {
+  return value ? ARTIFACT_LABELS[value] ?? readableAuditText(value) : "—";
+}
+
+function issueTypeLabel(value: string): string {
+  switch (value) {
+    case "no_evidence": return "缺少依据";
+    case "conflict": return "内容矛盾";
+    case "out_of_scope_causality": return "因果越界";
+    case "difficulty_mismatch": return "难度不合适";
+    case "counterevidence_request": return "需要反证";
+    default: return readableAuditText(value);
+  }
+}
+
+function producerLabel(value: string): string {
+  return value === "agent" ? "模型生成" : value === "rule" ? "规则检查" : readableAuditText(value);
 }
 
 function timeText(value: number | null | undefined): string {
@@ -201,21 +257,21 @@ export function ValidationWorkbench({ apiBase, user, onLogout, onNavigate, onUse
   return <main className="flex h-screen min-h-0 flex-col overflow-hidden bg-background">
     <header className="flex h-16 shrink-0 items-center justify-between border-b px-5 sm:px-7">
       <div className="flex items-center gap-2.5"><AvatarBubble user={user} size="h-9 w-9 text-xs" /><span className="min-w-0"><span className="block text-sm font-semibold tracking-tight">IM-Training-Agent</span><span className="block text-[11px] text-muted-foreground">{user.displayName}</span></span></div>
-      <nav aria-label="学习空间" className="flex items-center rounded-lg border bg-muted/40 p-1 text-sm"><button type="button" onClick={() => setSettingsOpen(true)} className="rounded-md px-3 py-1.5 text-muted-foreground hover:text-foreground">设置</button><button type="button" onClick={() => setProfileOpen(true)} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">画像</button><button type="button" onClick={() => onNavigate("path")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">路径</button><button type="button" onClick={() => onNavigate("study")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">学习</button><button type="button" onClick={() => onNavigate("resources")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">资源</button><button type="button" className="rounded-md bg-background px-4 py-1.5 font-medium shadow-sm">验证</button></nav>
+      <nav aria-label="学习空间" className="flex items-center rounded-lg border bg-muted/40 p-1 text-sm"><button type="button" onClick={() => setSettingsOpen(true)} className="rounded-md px-3 py-1.5 text-muted-foreground hover:text-foreground">设置</button><button type="button" onClick={() => setProfileOpen(true)} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">学习情况</button><button type="button" onClick={() => onNavigate("path")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">路径</button><button type="button" onClick={() => onNavigate("study")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">学习</button><button type="button" onClick={() => onNavigate("resources")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">资源</button><button type="button" className="rounded-md bg-background px-4 py-1.5 font-medium shadow-sm">验证</button></nav>
       <button type="button" onClick={() => void logout()} className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-2 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"><LogOut className="h-3.5 w-3.5" />退出</button>
      </header>
 
     <div className="min-h-0 flex-1 overflow-y-auto">
       <div className="mx-auto max-w-5xl space-y-6 px-5 py-6 sm:px-7">
 
-        {/* 1. 运行选择区 */}
+        {/* 1. 任务选择区 */}
         <section aria-label="运行选择" className="rounded-2xl border bg-card p-5">
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2"><ListChecks className="h-4 w-4" /><h2 className="text-sm font-semibold">最近运行</h2></div>
+            <div className="flex items-center gap-2"><ListChecks className="h-4 w-4" /><h2 className="text-sm font-semibold">最近任务</h2></div>
             <button type="button" onClick={() => void loadRuns()} className="inline-flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-[11px] hover:bg-muted"><RefreshCw className="h-3 w-3" />刷新</button>
           </div>
           {loading ? <p className="mt-3 text-xs text-muted-foreground">正在读取运行历史…</p> : runs.length === 0
-            ? <p className="mt-3 text-xs leading-5 text-muted-foreground">还没有协同运行记录，到「学习」页发起一次后可在这里查看验证链。</p>
+            ? <p className="mt-3 text-xs leading-5 text-muted-foreground">还没有任务记录，到「学习」页开始一次任务后可在这里查看检查结果。</p>
             : <div className="mt-3 grid gap-2 sm:grid-cols-2">
                 {runs.map((run) => (
                   <button key={run.id} type="button" onClick={() => setSelectedRunId(run.id)}
@@ -239,10 +295,10 @@ export function ValidationWorkbench({ apiBase, user, onLogout, onNavigate, onUse
              <div className="flex items-center gap-2"><ShieldCheck className="h-4 w-4" /><h2 className="text-sm font-semibold">可信摘要</h2></div>
             <div className="mt-3 grid grid-cols-2 gap-2 text-center sm:grid-cols-6">
               <Metric label="证据条数" value={evidenceCount} />
-              <Metric label="事实声明" value={auditableClaims.length} />
-              <Metric label="终稿无证据" value={unsupportedFinal} tone={unsupportedFinal > 0 ? "warn" : "ok"} />
+              <Metric label="可核对内容" value={auditableClaims.length} />
+              <Metric label="最终稿缺少依据" value={unsupportedFinal} tone={unsupportedFinal > 0 ? "warn" : "ok"} />
               <Metric label="待复核" value={conflictClaims} />
-              <Metric label="修订轮数" value={revisionCount} />
+              <Metric label="修改次数" value={revisionCount} />
               <Metric label="发布结论" value={released ? "已放行" : published ? "异常" : "未放行"} tone={released ? "ok" : "warn"} />
             </div>
              {trace.verificationPolicy ? <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-muted-foreground">
@@ -252,9 +308,9 @@ export function ValidationWorkbench({ apiBase, user, onLogout, onNavigate, onUse
              </div> : null}
           </section>
 
-          {/* 3. 协同链 */}
-          <section aria-label="协同链" className="rounded-2xl border bg-card p-5">
-             <div className="flex items-center gap-2"><Link2 className="h-4 w-4" /><h2 className="text-sm font-semibold">协同运行链</h2></div>
+          {/* 3. 处理过程 */}
+          <section aria-label="处理过程" className="rounded-2xl border bg-card p-5">
+             <div className="flex items-center gap-2"><Link2 className="h-4 w-4" /><h2 className="text-sm font-semibold">处理过程</h2></div>
             <div className="mt-3 space-y-2">
               {trace.nodes.map((node) => {
                 const artifact = trace.artifacts.find((item) => item.nodeKey === node.nodeKey && item.attempt === node.attempt && ["learner_snapshot", "evidence_set", "domain_brief", "resource_draft", "claim_audit", "challenge_set", "adjudication", "privacy_decision", "publication_decision"].includes(item.artifactType));
@@ -264,18 +320,18 @@ export function ValidationWorkbench({ apiBase, user, onLogout, onNavigate, onUse
                       <span className={`h-2 w-2 rounded-full ${node.status === "succeeded" ? "bg-emerald-600" : node.status === "failed" ? "bg-destructive" : "bg-zinc-300"}`} />
                       <span className="font-medium">{NODE_LABELS[node.nodeKey] ?? node.nodeKey}</span>
                       {node.attempt > 1 ? <span className="rounded-full bg-amber-100 px-1.5 text-[10px] text-amber-700">第 {node.attempt} 轮</span> : null}
-                      {node.mandatory ? <span className="rounded-full border px-1.5 text-[10px] text-muted-foreground">门禁</span> : null}
+                      {node.mandatory ? <span className="rounded-full border px-1.5 text-[10px] text-muted-foreground">必做检查</span> : null}
                     </span>
-                    <span className="text-[10px] text-muted-foreground">{ACTOR_LABELS[artifact?.actorKey ?? ""] ?? "—"}{artifact ? ` · ${artifact.artifactType}` : ""}</span>
+                    <span className="text-[10px] text-muted-foreground">{ACTOR_LABELS[artifact?.actorKey ?? ""] ?? "—"}{artifact ? ` · ${artifactLabel(artifact.artifactType)}` : ""}</span>
                   </summary>
                   <div className="mt-2.5 space-y-2 border-t pt-2.5 text-[11px] leading-4">
                     {artifact ? <>
-                      <p><span className="text-muted-foreground">公开结论：</span>{artifact.publicRationale.decision}</p>
-                      {artifact.publicRationale.observations.length > 0 ? <p><span className="text-muted-foreground">观察到：</span>{artifact.publicRationale.observations.join("；")}</p> : null}
-                      <p><span className="text-muted-foreground">输入引用：</span>{artifact.inputRefs.length > 0 ? artifact.inputRefs.length + " 个上游产物" : "学习者状态 / 检索层"}</p>
-                      <p className="break-all"><span className="text-muted-foreground">产物散列：</span><code className="text-[10px]">{artifact.contentHash.slice(0, 32)}…</code></p>
-                      <p><span className="text-muted-foreground">生产者：</span>{artifact.producer.kind === "agent" ? `模型 ${artifact.producer.model ?? "—"}` : artifact.producer.kind === "rule" ? "确定性规则" : artifact.producer.kind}</p>
-                      {artifact.publicRationale.uncertainty.length > 0 ? <p className="text-amber-700"><span className="text-muted-foreground">不确定：</span>{artifact.publicRationale.uncertainty.join("；")}</p> : null}
+                      <p><span className="text-muted-foreground">对外结论：</span>{readableAuditText(artifact.publicRationale.decision)}</p>
+                      {artifact.publicRationale.observations.length > 0 ? <p><span className="text-muted-foreground">处理说明：</span>{artifact.publicRationale.observations.map(readableAuditText).join("；")}</p> : null}
+                      <p><span className="text-muted-foreground">参考内容：</span>{artifact.inputRefs.length > 0 ? artifact.inputRefs.length + " 个前置结果" : "学习情况和检索结果"}</p>
+                      <p className="break-all"><span className="text-muted-foreground">完整性校验码：</span><code className="text-[10px]">{artifact.contentHash.slice(0, 32)}…</code></p>
+                      <p><span className="text-muted-foreground">处理方式：</span>{producerLabel(artifact.producer.kind)}{artifact.producer.kind === "agent" && artifact.producer.model ? `（${artifact.producer.model}）` : ""}</p>
+                      {artifact.publicRationale.uncertainty.length > 0 ? <p className="text-amber-700"><span className="text-muted-foreground">需要留意：</span>{artifact.publicRationale.uncertainty.map(readableAuditText).join("；")}</p> : null}
                     </> : <p className="text-muted-foreground">{node.resultSummary ?? "暂无主产物"}</p>}
                   </div>
                 </details>;
@@ -285,21 +341,21 @@ export function ValidationWorkbench({ apiBase, user, onLogout, onNavigate, onUse
 
           {/* 4. 声明证据表 */}
           <section aria-label="声明证据表" className="rounded-2xl border bg-card p-5">
-            <div className="flex items-center gap-2"><Table2 className="h-4 w-4" /><h2 className="text-sm font-semibold">声明证据表</h2></div>
+            <div className="flex items-center gap-2"><Table2 className="h-4 w-4" /><h2 className="text-sm font-semibold">内容与依据</h2></div>
             {trace.claimTrace.length === 0 ? <p className="mt-3 text-xs text-muted-foreground">该运行没有可核对的声明。</p> : (
               <div className="mt-3 overflow-x-auto">
                 <table className="w-full min-w-[640px] text-left text-[11px]">
-                  <thead><tr className="border-b text-muted-foreground"><th className="py-2 pr-3 font-medium">声明内容</th><th className="py-2 pr-3 font-medium">类型</th><th className="py-2 pr-3 font-medium">轮次</th><th className="py-2 pr-3 font-medium">终稿结论</th><th className="py-2 pr-3 font-medium">证据定位</th><th className="py-2 font-medium">质询议题</th></tr></thead>
+                  <thead><tr className="border-b text-muted-foreground"><th className="py-2 pr-3 font-medium">内容</th><th className="py-2 pr-3 font-medium">类型</th><th className="py-2 pr-3 font-medium">处理轮次</th><th className="py-2 pr-3 font-medium">最终结论</th><th className="py-2 pr-3 font-medium">依据</th><th className="py-2 font-medium">待处理问题</th></tr></thead>
                   <tbody>
                     {trace.claimTrace.map((entry) => {
                       const finalStage = entry.stages.at(-1);
                       return <tr key={entry.logicalKey ?? entry.stages[0]?.claimId} className="border-b last:border-0 align-top">
-                        <td className="max-w-[240px] py-2 pr-3 leading-4">{entry.stages[0]?.text.slice(0, 80)}{entry.stages.length > 1 ? <span className="ml-1 text-[10px] text-muted-foreground">（修订 {entry.stages.length - 1} 次）</span> : null}</td>
+                        <td className="max-w-[240px] py-2 pr-3 leading-4">{readableAuditText(entry.stages[0]?.text.slice(0, 80) ?? "")}{entry.stages.length > 1 ? <span className="ml-1 text-[10px] text-muted-foreground">（修改 {entry.stages.length - 1} 次）</span> : null}</td>
                         <td className="py-2 pr-3">{claimTypeLabel(entry.claimType)}</td>
                         <td className="py-2 pr-3">{entry.stages.map((stage) => stage.attempt).join("→")}</td>
                         <td className="py-2 pr-3"><span className={`rounded-full px-2 py-0.5 text-[10px] ${finalStage?.verdict === "supported" ? "bg-emerald-100 text-emerald-700" : finalStage?.verdict === "unsupported" ? "bg-destructive/10 text-destructive" : "bg-amber-100 text-amber-700"}`}>{verdictLabel(finalStage?.verdict)}</span></td>
                         <td className="py-2 pr-3">{finalStage?.evidence.length ? `${finalStage.evidence.length} 条` : entry.auditable ? "无" : "不适用"}</td>
-                        <td className="py-2">{entry.issues.length ? `${entry.issues.length} 条（${entry.issues.map((issue) => issue.issueType).join("、")}）` : "—"}</td>
+                        <td className="py-2">{entry.issues.length ? `${entry.issues.length} 条（${entry.issues.map((issue) => issueTypeLabel(issue.issueType)).join("、")}）` : "—"}</td>
                       </tr>;
                     })}
                   </tbody>
@@ -313,10 +369,10 @@ export function ValidationWorkbench({ apiBase, user, onLogout, onNavigate, onUse
             <div className="flex items-start gap-2"><BadgeCheck className="mt-0.5 h-4 w-4" /><h2 className="text-sm font-semibold">前后对照</h2></div>
              {attempts.length <= 1
                ? <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
-                   <Metric label="运行轮次" value={attempts.length || "—"} />
-                   <Metric label="起始快照" value={trace.snapshots.runStart ? "已记录" : "—"} tone={trace.snapshots.runStart ? "ok" : undefined} />
-                   <Metric label="收尾快照" value={trace.snapshots.generationEnd ? "已记录" : "—"} tone={trace.snapshots.generationEnd ? "ok" : undefined} />
-                   <Metric label="可对照" value={trace.snapshots.runStart && trace.snapshots.generationEnd ? "可用" : "部分"} tone={trace.snapshots.runStart && trace.snapshots.generationEnd ? "ok" : "warn"} />
+                   <Metric label="处理轮次" value={attempts.length || "—"} />
+                   <Metric label="开始时记录" value={trace.snapshots.runStart ? "已记录" : "—"} tone={trace.snapshots.runStart ? "ok" : undefined} />
+                   <Metric label="结束时记录" value={trace.snapshots.generationEnd ? "已记录" : "—"} tone={trace.snapshots.generationEnd ? "ok" : undefined} />
+                   <Metric label="是否可比较" value={trace.snapshots.runStart && trace.snapshots.generationEnd ? "可以" : "部分"} tone={trace.snapshots.runStart && trace.snapshots.generationEnd ? "ok" : "warn"} />
                  </div>
                : <div className="mt-3 space-y-2">
                   {attempts.map((attempt) => {
@@ -324,31 +380,31 @@ export function ValidationWorkbench({ apiBase, user, onLogout, onNavigate, onUse
                     const unsupported = stageClaims.filter((claim) => claim.verdict === "unsupported").length;
                     const decision = trace.auditDecisions.find((item) => item.round === attempt);
                     return <div key={attempt} className="rounded-xl border bg-background px-3.5 py-3 text-[11px]">
-                      <div className="flex items-center justify-between"><span className="font-medium">第 {attempt} 轮</span><span>{decision ? `裁决 ${decision.verdict}${decision.released ? "（放行）" : ""}` : "无裁决记录"}</span></div>
-                      <p className="mt-1 text-muted-foreground">事实声明 {stageClaims.filter((claim) => claim.claimType !== "non_factual").length} 条、无证据支持 {unsupported} 条</p>
+                      <div className="flex items-center justify-between"><span className="font-medium">第 {attempt} 轮</span><span>{decision ? `检查结果：${verdictLabel(decision.verdict)}${decision.released ? "（已通过）" : ""}` : "暂无检查结果"}</span></div>
+                      <p className="mt-1 text-muted-foreground">可核对内容 {stageClaims.filter((claim) => claim.claimType !== "non_factual").length} 条、缺少依据 {unsupported} 条</p>
                     </div>;
                   })}
                 </div>}
           </section>
 
-          {/* 6. 离线校验结果 */}
-          <section aria-label="离线校验" className="rounded-2xl border bg-card p-5">
+          {/* 6. 记录完整性检查 */}
+          <section aria-label="记录完整性检查" className="rounded-2xl border bg-card p-5">
             <div className="flex items-center justify-between">
-              <div className="flex items-start gap-2"><ScrollText className="mt-0.5 h-4 w-4" /><h2 className="text-sm font-semibold">离线校验</h2></div>
-              <button type="button" onClick={() => void runVerify()} disabled={verifying} className="inline-flex h-8 items-center gap-1 rounded-lg border px-3 text-xs font-medium hover:bg-muted disabled:opacity-50">{verifying ? "校验中…" : "运行离线复算"}</button>
+              <div className="flex items-start gap-2"><ScrollText className="mt-0.5 h-4 w-4" /><h2 className="text-sm font-semibold">记录完整性检查</h2></div>
+              <button type="button" onClick={() => void runVerify()} disabled={verifying} className="inline-flex h-8 items-center gap-1 rounded-lg border px-3 text-xs font-medium hover:bg-muted disabled:opacity-50">{verifying ? "检查中…" : "重新检查记录"}</button>
             </div>
             {verify ? <div className="mt-3 space-y-1.5 text-[11px]">
-              {verify.integrity.checks.map((check) => <div key={check.id} className="flex items-start gap-2"><span className={check.passed ? "text-emerald-600" : "text-destructive"}>{check.passed ? "✔" : "✘"}</span><span><span className="font-medium">{check.label}</span><span className="text-muted-foreground">：{check.detail}</span></span></div>)}
-              {verify.replay.attempts.map((attempt) => <div key={attempt.attempt} className="text-muted-foreground">第 {attempt.attempt} 轮回放门禁 {attempt.ruleGate}，在线裁决 {attempt.recordedVerdict ?? "缺记录"} → {attempt.match ? "一致（不更松）" : "✘ 不一致"}</div>)}
-              {verify.replay.differences.length > 0 ? <p className="text-destructive">{verify.replay.differences.join("；")}</p> : null}
-            </div> : <p className="mt-3 text-xs text-muted-foreground">点击「运行离线复算」核对本次运行的产物散列、引用与门禁一致性。</p>}
+              {verify.integrity.checks.map((check) => <div key={check.id} className="flex items-start gap-2"><span className={check.passed ? "text-emerald-600" : "text-destructive"}>{check.passed ? "✔" : "✘"}</span><span><span className="font-medium">{readableAuditText(check.label)}</span><span className="text-muted-foreground">：{readableAuditText(check.detail)}</span></span></div>)}
+              {verify.replay.attempts.map((attempt) => <div key={attempt.attempt} className="text-muted-foreground">第 {attempt.attempt} 轮检查结果：{verdictLabel(attempt.ruleGate)}，已记录结论：{verdictLabel(attempt.recordedVerdict ?? undefined)} → {attempt.match ? "一致" : "✘ 不一致"}</div>)}
+              {verify.replay.differences.length > 0 ? <p className="text-destructive">{verify.replay.differences.map(readableAuditText).join("；")}</p> : null}
+            </div> : <p className="mt-3 text-xs text-muted-foreground">检查本次任务的内容、引用、修改记录和发布结论是否一致。</p>}
           </section>
 
           {/* 7. 导出入口 */}
           <section aria-label="导出" className="flex flex-wrap items-center justify-between rounded-2xl border bg-card p-5">
-             <div className="flex items-start gap-2"><FileJson className="mt-0.5 h-4 w-4" /><h2 className="text-sm font-semibold">证据包</h2></div>
+             <div className="flex items-start gap-2"><FileJson className="mt-0.5 h-4 w-4" /><h2 className="text-sm font-semibold">完整记录</h2></div>
             <div className="flex gap-2">
-              <button type="button" onClick={() => window.open(`${apiBase}/api/learning/runs/${encodeURIComponent(trace.run.id)}/export`, "_blank", "noopener,noreferrer")} className="inline-flex h-8 items-center gap-1 rounded-lg border px-3 text-xs font-medium hover:bg-muted"><Download className="h-3.5 w-3.5" />下载 JSON</button>
+              <button type="button" onClick={() => window.open(`${apiBase}/api/learning/runs/${encodeURIComponent(trace.run.id)}/export`, "_blank", "noopener,noreferrer")} className="inline-flex h-8 items-center gap-1 rounded-lg border px-3 text-xs font-medium hover:bg-muted"><Download className="h-3.5 w-3.5" />下载记录</button>
               <button type="button" onClick={() => onNavigate("resources")} className="inline-flex h-8 items-center rounded-lg border px-3 text-xs hover:bg-muted">前往资源页</button>
             </div>
           </section>

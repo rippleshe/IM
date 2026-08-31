@@ -366,7 +366,7 @@ export function parseLlmResourceDraft(type: LearningResourceType, raw: unknown):
         code: codeRaw && asString(codeRaw['code']) ? { caption: asString(codeRaw['caption']) || undefined, language: asString(codeRaw['language']) || undefined, code: asString(codeRaw['code']) } : undefined,
         keyPoints: asStringArray(section['keyPoints'], 4).length > 0 ? asStringArray(section['keyPoints'], 4) : undefined,
       }];
-    }).slice(0, 6) : [];
+    }).slice(0, 8) : [];
     if (!title || sections.length < 2) return null;
     const misconceptions = Array.isArray(source['misconceptions']) ? source['misconceptions'].flatMap((item) => {
       const entry = item && typeof item === 'object' ? item as Record<string, unknown> : {};
@@ -446,6 +446,45 @@ export function parseLlmResourceDraft(type: LearningResourceType, raw: unknown):
   };
 }
 
+/**
+ * 结构可解析不等于可交付。该门槛用于触发一次模型返修，避免“两节各一句”之类草稿直接进入审核。
+ */
+export function validateLlmResourceDraftQuality(draft: LlmResourceDraft): string[] {
+  const issues: string[] = [];
+  if (draft.objectives.length < 2) issues.push('学习目标少于 2 条');
+  if (draft.kind === 'lecture') {
+    if (draft.sections.length < 6 || draft.sections.length > 8) issues.push('讲义必须包含 6 到 8 个完整小节');
+    const totalTextLength = draft.sections.reduce((sum, section) => sum + section.text.replace(/\s/g, '').length, 0);
+    if (totalTextLength < 2_600) issues.push('讲义正文不足 2600 字，尚未形成完整教学材料');
+    const shortSections = draft.sections.filter((section) => section.text.replace(/\s/g, '').length < 300).length;
+    if (shortSections > 0) issues.push(`有 ${shortSections} 个小节少于 300 字，讲解过于简略`);
+    const duplicateHeadings = draft.sections.length - new Set(draft.sections.map((section) => section.heading.trim())).size;
+    if (duplicateHeadings > 0) issues.push('存在重复小节标题，教学脉络不清晰');
+    const sectionsWithoutKeyPoints = draft.sections.filter((section) => (section.keyPoints?.length ?? 0) < 2).length;
+    if (sectionsWithoutKeyPoints > 0) issues.push(`有 ${sectionsWithoutKeyPoints} 个小节缺少至少 2 条记忆点`);
+    if (draft.sections.filter((section) => Boolean(section.code?.code.trim())).length < 2) issues.push('与任务直接相关的代码示例少于 2 个');
+    if ((draft.misconceptions?.length ?? 0) < 2) issues.push('常见误区少于 2 个');
+    if ((draft.reviewQuestions?.length ?? 0) < 3) issues.push('自测问题少于 3 个');
+  } else if (draft.kind === 'presentation') {
+    if (draft.slides.length < 8) issues.push('PPT 少于 8 页，叙事不完整');
+    if (draft.slides.some((slide) => slide.bullets.length < 3)) issues.push('存在少于 3 条要点的幻灯片');
+    if (draft.slides.filter((slide) => (slide.notes?.replace(/\s/g, '').length ?? 0) >= 80).length < Math.max(1, draft.slides.length - 1)) issues.push('多数幻灯片缺少完整讲解词');
+  } else if (draft.kind === 'tiered_quiz') {
+    if (draft.questions.length < 9) issues.push('分层习题少于 9 道');
+    for (const level of ['L1', 'L2', 'L3'] as const) {
+      const questions = draft.questions.filter((question) => question.level === level);
+      if (questions.length < 3) issues.push(`${level} 题目少于 3 道`);
+      for (const type of ['choice', 'blank', 'short_answer'] as const) {
+        if (!questions.some((question) => question.type === type)) issues.push(`${level} 缺少 ${type} 题型`);
+      }
+    }
+  } else {
+    if (draft.map.nodes.length < 8) issues.push('知识脉络关键节点少于 8 个');
+    if ((draft.map.readingPaths?.length ?? 0) < 2) issues.push('知识脉络阅读路径少于 2 条');
+  }
+  return issues;
+}
+
 function pushHeading(blocks: ResourceBlock[], content: string, evidenceIds: string[], knowledgePoint: string): void {
   blocks.push({
     id: `resource-block-${randomUUID()}`,
@@ -494,6 +533,15 @@ function pushCode(blocks: ResourceBlock[], code: { caption?: string; language?: 
   });
 }
 
+function pushTeachingParagraphs(blocks: ResourceBlock[], content: string, evidenceIds: string[], knowledgePoint: string): void {
+  const paragraphs = content.split(/\n\s*\n/).map((item) => item.trim()).filter(Boolean);
+  if (paragraphs.length <= 1) {
+    pushParagraph(blocks, content, evidenceIds, knowledgePoint);
+    return;
+  }
+  for (const paragraph of paragraphs.slice(0, 6)) pushParagraph(blocks, paragraph, evidenceIds, knowledgePoint);
+}
+
 /** Mermaid 语法最小校验与清洗：首行必须声明图类型；节点/边标签内的半角符号会破坏解析，统一替换为空格 */
 function sanitizeMermaid(source: string): string | null {
   const text = source.trim().replace(/\r/g, '');
@@ -503,7 +551,7 @@ function sanitizeMermaid(source: string): string | null {
   // 清洗方括号/花括号/圆括号标签与 |边标签| 内的半角危险字符（引号、尖括号、冒号、分号等）
   const cleaned = lines.map((line) => line
     .replace(/\[([^\]\n]*)\]/g, (_, label: string) => `[${sanitizeMermaidLabel(label)}]`)
-    .replace(/\{([^\}\n]*)\}/g, (_, label: string) => `{${sanitizeMermaidLabel(label)}}`)
+    .replace(/\{([^}\n]*)\}/g, (_, label: string) => `{${sanitizeMermaidLabel(label)}}`)
     .replace(/\(([^)\n]*)\)/g, (_, label: string) => `(${sanitizeMermaidLabel(label)})`)
     .replace(/\|([^|\n]*)\|/g, (_, label: string) => `|${sanitizeMermaidLabel(label)}|`)
     .replace(/<\/?[a-zA-Z][^>]*>/g, '')
@@ -542,15 +590,19 @@ export function buildLlmResourceDocument(
   if (lead) {
     pushParagraph(blocks, lead, evidenceIdList, knowledgePoint);
   } else {
-    pushParagraph(blocks, '本资源由多智能体依据当前证据包协同生成：学情定位 → 双路检索 → 领域核对 → 逐条 Claim 审核。涉及数据均来自可回溯的证据，未在证据中的数字一律不采用。', evidenceIdList, knowledgePoint);
+    pushParagraph(blocks, `本讲围绕“${query.trim().slice(0, 80)}”展开。你会先理解问题与关键字段，再沿着分析步骤观察证据、解释现象，并在最后用自测问题检查自己是否真正掌握。`, evidenceIdList, knowledgePoint);
   }
 
   let hasLlmCode = false;
   if (llm.kind === 'lecture') {
-    for (const section of llm.sections.slice(0, 6)) {
+    if (llm.objectives.length > 0) {
+      pushHeading(blocks, '学习目标', evidenceIdList, knowledgePoint);
+      pushList(blocks, llm.objectives, evidenceIdList, knowledgePoint);
+    }
+    for (const section of llm.sections.slice(0, 8)) {
       if (!section.heading?.trim() || !section.text?.trim()) continue;
       pushHeading(blocks, section.heading, evidenceIdList, knowledgePoint);
-      pushParagraph(blocks, section.text, evidenceIdList, knowledgePoint);
+      pushTeachingParagraphs(blocks, section.text, evidenceIdList, knowledgePoint);
       if (section.keyPoints && section.keyPoints.length > 0) {
         pushList(blocks, section.keyPoints.map((item) => `**${item}**`), evidenceIdList, knowledgePoint);
       }
@@ -710,5 +762,5 @@ function analysisCodeBlock(knowledgePoint: string): ResourceBlock {
 }
 
 function escapeMermaid(value: string): string {
-  return value.replace(/[\[\]{}()<>|]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80) || '当前学习目标';
+  return value.replace(/[[\]{}()<>|]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80) || '当前学习目标';
 }

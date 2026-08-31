@@ -4,6 +4,7 @@ import {
   buildLlmResourceDocument,
   buildResourceDraft,
   parseLlmResourceDraft,
+  validateLlmResourceDraftQuality,
 } from './resource-builder.js';
 import type { EvidenceItem, EvidencePack, LearningResourceType, QuizQuestion } from './types.js';
 
@@ -108,6 +109,40 @@ describe('parseLlmResourceDraft：结构校验与回退', () => {
 
   it('知识脉络：缺 mermaid → null', () => {
     expect(parseLlmResourceDraft('concept_map', { title: 'x', map: { mermaid: '', nodes: [] } })).toBeNull();
+  });
+});
+
+describe('validateLlmResourceDraftQuality：可交付质量门槛', () => {
+  it('能识别只有两节短句、缺记忆点和缺自测的伪讲义', () => {
+    const draft = parseLlmResourceDraft('lecture', {
+      title: '过短讲义',
+      objectives: ['认识字段'],
+      sections: [
+        { heading: '字段', text: '一句话。' },
+        { heading: '方法', text: '另一句话。' },
+      ],
+    })!;
+    const issues = validateLlmResourceDraftQuality(draft);
+    expect(issues.some((issue) => issue.includes('6 到 8'))).toBe(true);
+    expect(issues.some((issue) => issue.includes('正文不足'))).toBe(true);
+    expect(issues.some((issue) => issue.includes('记忆点'))).toBe(true);
+    expect(issues.some((issue) => issue.includes('自测问题'))).toBe(true);
+  });
+
+  it('解析与组装保留最多 8 个讲义小节', () => {
+    const draft = parseLlmResourceDraft('lecture', {
+      title: '完整讲义结构',
+      objectives: ['理解字段', '完成分析'],
+      sections: Array.from({ length: 8 }, (_, index) => ({
+        heading: `第 ${index + 1} 节`,
+        text: `第 ${index + 1} 节正文`,
+      })),
+    });
+    expect(draft?.kind).toBe('lecture');
+    if (draft?.kind !== 'lecture') return;
+    expect(draft.sections).toHaveLength(8);
+    const doc = buildLlmResourceDocument('task-8', '八节讲义', 'lecture', pack(EVIDENCE), 'kp', draft);
+    expect(doc.blocks.filter((block) => block.type === 'heading' && String(block.content).startsWith('第 '))).toHaveLength(8);
   });
 });
 

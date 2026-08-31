@@ -25,11 +25,8 @@ const KP_LABELS: Record<string, string> = {
   'metropt-3-basics': 'MetroPT-3 时序',
   'machine-learning-basics': '机器学习基础',
   'industrial-diagnosis-foundation': '设备诊断入门',
+  'compressor-diagnosis-evidence': '设备诊断证据',
 };
-
-function labelOf(knowledgePointId: string): string {
-  return KP_LABELS[knowledgePointId] ?? knowledgePointId;
-}
 
 export interface ProfileBlindSpot {
   knowledgePointId: string;
@@ -83,6 +80,10 @@ const RESOURCE_LABELS: Record<LearningResourceType, string> = {
 export async function buildProfileInsights(learnerId: string): Promise<ProfileInsights> {
   const skills = await learningStore.getSkillStates(learnerId);
   const graph = await learningStore.getPathGraph(learnerId);
+  // 中文标签降级链：静态表 → 路径节点标题 → 原始 ID（LLM 生成的知识点 ID 不会命中静态表）
+  const titleByKp = new Map(graph.nodes.map((node) => [node.knowledgePointId, node.title]));
+  const labelOf = (knowledgePointId: string): string =>
+    KP_LABELS[knowledgePointId] ?? titleByKp.get(knowledgePointId) ?? knowledgePointId;
   const masteredIds = new Set(
     graph.nodes.filter((node) => node.mastered || node.userStatus === 'completed').map((node) => node.id),
   );

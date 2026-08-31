@@ -1,7 +1,7 @@
 /**
  * PostgreSQL 版证据检索与数据集查询（docs/挑战杯技术开发总规.md §6.1 第 5/6 组、§7.5）
  *
- * - 结构化证据：PG metro_readings / dataset_rows 精确查询（与 SQLite 版语义一致）；
+ * - 结构化证据：PG metro_readings / dataset_rows 精确查询；
  * - 文档证据：to_tsvector('simple') 全文召回，ILIKE 兜底；向量召回在运行时混合检索层接入；
  * - EvidencePack / 隐私审计事件持久化到 PG evidence_* 与 privacy_audit_events；
  * - seedMetroCatalogPg / importKnowledgeCardsPg / importCsvDatasetPg / importMetroPt3CsvPg
@@ -15,11 +15,10 @@ import { pipeline } from 'node:stream/promises';
 import type { Pool, PoolClient } from 'pg';
 import { from as copyFrom } from 'pg-copy-streams';
 
-import { KNOWLEDGE_CARD_SOURCE_ID, chunkCardContent } from '../../src/learning/knowledge-import.js';
-import { crossValidate, normalizeSearchTerms } from '../../src/learning/evidence.js';
+import { crossValidate, normalizeSearchTerms } from '../../src/learning/evidence-rules.js';
 import { hybridDocumentRowsPg } from './pg-retrieval.js';
-import type { CsvDatasetSource } from '../../src/learning/tabular.js';
 import type {
+  CsvDatasetSource,
   DatasetSummary,
   EvidenceItem,
   EvidencePack,
@@ -28,6 +27,94 @@ import type {
 } from '../../src/learning/types.js';
 
 const METRO_DATASET_ID = 'metropt-3';
+const KNOWLEDGE_CARD_SOURCE_ID = 'knowledge-cards';
+
+const MAX_CHUNK_CHARS = 1200;
+const MIN_CHUNK_CHARS = 160;
+
+function toBlocks(lines: string[]): string[] {
+  const blocks: string[] = [];
+  let buffer: string[] = [];
+  let inFence = false;
+  const flush = () => {
+    const text = buffer.join('\n').trim();
+    if (text) blocks.push(text);
+    buffer = [];
+  };
+  for (const line of lines) {
+    if (line.trimStart().startsWith('```')) {
+      inFence = !inFence;
+      buffer.push(line);
+      if (!inFence) flush();
+      continue;
+    }
+    if (!inFence && line.trim() === '') {
+      flush();
+      continue;
+    }
+    buffer.push(line);
+  }
+  flush();
+  return blocks;
+}
+
+function packBlocks(blocks: string[]): string[] {
+  const packed: string[] = [];
+  let buffer = '';
+  const pushLinePacked = (block: string) => {
+    let part = '';
+    for (const line of block.split('\n')) {
+      const next = part ? `${part}\n${line}` : line;
+      if (next.length > MAX_CHUNK_CHARS && part) {
+        packed.push(part);
+        part = line;
+      } else {
+        part = next;
+      }
+    }
+    if (part) packed.push(part);
+  };
+  for (const block of blocks) {
+    const candidate = buffer ? `${buffer}\n\n${block}` : block;
+    if (candidate.length <= MAX_CHUNK_CHARS) {
+      buffer = candidate;
+      continue;
+    }
+    if (buffer) packed.push(buffer);
+    if (block.length > MAX_CHUNK_CHARS) {
+      pushLinePacked(block);
+      buffer = '';
+    } else {
+      buffer = block;
+    }
+  }
+  if (buffer) packed.push(buffer);
+  return packed;
+}
+
+function chunkCardContent(content: string): Array<{ heading: string; text: string }> {
+  const normalized = content.replace(/\r\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+  const sections: Array<{ heading: string; lines: string[] }> = [{ heading: '', lines: [] }];
+  for (const line of normalized.split('\n')) {
+    const matched = line.match(/^##\s+(.+)$/)?.[1];
+    if (matched) sections.push({ heading: matched.trim(), lines: [] });
+    else sections[sections.length - 1]?.lines.push(line);
+  }
+  const chunks: Array<{ heading: string; text: string }> = [];
+  for (const section of sections) {
+    for (const text of packBlocks(toBlocks(section.lines))) chunks.push({ heading: section.heading, text });
+  }
+  const merged: Array<{ heading: string; text: string }> = [];
+  for (const chunk of chunks) {
+    const previous = merged[merged.length - 1];
+    if (previous && chunk.text.length < MIN_CHUNK_CHARS) {
+      previous.text = `${previous.text}\n\n${chunk.text}`;
+      continue;
+    }
+    merged.push({ heading: chunk.heading, text: chunk.text });
+  }
+  return merged.filter((chunk) => chunk.text.length >= 40);
+}
 
 /* ------------------------------------------------------------------ */
 /* 数据集查询（结构化证据）                                               */
@@ -568,7 +655,7 @@ function inferNumber(value: string): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-/** 小而美的 CSV 解析：覆盖引号、转义引号与换行（与 src/learning/tabular.ts 行为一致）。 */
+/** 小而美的 CSV 解析：覆盖引号、转义引号与换行。 */
 function parseCsv(text: string): { header: string[]; rows: string[][] } {
   const cleaned = text.replace(/^\uFEFF/, '');
   const rows: string[][] = [];

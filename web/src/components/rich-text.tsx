@@ -81,6 +81,20 @@ export function RichInlineText({ text }: { text: string }) {
 
 const InlineText = RichInlineText;
 
+/** 学习路径节点描述：按「；」拆分为要点列表（无分隔符时整句呈现） */
+export function DescriptionList({ text, compact = false }: { text: string; compact?: boolean }) {
+  const parts = (text ?? "").split("；").map((part) => part.trim().replace(/[。.]$/, "")).filter(Boolean);
+  if (parts.length <= 1) {
+    return <p className={compact ? "text-[11px] leading-4" : "text-sm leading-6"}><InlineText text={text ?? ""} /></p>;
+  }
+  return <ul className={compact ? "mt-1.5 space-y-1" : "mt-1 space-y-1.5"}>
+    {parts.map((part, index) => <li key={index} className={`flex gap-2 ${compact ? "text-[11px] leading-4" : "text-sm leading-6"}`}>
+      <span className={`${compact ? "mt-[6px] h-1 w-1" : "mt-[10px] h-1.5 w-1.5"} shrink-0 rounded-full bg-muted-foreground/50`} />
+      <span className="text-muted-foreground"><InlineText text={part} /></span>
+    </li>)}
+  </ul>;
+}
+
 function CodeFigure({ language, code, caption }: { language: string; code: string; caption?: string }) {
   const [copied, setCopied] = useState(false);
   const copy = async () => {

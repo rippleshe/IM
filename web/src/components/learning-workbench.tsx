@@ -13,6 +13,7 @@ import {
   Paperclip,
   Send,
   Sparkles,
+  Trash2,
   UserRound,
   X,
 } from "lucide-react";
@@ -20,7 +21,7 @@ import type { AuthenticatedUser } from "@/components/auth-entry";
 import { SettingsDialog } from "@/components/settings-dialog";
 import { AvatarBubble, ProfileDialog } from "@/components/profile-dialog";
 import { RecommendationBadge, type PathGraph, type PathNode, TreeCanvas } from "@/components/learning-path-workbench";
-import { RichText } from "@/components/rich-text";
+import { RichText, DescriptionList } from "@/components/rich-text";
 
 type ResourceType = "lecture" | "tiered_quiz" | "presentation" | "concept_map";
 type AgentId = "learning_planning" | "evidence_retrieval" | "domain_expert" | "resource_generation" | "cross_validation" | "privacy_compliance" | "orchestrator";
@@ -32,7 +33,6 @@ type StudyMessage = {
   createdAt: number;
   metadata: { surface?: "study"; pathNodeId?: string | null; resourceType?: ResourceType; asset?: StudyAsset; evidence?: { count: number; score: number; crossValidation: string }; kind?: string; runId?: string; agentId?: string; agentName?: string };
 };
-type Profile = { summary: string; keywords: string[]; studyMinutes: number; assetsCount: number; accuracy: number | null };
 
 const resourceOptions: Array<{ value: ResourceType; label: string }> = [
   { value: "lecture", label: "讲义" },
@@ -41,24 +41,17 @@ const resourceOptions: Array<{ value: ResourceType; label: string }> = [
   { value: "concept_map", label: "知识脉络" },
 ];
 
-const selectableAgents: Array<{ id: AgentId; label: string }> = [
-  { id: "learning_planning", label: "学情与路径" },
-  { id: "evidence_retrieval", label: "知识检索" },
-  { id: "domain_expert", label: "领域诊断" },
-  { id: "resource_generation", label: "资源生成" },
-];
-
 const nodeLabels: Record<string, { name: string; agentId: AgentId }> = {
-  "assess.learner": { name: "学情建模", agentId: "learning_planning" },
-  "retrieve.structured": { name: "结构化证据检索", agentId: "evidence_retrieval" },
-  "retrieve.document": { name: "文档证据检索", agentId: "evidence_retrieval" },
-  "analyze.domain": { name: "领域分析", agentId: "domain_expert" },
-  "generate.resource": { name: "资源生成", agentId: "resource_generation" },
-  "audit.claims": { name: "Claim 逐条审核", agentId: "cross_validation" },
-  "debate.challenge": { name: "反方质询", agentId: "cross_validation" },
-  "adjudicate.verdict": { name: "证据裁决", agentId: "cross_validation" },
-  "privacy.compliance": { name: "隐私合规", agentId: "privacy_compliance" },
-  "finalize.publish": { name: "发布收尾", agentId: "orchestrator" },
+  "assess.learner": { name: "分析学习情况", agentId: "learning_planning" },
+  "retrieve.structured": { name: "查找数据依据", agentId: "evidence_retrieval" },
+  "retrieve.document": { name: "查找资料依据", agentId: "evidence_retrieval" },
+  "analyze.domain": { name: "分析专业内容", agentId: "domain_expert" },
+  "generate.resource": { name: "制作学习材料", agentId: "resource_generation" },
+  "audit.claims": { name: "逐条检查内容", agentId: "cross_validation" },
+  "debate.challenge": { name: "复核疑点", agentId: "cross_validation" },
+  "adjudicate.verdict": { name: "判断证据是否足够", agentId: "cross_validation" },
+  "privacy.compliance": { name: "隐私检查", agentId: "privacy_compliance" },
+  "finalize.publish": { name: "整理并保存结果", agentId: "orchestrator" },
 };
 
 type RunNodeState = "running" | "succeeded" | "failed" | "revising";
@@ -77,6 +70,50 @@ function resourceLabel(type: ResourceType) {
   return resourceOptions.find((item) => item.value === type)?.label ?? "学习资源";
 }
 
+function readableProcessText(text: string): string {
+  return text
+    .replace(/学情与路径智能体/g, "学习规划助手")
+    .replace(/知识检索智能体/g, "资料检索助手")
+    .replace(/领域诊断智能体/g, "专业分析助手")
+    .replace(/资源生成智能体/g, "学习材料助手")
+    .replace(/交叉验证与审核智能体|交叉验证智能体/g, "内容检查助手")
+    .replace(/合规与隐私智能体/g, "隐私保护助手")
+    .replace(/结构化证据检索/g, "查找数据依据")
+    .replace(/文档证据检索/g, "查找资料依据")
+    .replace(/学情建模/g, "分析学习情况")
+    .replace(/领域分析/g, "分析专业内容")
+    .replace(/资源生成/g, "制作学习材料")
+    .replace(/隐私合规/g, "隐私检查")
+    .replace(/发布收尾/g, "整理并保存结果")
+    .replace(/反方质询/g, "复核疑点")
+    .replace(/证据裁决/g, "判断证据是否足够")
+    .replace(/修订预算/g, "修改次数")
+    .replace(/修订/g, "修改")
+    .replace(/门禁/g, "检查")
+    .replace(/协同/g, "任务处理")
+    .replace(/运行已受理/g, "任务已开始")
+    .replace(/不可跳过门禁/g, "必做检查")
+    .replace(/风险等级/g, "检查等级")
+    .replace(/检查等级\s+low\b/gi, "检查等级：低")
+    .replace(/检查等级\s+medium\b/gi, "检查等级：中等")
+    .replace(/检查等级\s+high\b/gi, "检查等级：高")
+    .replace(/manual_review_required/g, "需要人工复核")
+    .replace(/revision budget/gi, "修改次数")
+    .replace(/revised|revision/gi, "需要修改")
+    .replace(/rejected/gi, "未通过")
+    .replace(/released/gi, "已通过")
+    .replace(/unsupported/gi, "缺少依据")
+    .replace(/partial/gi, "部分支持")
+    .replace(/conflict/gi, "相互矛盾")
+    .replace(/review/gi, "待复核")
+    .replace(/strict/gi, "从严检查")
+    .replace(/standard/gi, "标准检查")
+    .replace(/DAG/g, "处理流程")
+    .replace(/Claim/g, "内容")
+    .replace(/Agent/g, "智能体")
+    .replace(/N\/A（空分母）/g, "暂无数据");
+}
+
 type LearningWorkbenchProps = {
   apiBase: string;
   user: AuthenticatedUser;
@@ -88,15 +125,13 @@ type LearningWorkbenchProps = {
 export function LearningWorkbench({ apiBase, user, onLogout, onNavigate, onUserChange }: LearningWorkbenchProps) {
   const [path, setPath] = useState<PathGraph>({ nodes: [], edges: [] });
   const [messages, setMessages] = useState<StudyMessage[]>([]);
-  const [profile, setProfile] = useState<Profile | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [resourceType, setResourceType] = useState<ResourceType>("lecture");
-  const [preference, setPreference] = useState<"auto" | "custom">("auto");
-  const [selectedAgents, setSelectedAgents] = useState<AgentId[]>(["learning_planning", "evidence_retrieval", "domain_expert", "resource_generation"]);
   const [attachedFile, setAttachedFile] = useState<{ name: string; content: string } | null>(null);
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
+  const [clearingConversation, setClearingConversation] = useState(false);
   const [studyRunning, setStudyRunning] = useState(false);
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const [finishedRunId, setFinishedRunId] = useState<string | null>(null);
@@ -115,22 +150,19 @@ export function LearningWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
   const progressStorageKey = `im-training-agent:study-progress:${user.id}`;
 
   const load = useCallback(async () => {
-    const [pathResponse, messageResponse, profileResponse] = await Promise.all([
+    const [pathResponse, messageResponse] = await Promise.all([
       fetch(`${apiBase}/api/learning/path-graph`, { credentials: "include" }),
       fetch(`${apiBase}/api/learning/chat?surface=study`, { credentials: "include" }),
-      fetch(`${apiBase}/api/learning/profile`, { credentials: "include" }),
     ]);
-    if (!pathResponse.ok || !messageResponse.ok || !profileResponse.ok) throw new Error("学习空间读取失败，请重新登录后再试");
+    if (!pathResponse.ok || !messageResponse.ok) throw new Error("学习空间读取失败，请重新登录后再试");
     const pathData = await pathResponse.json() as { path?: PathGraph };
     const messageData = await messageResponse.json() as { messages?: StudyMessage[]; studyRunning?: boolean };
-    const profileData = await profileResponse.json() as { profile?: Profile };
     const nextPath = pathData.path ?? { nodes: [], edges: [] };
     setPath(nextPath);
     const studyMessages = messageData.messages ?? [];
     const serverRunRunning = Boolean(messageData.studyRunning);
     setMessages(studyMessages);
     setStudyRunning(serverRunRunning);
-    setProfile(profileData.profile ?? null);
     setSelectedNodeId((current) => current && nextPath.nodes.some((item) => item.id === current) ? current : nextPath.nodes[0]?.id ?? null);
     consumeStudyPrefill(nextPath);
     if (!serverRunRunning) {
@@ -145,7 +177,7 @@ export function LearningWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
             setFinishedRunId(latestRunId);
             setNodeStates(states);
             setLiveEvents(events.slice(-16));
-            setLiveSummary(trace.run?.status === "succeeded" ? "本次协同已完成，公开过程已保留，可继续复盘。" : "本次协同已结束，可查看公开过程。");
+            setLiveSummary(trace.run?.status === "succeeded" ? "本次任务已完成，处理记录已保留，可继续查看。" : "本次任务已结束，可查看处理记录。");
           }
         } catch { /* 历史过程读取失败时仍保留消息记录 */ }
       }
@@ -183,18 +215,13 @@ export function LearningWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
 
   const refreshLearningContext = useCallback(async () => {
     try {
-      const [pathResponse, profileResponse] = await Promise.all([
-        fetch(`${apiBase}/api/learning/path-graph`, { credentials: "include" }),
-        fetch(`${apiBase}/api/learning/profile`, { credentials: "include" }),
-      ]);
-      if (!pathResponse.ok || !profileResponse.ok) return;
+      const pathResponse = await fetch(`${apiBase}/api/learning/path-graph`, { credentials: "include" });
+      if (!pathResponse.ok) return;
       const pathData = await pathResponse.json() as { path?: PathGraph };
-      const profileData = await profileResponse.json() as { profile?: Profile };
       if (pathData.path) {
         setPath(pathData.path);
         setSelectedNodeId((current) => current && pathData.path!.nodes.some((item) => item.id === current) ? current : pathData.path!.nodes[0]?.id ?? null);
       }
-      if (profileData.profile) setProfile(profileData.profile);
     } catch { /* 证据刷新失败时保留当前页面，下一次聚焦再试 */ }
   }, [apiBase]);
 
@@ -323,39 +350,49 @@ export function LearningWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
 
   const readAttachment = async (file: File) => {
     const supported = file.type.startsWith("text/") || /\.(md|txt|csv|json)$/i.test(file.name);
-    if (!supported) { setNotice("当前临时参考仅支持 MD、TXT、CSV 或 JSON 文件"); return; }
+    if (!supported) { setNotice("当前临时参考仅支持 Markdown、文本、表格或数据文件"); return; }
     const content = (await file.text()).slice(0, 120_000);
     setAttachedFile({ name: file.name, content });
     setNotice("");
   };
 
-  const toggleAgent = (agentId: AgentId) => setSelectedAgents((current) => {
-    const next = current.includes(agentId) ? current.filter((item) => item !== agentId) : [...current, agentId];
-    return next.length >= 3 ? next : current; // 一次运行至少 3 个业务角色（总规 §5.2）
-  });
-
   const send = async () => {
     const content = draft.trim();
     if (!content || sending) return;
-    if (preference === "custom" && (!selectedAgents.includes("resource_generation") || selectedAgents.length < 3)) {
-      setNotice("指定角色模式下至少选择 3 个业务角色，且必须包含资源生成（门禁不可取消）");
-      return;
-    }
     setSending(true); setNotice(""); setDraft("");
     try {
       const response = await fetch(`${apiBase}/api/learning/runs`, {
         method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ task: content, pathNodeId: selectedNodeId, resourceType, collaborationMode: preference, selectedAgentIds: selectedAgents, temporaryReference: attachedFile }),
+        body: JSON.stringify({ task: content, pathNodeId: selectedNodeId, resourceType, temporaryReference: attachedFile }),
       });
       const data = await response.json() as { success?: boolean; error?: string; runId?: string };
-      if (!response.ok || !data.success || !data.runId) throw new Error(data.error || "学习协同失败");
+      if (!response.ok || !data.success || !data.runId) throw new Error(data.error || "学习任务启动失败");
       setAttachedFile(null);
       await refreshMessages();
       openRunStream(data.runId);
     } catch (error) {
       setDraft(content);
-      setNotice(error instanceof Error ? error.message : "学习协同失败");
+      setNotice(error instanceof Error ? error.message : "学习任务启动失败");
     } finally { setSending(false); }
+  };
+
+  const clearConversation = async () => {
+    if (studyRunning || clearingConversation) return;
+    if (!window.confirm("清除当前任务对话的全部历史和后续模型对话上下文？不会删除学习路径、已生成资源或验证记录。")) return;
+    setClearingConversation(true);
+    setNotice("");
+    try {
+      const response = await fetch(`${apiBase}/api/learning/chat?surface=study`, { method: "DELETE", credentials: "include" });
+      const data = await response.json() as { success?: boolean; error?: string };
+      if (!response.ok || !data.success) throw new Error(data.error || "清除对话失败");
+      setMessages([]);
+      setFinishedRunId(null);
+      setNodeStates([]);
+      setLiveEvents([]);
+      setLiveSummary("");
+      window.localStorage.removeItem(progressStorageKey);
+    } catch (error) { setNotice(error instanceof Error ? error.message : "清除对话失败"); }
+    finally { setClearingConversation(false); }
   };
 
   const updateNode = async (node: PathNode, patch: { userStatus?: PathNode["userStatus"]; mastered?: boolean }) => {
@@ -373,35 +410,32 @@ export function LearningWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
   return <main className={`flex h-screen min-h-0 flex-col overflow-hidden bg-background ${resizing ? "select-none" : ""}`}>
     <header className="flex h-16 shrink-0 items-center justify-between border-b px-5 sm:px-7">
       <div className="flex items-center gap-2.5"><AvatarBubble user={user} size="h-9 w-9 text-xs" /><span className="min-w-0"><span className="block text-sm font-semibold tracking-tight">IM-Training-Agent</span><span className="block text-[11px] text-muted-foreground">{user.displayName}</span></span></div>
-      <nav aria-label="学习空间" className="flex items-center rounded-lg border bg-muted/40 p-1 text-sm"><button type="button" onClick={() => setSettingsOpen(true)} className="rounded-md px-3 py-1.5 text-muted-foreground hover:text-foreground">设置</button><button type="button" onClick={() => setProfileOpen(true)} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">画像</button><button type="button" onClick={() => onNavigate("path")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">路径</button><button type="button" className="rounded-md bg-background px-4 py-1.5 font-medium shadow-sm">学习</button><button type="button" onClick={() => onNavigate("resources")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">资源</button><button type="button" onClick={() => onNavigate("validation")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">验证</button></nav>
+      <nav aria-label="学习空间" className="flex items-center rounded-lg border bg-muted/40 p-1 text-sm"><button type="button" onClick={() => setSettingsOpen(true)} className="rounded-md px-3 py-1.5 text-muted-foreground hover:text-foreground">设置</button><button type="button" onClick={() => setProfileOpen(true)} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">学习情况</button><button type="button" onClick={() => onNavigate("path")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">路径</button><button type="button" className="rounded-md bg-background px-4 py-1.5 font-medium shadow-sm">学习</button><button type="button" onClick={() => onNavigate("resources")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">资源</button><button type="button" onClick={() => onNavigate("validation")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">验证</button></nav>
       <button type="button" onClick={logout} className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-2 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"><LogOut className="h-3.5 w-3.5" />退出</button>
     </header>
 
     <div className="flex min-h-0 min-w-[1000px] flex-1 overflow-hidden">
       <aside style={{ width: leftWidth }} className="flex shrink-0 flex-col border-r bg-card" aria-label="任务上下文">
-        <div className="flex shrink-0 items-center justify-between border-b px-4 py-3.5"><div className="flex items-center gap-2"><ListTree className="h-4 w-4" /><h1 className="text-sm font-semibold">任务上下文</h1></div></div>
+        <div className="flex shrink-0 items-center justify-between border-b px-4 py-3.5"><div className="flex items-center gap-2"><ListTree className="h-4 w-4" /><h1 className="text-sm font-semibold">任务进度</h1></div><span className="text-xs text-muted-foreground">{studyRunning ? "进行中" : finishedRunId ? "已完成" : "待发起"}</span></div>
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
-          <section aria-label="当前节点"><div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">当前节点</div>{selectedNode ? <div className="mt-2 rounded-xl border p-3"><div className="text-xs font-semibold leading-5">{selectedNode.title}</div><p className="mt-1.5 text-[11px] leading-4 text-muted-foreground">{selectedNode.description}</p>{selectedNode.recommendation ? <div className="mt-2.5"><RecommendationBadge recommendation={selectedNode.recommendation} /></div> : null}<button type="button" onClick={() => addMention(selectedNode)} className="mt-3 inline-flex h-7 items-center gap-1 rounded-lg border px-2.5 text-[11px] hover:bg-muted"><MessageSquarePlus className="h-3 w-3" />@ 引用到输入</button></div> : <div className="mt-2 rounded-xl border border-dashed p-3 text-[11px] leading-4 text-muted-foreground">在右侧路径中选择一个节点</div>}</section>
-          <section aria-label="学情快照"><div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">学情快照</div><div className="mt-2 grid grid-cols-3 gap-1.5 text-center"><Metric label="正确率" value={profile?.accuracy === null || profile?.accuracy === undefined ? "—" : `${Math.round(profile.accuracy * 100)}%`} /><Metric label="学习分钟" value={profile?.studyMinutes ?? 0} /><Metric label="资产数" value={profile?.assetsCount ?? 0} /></div></section>
-          <section aria-label="本次任务"><div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">本次配置</div><div className="mt-2 space-y-1.5 rounded-xl border p-3 text-[11px] leading-4"><div className="flex justify-between gap-2"><span className="text-muted-foreground">目标节点</span><span className="max-w-[62%] truncate text-right font-medium">{selectedNode?.title ?? "未选择"}</span></div><div className="flex justify-between gap-2"><span className="text-muted-foreground">产物</span><span className="font-medium">{resourceLabel(resourceType)}</span></div><div className="flex justify-between gap-2"><span className="text-muted-foreground">协同</span><span className="max-w-[62%] text-right font-medium">{preference === "auto" ? "自动编排" : `${selectedAgents.length} 个角色`}</span></div>{attachedFile ? <div className="flex justify-between gap-2"><span className="text-muted-foreground">参考</span><span className="max-w-[62%] truncate text-right font-medium">{attachedFile.name}</span></div> : null}<div className="flex justify-between gap-2"><span className="text-muted-foreground">运行状态</span><span className="text-right font-medium">{studyRunning ? "正在协同" : finishedRunId ? "已完成，可复盘" : "等待发起"}</span></div></div></section>
+      <section aria-label="当前节点"><div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">当前节点</div>{selectedNode ? <div className="mt-2 rounded-xl border p-3"><div className="text-xs font-semibold leading-5">{selectedNode.title}</div><div className="mt-1"><DescriptionList text={selectedNode.description} compact /></div>{selectedNode.recommendation ? <div className="mt-2.5"><RecommendationBadge recommendation={selectedNode.recommendation} /></div> : null}<button type="button" onClick={() => addMention(selectedNode)} className="mt-3 inline-flex h-7 items-center gap-1 rounded-lg border px-2.5 text-[11px] hover:bg-muted"><MessageSquarePlus className="h-3 w-3" />引用到问题</button></div> : <div className="mt-2 rounded-xl border border-dashed p-3 text-[11px] leading-4 text-muted-foreground">在右侧路径中选择一个节点</div>}</section>
+          <section aria-label="任务处理状态">{studyRunning || finishedRunId || nodeStates.length > 0 ? <RunProgressStrip states={nodeStates} summary={liveSummary} events={liveEvents} completed={!studyRunning} /> : <div className="mt-2 rounded-xl border border-dashed p-4 text-[11px] leading-4 text-muted-foreground">开始任务后，这里会显示处理进度和检查结果。</div>}</section>
         </div>
       </aside>
       <div role="separator" aria-orientation="vertical" onMouseDown={() => setResizing("left")} className="w-1.5 shrink-0 cursor-col-resize bg-border/60 transition-colors hover:bg-foreground/30" />
 
-      <section className="flex min-w-[390px] flex-1 flex-col bg-card" aria-label="多智能体协同群聊">
+      <section className="flex min-w-[390px] flex-1 flex-col bg-card" aria-label="学习任务对话">
         <div className="flex shrink-0 items-center justify-between border-b px-5 py-3.5">
-          <div className="flex items-center gap-2"><Sparkles className="h-4 w-4" /><h2 className="text-sm font-semibold">协同群聊</h2></div>
-          <span className="text-xs text-muted-foreground">{selectedNode ? `关联：${selectedNode.title}` : "选择路径节点后发起协同"}</span>
+          <div className="flex items-center gap-2"><Sparkles className="h-4 w-4" /><h2 className="text-sm font-semibold">学习助手</h2></div>
+          <div className="flex items-center gap-3"><span className="text-xs text-muted-foreground">{selectedNode ? `关联：${selectedNode.title}` : "选择路径节点后开始任务"}</span><button type="button" disabled={studyRunning || clearingConversation || messages.length === 0} onClick={() => void clearConversation()} className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40" title={studyRunning ? "任务结束后才能清除上下文" : "清除对话上下文"}><Trash2 className="h-3 w-3" />{clearingConversation ? "清除中" : "清除上下文"}</button></div>
         </div>
         <div ref={feedRef} className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
           <div className="mx-auto max-w-3xl space-y-4">
-            {/* 运行状态条置顶固定：智能体发言按时间顺序在其下方实时追加，无需回翻 */}
-            {(studyRunning || finishedRunId || nodeStates.length > 0 || liveEvents.length > 0) && <div className="sticky top-0 z-10 -mx-1 bg-card/95 px-1 pb-2 pt-1 backdrop-blur-sm"><RunProgressStrip states={nodeStates} summary={liveSummary} events={liveEvents} completed={!studyRunning} /></div>}
-            {loading ? <div className="flex min-h-[240px] items-center justify-center text-sm text-muted-foreground">正在加载协同记录</div> : messages.length === 0 && !studyRunning && nodeStates.length === 0 ? <div className="flex min-h-[200px] flex-col items-center justify-center text-center"><Bot className="mb-3 h-8 w-8 text-muted-foreground/50" /><p className="text-sm font-medium">从一条任务开始群聊协同</p><p className="mt-1 text-xs text-muted-foreground">@ 引用路径节点，选择资源类型后发送即可。</p></div> : messages.map((message) => <MessageCard key={message.id} message={message} onExport={exportAsset} />)}
-            {studyRunning && messages.length === 0 ? <div className="flex items-center gap-2 text-xs text-muted-foreground"><span className="h-2 w-2 animate-pulse rounded-full bg-foreground" />正在协同处理，各智能体的发言会逐条出现在下方…</div> : null}
+            {loading ? <div className="flex min-h-[240px] items-center justify-center text-sm text-muted-foreground">正在加载学习记录</div> : messages.length === 0 && !studyRunning && nodeStates.length === 0 ? <div className="flex min-h-[200px] flex-col items-center justify-center text-center"><Bot className="mb-3 h-8 w-8 text-muted-foreground/50" /><p className="text-sm font-medium">输入一个学习任务，开始生成内容</p><p className="mt-1 text-xs text-muted-foreground">@ 引用路径节点，选择资源类型后发送即可。</p></div> : messages.map((message) => <MessageCard key={message.id} message={message} onExport={exportAsset} />)}
+            {studyRunning && <div className="flex items-center gap-2 text-xs text-muted-foreground"><span className="h-2 w-2 animate-pulse rounded-full bg-foreground" />正在按步骤处理，结果会逐条显示…</div>}
             {!studyRunning && finishedRunId && (
               <div className="flex items-center justify-between rounded-xl border bg-muted/20 px-3.5 py-2.5 text-xs">
-                <span className="text-muted-foreground">本次协同已结束</span>
+                <span className="text-muted-foreground">本次任务已结束</span>
                 <button type="button" onClick={() => {
                   try { window.localStorage.setItem("im-training-agent:validation-prefill", JSON.stringify({ runId: finishedRunId })); } catch { /* 忽略 */ }
                   onNavigate("validation");
@@ -424,17 +458,15 @@ export function LearningWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
                   {mentionOpen && <div className="absolute bottom-10 left-0 z-20 max-h-56 w-56 overflow-y-auto rounded-xl border bg-card p-1 shadow-lg">{path.nodes.map((node) => <button key={node.id} type="button" onClick={() => addMention(node)} className="w-full rounded-lg px-2.5 py-2 text-left text-xs hover:bg-muted">{node.title}</button>)}</div>}
                 </div>
                 <select value={resourceType} onChange={(event) => setResourceType(event.target.value as ResourceType)} className="h-8 min-w-0 rounded-lg border bg-background px-2 text-xs">{resourceOptions.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select>
-                <select aria-label="协同方式" value={preference} onChange={(event) => setPreference(event.target.value as "auto" | "custom")} className="h-8 min-w-0 rounded-lg border bg-background px-2 text-xs"><option value="auto">自动编排</option><option value="custom">指定角色</option></select>
               </div>
-              <button type="button" disabled={!draft.trim() || sending || studyRunning} onClick={() => void send()} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-foreground text-background disabled:cursor-not-allowed disabled:opacity-35" aria-label="发起协同"><Send className="h-4 w-4" /></button>
+              <button type="button" disabled={!draft.trim() || sending || studyRunning} onClick={() => void send()} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-foreground text-background disabled:cursor-not-allowed disabled:opacity-35" aria-label="开始任务"><Send className="h-4 w-4" /></button>
             </div>
-            {preference === "custom" && <div className="mt-2 flex flex-wrap gap-1.5 rounded-xl border bg-muted/25 p-2.5">{selectableAgents.map((agent) => <button key={agent.id} type="button" onClick={() => toggleAgent(agent.id)} className={`rounded-full border px-2.5 py-1 text-[11px] ${selectedAgents.includes(agent.id) ? "border-foreground bg-foreground text-background" : "text-muted-foreground hover:bg-muted"}`}>{agent.label}</button>)}</div>}
           </div>
         </div>
       </section>
 
       <div role="separator" aria-orientation="vertical" onMouseDown={() => setResizing("right")} className="w-1.5 shrink-0 cursor-col-resize bg-border/60 transition-colors hover:bg-foreground/30" />
-      <aside style={{ width: rightWidth }} className="flex shrink-0 flex-col bg-muted/15" aria-label="当前学习路径"><div className="flex shrink-0 items-center justify-between border-b bg-background px-4 py-3.5"><div className="flex items-center gap-2"><Network className="h-4 w-4" /><h2 className="text-sm font-semibold">学习路径</h2></div><span className="text-xs text-muted-foreground">{path.nodes.length} 个节点</span></div><div className="min-h-0 basis-[59%] p-3">{path.nodes.length ? <TreeCanvas graph={path} selectedNodeId={selectedNodeId} onSelect={(node) => setSelectedNodeId(node.id)} /> : <div className="flex h-full items-center justify-center rounded-xl border border-dashed text-xs text-muted-foreground">尚未建立学习路径</div>}</div><div className="min-h-0 basis-[41%] overflow-y-auto border-t bg-background p-4">{selectedNode ? <div><div className="flex items-start justify-between gap-3"><div><div className="text-[10px] text-muted-foreground">当前节点</div><h3 className="mt-1 text-sm font-semibold leading-5">{selectedNode.title}</h3></div><span className={`mt-1 h-2.5 w-2.5 shrink-0 rounded-full ${selectedNode.mastered ? "bg-emerald-600" : selectedNode.userStatus === "completed" ? "bg-blue-600" : selectedNode.userStatus === "learning" ? "bg-amber-500" : "bg-zinc-300"}`} /></div>{selectedNode.recommendation ? <div className="mt-3"><RecommendationBadge recommendation={selectedNode.recommendation} /></div> : null}<p className="mt-3 text-xs leading-5 text-muted-foreground">{selectedNode.description}</p><button type="button" onClick={() => addMention(selectedNode)} className="mt-3 inline-flex h-8 w-full items-center justify-center gap-1 rounded-lg border text-xs font-medium hover:bg-muted">@ 引用到输入</button><div className="mt-2 flex gap-2"><button type="button" onClick={() => void updateNode(selectedNode, { userStatus: selectedNode.userStatus === "completed" ? "learning" : "completed" })} className="inline-flex h-8 flex-1 items-center justify-center gap-1 rounded-lg border text-xs hover:bg-muted"><Check className="h-3.5 w-3.5" />{selectedNode.userStatus === "completed" ? "继续学习" : "学完"}</button><button type="button" onClick={() => void updateNode(selectedNode, { mastered: !selectedNode.mastered, userStatus: selectedNode.mastered ? selectedNode.userStatus : "completed" })} className="inline-flex h-8 flex-1 items-center justify-center gap-1 rounded-lg border text-xs hover:bg-muted">{selectedNode.mastered ? "取消掌握" : "掌握"}</button></div></div> : <div className="flex h-full items-center justify-center text-xs text-muted-foreground">选择一个节点</div>}</div></aside>
+      <aside style={{ width: rightWidth }} className="flex shrink-0 flex-col bg-muted/15" aria-label="当前学习路径"><div className="flex shrink-0 items-center justify-between border-b bg-background px-4 py-3.5"><div className="flex items-center gap-2"><Network className="h-4 w-4" /><h2 className="text-sm font-semibold">学习路径</h2></div><span className="text-xs text-muted-foreground">{path.nodes.length} 个节点</span></div><div className="min-h-0 basis-[59%] p-3">{path.nodes.length ? <TreeCanvas graph={path} selectedNodeId={selectedNodeId} onSelect={(node) => setSelectedNodeId(node.id)} /> : <div className="flex h-full items-center justify-center rounded-xl border border-dashed text-xs text-muted-foreground">尚未建立学习路径</div>}</div><div className="min-h-0 basis-[41%] overflow-y-auto border-t bg-background p-4">{selectedNode ? <div><div className="flex items-start justify-between gap-3"><div><div className="text-[10px] text-muted-foreground">当前节点</div><h3 className="mt-1 text-sm font-semibold leading-5">{selectedNode.title}</h3></div><span className={`mt-1 h-2.5 w-2.5 shrink-0 rounded-full ${selectedNode.mastered ? "bg-emerald-600" : selectedNode.userStatus === "completed" ? "bg-blue-600" : selectedNode.userStatus === "learning" ? "bg-amber-500" : "bg-zinc-300"}`} /></div>{selectedNode.recommendation ? <div className="mt-3"><RecommendationBadge recommendation={selectedNode.recommendation} /></div> : null}<p className="mt-3 text-xs leading-5 text-muted-foreground">{selectedNode.description}</p><button type="button" onClick={() => addMention(selectedNode)} className="mt-3 inline-flex h-8 w-full items-center justify-center gap-1 rounded-lg border text-xs font-medium hover:bg-muted">引用到问题</button><div className="mt-2 flex gap-2"><button type="button" onClick={() => void updateNode(selectedNode, { userStatus: selectedNode.userStatus === "completed" ? "learning" : "completed" })} className="inline-flex h-8 flex-1 items-center justify-center gap-1 rounded-lg border text-xs hover:bg-muted"><Check className="h-3.5 w-3.5" />{selectedNode.userStatus === "completed" ? "继续学习" : "学完"}</button><button type="button" onClick={() => void updateNode(selectedNode, { mastered: !selectedNode.mastered, userStatus: selectedNode.mastered ? selectedNode.userStatus : "completed" })} className="inline-flex h-8 flex-1 items-center justify-center gap-1 rounded-lg border text-xs hover:bg-muted">{selectedNode.mastered ? "取消掌握" : "掌握"}</button></div></div> : <div className="flex h-full items-center justify-center text-xs text-muted-foreground">选择一个节点</div>}</div></aside>
     </div>
 
     {profileOpen && <ProfileDialog apiBase={apiBase} user={user} onUserChange={onUserChange} onClose={() => setProfileOpen(false)} />}
@@ -442,19 +474,15 @@ export function LearningWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
   </main>;
 }
 
-function Metric({ label, value }: { label: string; value: string | number }) {
-  return <div className="rounded-lg bg-muted/60 p-2.5"><div className="text-[10px] text-muted-foreground">{label}</div><div className="mt-1 text-sm font-semibold">{value}</div></div>;
-}
-
-/** SSE 驱动的节点状态条：实时展示 DAG 各节点的执行/门禁状态（总规 §4.4） */
+/** 实时展示各处理步骤的公开进度；校验细节统一放到“验证”页。 */
 function RunProgressStrip({ states, summary, events, completed }: { states: Array<{ key: string; state: RunNodeState }>; summary: string; events: Array<{ id: string; type: string; nodeKey: string | null; summary: string }>; completed: boolean }) {
-  return <section aria-label="协同运行状态" className="rounded-xl border bg-muted/20 px-3.5 py-3">
-    <div className="flex items-center justify-between text-[10px] font-medium uppercase tracking-wide text-muted-foreground"><span>{completed ? "协同运行 · 已完成" : "协同运行"}</span><span>{states.filter((item) => item.state === "succeeded").length} 完成</span></div>
+  return <section aria-label="任务处理进度" className="rounded-xl border bg-muted/20 px-3.5 py-3">
+    <div className="flex items-center justify-between text-[10px] font-medium tracking-wide text-muted-foreground"><span>{completed ? "处理完成" : "处理中"}</span><span>完成 {states.filter((item) => item.state === "succeeded").length} 项</span></div>
     <div className="mt-2 flex flex-wrap gap-1.5">
       {states.map((item) => <span key={item.key} className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] ${item.state === "succeeded" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : item.state === "failed" ? "border-destructive/30 bg-destructive/10 text-destructive" : item.state === "revising" ? "border-amber-200 bg-amber-50 text-amber-700" : "border-border bg-background text-foreground"}`}><span className={`h-1.5 w-1.5 rounded-full ${item.state === "succeeded" ? "bg-emerald-600" : item.state === "failed" ? "bg-destructive" : item.state === "revising" ? "bg-amber-500" : "animate-pulse bg-foreground"}`} />{nodeLabels[item.key]?.name ?? item.key}</span>)}
     </div>
-    {summary && <p className="mt-2 line-clamp-2 text-[11px] leading-4 text-muted-foreground">{summary}</p>}
-    {events.length > 0 && <div className="mt-3 border-t pt-2 text-xs"><p className="mb-1.5 font-medium text-foreground">实时协同记录</p><div className="space-y-1.5">{events.map((event) => <div key={event.id} className="flex gap-2 leading-5 text-muted-foreground"><span className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${event.type === "node.failed" ? "bg-rose-500" : event.type === "node.succeeded" ? "bg-emerald-500" : "bg-sky-500"}`} /><span>{event.summary}</span></div>)}</div></div>}
+    {summary && <p className="mt-2 line-clamp-2 text-[11px] leading-4 text-muted-foreground">{readableProcessText(summary)}</p>}
+    {events.length > 0 && <div className="mt-3 border-t pt-2 text-xs"><p className="mb-1.5 font-medium text-foreground">处理记录</p><div className="space-y-1.5">{events.map((event) => <div key={event.id} className="flex gap-2 leading-5 text-muted-foreground"><span className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${event.type === "node.failed" ? "bg-rose-500" : event.type === "node.succeeded" ? "bg-emerald-500" : "bg-sky-500"}`} /><span>{readableProcessText(event.summary)}</span></div>)}</div></div>}
   </section>;
 }
 
@@ -466,16 +494,16 @@ function MessageCard({ message, onExport }: { message: StudyMessage; onExport: (
     return <article className="ml-auto max-w-[84%]"><div className="rounded-2xl rounded-tr-md bg-foreground px-4 py-3 text-sm leading-6 text-background"><MessageRichText text={message.content} invert /></div><div className="mt-1 text-right text-[10px] text-muted-foreground">{new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit" }).format(message.createdAt)}</div></article>;
   }
   if (kind === "asset" && asset) {
-    return <article className="max-w-[94%]"><div className="rounded-2xl rounded-tl-md border bg-muted/20 px-4 py-3"><div className="mb-2 flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground"><Download className="h-3.5 w-3.5" />资源产出</div><AssetCard asset={asset} onExport={onExport} /></div><div className="mt-1 text-[10px] text-muted-foreground">{new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit" }).format(message.createdAt)}</div></article>;
+    return <article className="max-w-[94%]"><div className="rounded-2xl rounded-tl-md border bg-muted/20 px-4 py-3"><div className="mb-2 flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground"><Download className="h-3.5 w-3.5" />已生成资源</div><AssetCard asset={asset} onExport={onExport} /></div><div className="mt-1 text-[10px] text-muted-foreground">{new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit" }).format(message.createdAt)}</div></article>;
   }
   const agentId = message.metadata.agentId;
-  const agentName = message.metadata.agentName ?? "协同总控 Agent";
+  const agentName = readableProcessText(message.metadata.agentName ?? "任务协调员");
   return <article className="max-w-[94%]">
     <div className="flex items-start gap-2.5">
       <span className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-semibold ${agentTone(agentId)}`}>{agentName.slice(0, 1)}</span>
       <div className="min-w-0 flex-1">
         <div className="text-[11px] font-medium text-muted-foreground">{agentName}</div>
-        <div className="mt-1 rounded-2xl rounded-tl-md border bg-card px-4 py-3 text-sm leading-6"><MessageRichText text={message.content} /></div>
+        <div className="mt-1 rounded-2xl rounded-tl-md border bg-card px-4 py-3 text-sm leading-6"><MessageRichText text={readableProcessText(message.content)} /></div>
       </div>
     </div>
     <div className="mt-1 pl-[42px] text-[10px] text-muted-foreground">{new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit" }).format(message.createdAt)}</div>
@@ -487,5 +515,5 @@ function MessageRichText({ text, invert = false }: { text: string; invert?: bool
 }
 
 function AssetCard({ asset, onExport }: { asset: StudyAsset; onExport: (asset: StudyAsset, format: "md" | "txt" | "json" | "ppt") => void }) {
-  return <div className="rounded-xl border bg-muted/25 p-3"><div className="flex items-start justify-between gap-3"><div><div className="text-[10px] text-muted-foreground">{resourceLabel(asset.type)}</div><div className="mt-1 text-xs font-semibold">{asset.title}</div></div><span className={`rounded-full px-2 py-1 text-[10px] ${asset.persisted ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>{asset.persisted ? "已入库" : "待复核"}</span></div>{asset.persisted && <div className="mt-3 flex gap-2"><button type="button" onClick={() => onExport(asset, "md")} className="h-7 rounded-lg border px-2.5 text-[11px] hover:bg-background">下载 MD</button>{asset.type === "presentation" && <button type="button" onClick={() => onExport(asset, "ppt")} className="h-7 rounded-lg border px-2.5 text-[11px] hover:bg-background">下载 PPT</button>}<button type="button" onClick={() => onExport(asset, "txt")} className="h-7 rounded-lg border px-2.5 text-[11px] hover:bg-background">TXT</button><button type="button" onClick={() => onExport(asset, "json")} className="h-7 rounded-lg border px-2.5 text-[11px] hover:bg-background">JSON</button></div>}</div>;
+  return <div className="rounded-xl border bg-muted/25 p-3"><div className="flex items-start justify-between gap-3"><div><div className="text-[10px] text-muted-foreground">{resourceLabel(asset.type)}</div><div className="mt-1 text-xs font-semibold">{asset.title}</div></div><span className={`rounded-full px-2 py-1 text-[10px] ${asset.persisted ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>{asset.persisted ? "已保存" : "等待检查"}</span></div>{asset.persisted && <div className="mt-3 flex gap-2"><button type="button" onClick={() => onExport(asset, "md")} className="h-7 rounded-lg border px-2.5 text-[11px] hover:bg-background">下载 Markdown</button>{asset.type === "presentation" && <button type="button" onClick={() => onExport(asset, "ppt")} className="h-7 rounded-lg border px-2.5 text-[11px] hover:bg-background">下载 PPT</button>}<button type="button" onClick={() => onExport(asset, "txt")} className="h-7 rounded-lg border px-2.5 text-[11px] hover:bg-background">下载文本</button><button type="button" onClick={() => onExport(asset, "json")} className="h-7 rounded-lg border px-2.5 text-[11px] hover:bg-background">下载数据</button></div>}</div>;
 }

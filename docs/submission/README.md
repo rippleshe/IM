@@ -11,7 +11,7 @@
 | 材料文档：演示视频（≤10 分钟） | 按 `演示视频脚本.md` 录制 |
 | 软件模块：源代码 | 仓库本身（提交时打包或开放评审权限） |
 | 软件模块：部署说明 | `部署说明.md` |
-| 软件模块：单元测试用例 | 仓库内 163 用例（`pnpm test`）；清单见 `单元测试说明.md` |
+| 软件模块：单元测试用例 | 仓库内 178 用例（`pnpm test`）；清单见 `单元测试说明.md` |
 | 测试数据：专业知识库切片 | 仓库内 `data/knowledge/`（616 切片）、`data/datasets/`（AI4I）、MetroPT-3（按部署说明拉取/已在演示机） |
 | 测试数据：≥2 组差异化画像数据包 | `data/exports/learner-{foundation,advanced,maintenance}-run-export.json`（三组，均通过 `pnpm verify:export` 八项校验；黄金标注在 `data/evaluation/`） |
 

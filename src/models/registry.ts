@@ -9,12 +9,20 @@ export class ModelRegistry {
   private providerModels: Map<string, Set<string>> = new Map();
 
   registerProvider(provider: ProviderConfig): void {
+    const previous = this.providerCredentials.get(provider.id);
     this.providers.set(provider.id, provider);
     this.providerCredentials.set(provider.id, {
       apiKey: provider.apiKey,
       baseURL: provider.baseURL,
       headers: provider.headers,
     });
+    if (previous && (
+      previous.apiKey !== provider.apiKey
+      || previous.baseURL !== provider.baseURL
+      || JSON.stringify(previous.headers ?? {}) !== JSON.stringify(provider.headers ?? {})
+    )) {
+      this.providerClients.delete(provider.id);
+    }
     if (provider.apiKey) {
       this.ensureClient(provider);
     }

@@ -35,7 +35,7 @@ export function classifyClaimText(text: string): ClaimType {
 export function claimLogicalKey(text: string): string {
   const normalized = text
     .toLowerCase()
-    .replace(/[\s，。；：、,.:;!?！？'"'（）()【】\[\]{}<>《》—\-\\|/]/g, '')
+    .replace(/[\s，。；：、,.:;!?！？'"'（）()【】[\]{}<>《》—\-\\|/]/g, '')
     .replace(/[。．]/g, '');
   return normalized.slice(0, 96);
 }

@@ -43,6 +43,12 @@ const VERDICT_LABELS: Record<AnswerOutcome["evaluation"]["verdict"], string> = {
   incorrect: "还不充分",
 };
 
+function confidenceText(value: number): string {
+  if (value >= 0.8) return "较高";
+  if (value >= 0.5) return "中等";
+  return "还需要更多回答";
+}
+
 /** 苏格拉底启发式追问弹窗（总规 §7.4）：每轮一个问题，最多 5 轮，回答驱动 BKT 更新。 */
 export function GuidanceDialog({ apiBase, pathNodeId, user, onClose, onGenerateResource }: GuidanceDialogProps) {
   const [session, setSession] = useState<SessionView | null>(null);
@@ -65,7 +71,7 @@ export function GuidanceDialog({ apiBase, pathNodeId, user, onClose, onGenerateR
         const data = await response.json() as { success?: boolean; error?: string } & Partial<SessionView>;
         if (!active) return;
         if (!response.ok || !data.success || !data.sessionId) {
-          setError(data.error || "追问会话创建失败");
+          setError(data.error || "学习追问创建失败");
           return;
         }
         setSession({
@@ -78,7 +84,7 @@ export function GuidanceDialog({ apiBase, pathNodeId, user, onClose, onGenerateR
           decision: null,
         });
       } catch {
-        if (active) setError("追问会话创建失败，请稍后重试");
+        if (active) setError("学习追问创建失败，请稍后重试");
       } finally {
         if (active) setLoading(false);
       }
@@ -127,16 +133,16 @@ export function GuidanceDialog({ apiBase, pathNodeId, user, onClose, onGenerateR
   const decisionType = finished ? String(finished["type"] ?? "") : "";
   const suggestedType = decisionType === "generate_resource" ? "challenge_task" as const : "lecture" as const;
 
-  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/25 p-6" role="dialog" aria-modal="true" aria-label="启发式追问">
+  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/25 p-6" role="dialog" aria-modal="true" aria-label="学习追问">
     <section className="flex h-[min(680px,calc(100vh-4rem))] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border bg-card shadow-2xl">
       <header className="flex shrink-0 items-center justify-between border-b px-6 py-4">
-        <div className="flex items-center gap-2 text-sm font-semibold"><Lightbulb className="h-4 w-4" />启发式追问{session?.label ? ` · ${session.label}` : ""}</div>
+        <div className="flex items-center gap-2 text-sm font-semibold"><Lightbulb className="h-4 w-4" />一步步想清楚{session?.label ? ` · ${session.label}` : ""}</div>
         <button type="button" onClick={onClose} className="rounded-md px-2.5 py-1.5 text-sm text-muted-foreground hover:bg-muted"><X className="h-4 w-4" /></button>
       </header>
 
       <div ref={feedRef} className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
         {loading ? (
-          <div className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />正在准备追问…</div>
+          <div className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />正在准备问题…</div>
         ) : error && !session ? (
           <div className="flex h-full items-center justify-center text-sm text-destructive">{error}</div>
         ) : (
@@ -147,7 +153,7 @@ export function GuidanceDialog({ apiBase, pathNodeId, user, onClose, onGenerateR
               <div className="rounded-xl border bg-background px-3.5 py-2.5 text-xs">
                 <span className={`mr-2 inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ${turn.verdict === "correct" ? "bg-emerald-100 text-emerald-700" : turn.verdict === "partial" ? "bg-amber-100 text-amber-700" : "bg-rose-100 text-rose-700"}`}>{VERDICT_LABELS[turn.verdict]}</span>
                 <span className="leading-5 text-muted-foreground">{turn.comment}</span>
-                <span className="ml-2 text-[10px] text-muted-foreground">置信度 → {Math.round(turn.confidenceAfter * 100)}%</span>
+                <span className="ml-2 text-[10px] text-muted-foreground">判断把握度：{confidenceText(turn.confidenceAfter)}</span>
               </div>
             </div>)}
 
@@ -161,7 +167,7 @@ export function GuidanceDialog({ apiBase, pathNodeId, user, onClose, onGenerateR
             {finished ? (
               <div className="rounded-xl border border-emerald-200 bg-emerald-50/50 p-4 text-xs">
                 <p className="font-semibold">{decisionType === "generate_resource" ? "追问完成：可以进阶了" : "追问完成：建议补强"}</p>
-                <p className="mt-1.5 leading-5 text-muted-foreground">{String(finished["reason"] ?? "")}</p>
+                <p className="mt-1.5 leading-5 text-muted-foreground">我们已经根据这次回答安排了下一步学习，你可以继续学习或尝试新的挑战。</p>
                 <button type="button" onClick={() => onGenerateResource(String(finished!["knowledgePointId"] ?? session?.knowledgePointId ?? ""), suggestedType)} className="mt-3 inline-flex h-9 items-center gap-1.5 rounded-lg border border-foreground/25 bg-background px-3.5 text-xs font-medium hover:bg-muted">
                   按这个知识点生成{suggestedType === "challenge_task" ? "挑战任务" : "补强讲义"} <ArrowRight className="h-3.5 w-3.5" />
                 </button>

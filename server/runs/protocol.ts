@@ -18,7 +18,7 @@ export const LEARNING_AGENT_ROLES = [
 
 export type LearningAgentId = (typeof LEARNING_AGENT_ROLES)[number];
 
-/** 不可跳过的门禁节点：审核（Claim 裁决/反方质询/证据裁决）与隐私合规 */
+/** 不可跳过的检查节点：内容检查、疑点复核、证据判断与隐私保护 */
 export const MANDATORY_NODE_KEYS = [
   'audit.claims',
   'debate.challenge',
@@ -48,6 +48,11 @@ export interface TemporaryReference {
   content: string;
 }
 
+export interface StudyConversationTurn {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
 export interface StudyRunRequest {
   task: string;
   pathNodeId: string | null;
@@ -56,6 +61,8 @@ export interface StudyRunRequest {
   /** custom 模式的真实约束；门禁角色不受其影响 */
   selectedAgentIds: LearningAgentId[];
   temporaryReference?: TemporaryReference | null;
+  /** 运行创建时的对话快照；用于保持跨轮任务意图，不写入公开产物。 */
+  conversationContext?: StudyConversationTurn[];
   /** 反馈驱动的来源决策（升级计划 里程碑 E：反馈→决策→下一运行链） */
   sourceDecisionId?: string | null;
 }
@@ -132,20 +139,20 @@ export const NODE_TITLES: Record<RunNodeKey, string> = {
   'retrieve.document': '文档证据检索',
   'analyze.domain': '领域分析',
   'generate.resource': '资源生成',
-  'audit.claims': 'Claim 逐条审核',
-  'debate.challenge': '反方质询',
-  'adjudicate.verdict': '证据裁决',
+  'audit.claims': '逐条检查内容',
+  'debate.challenge': '复核疑点',
+  'adjudicate.verdict': '判断证据是否足够',
   'privacy.compliance': '隐私合规',
   'finalize.publish': '发布收尾',
 };
 
 export const ROLE_LABELS: Record<LearningAgentId, string> = {
-  learning_planning: '学情与路径智能体',
-  evidence_retrieval: '知识检索智能体',
-  domain_expert: '领域诊断智能体',
-  resource_generation: '资源生成智能体',
-  cross_validation: '交叉验证与审核智能体',
-  privacy_compliance: '合规与隐私智能体',
+  learning_planning: '学习规划助手',
+  evidence_retrieval: '资料检索助手',
+  domain_expert: '专业分析助手',
+  resource_generation: '学习材料助手',
+  cross_validation: '内容检查助手',
+  privacy_compliance: '隐私保护助手',
 };
 
 /** SSE 帧编码：id=seq 供 Last-Event-ID 续传（总规 §4.4） */

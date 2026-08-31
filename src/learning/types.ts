@@ -156,3 +156,17 @@ export interface DatasetSummary {
   lastTimestamp: string | null;
   fieldCount: number;
 }
+
+export interface CsvDatasetSource {
+  id: string;
+  name: string;
+  /** 项目内的 CSV 文件路径（相对仓库根或绝对路径）。 */
+  csvPath: string;
+  /** 证据定位里展示的来源路径。 */
+  sourcePath: string;
+  license: string;
+  /** 字段中文说明；未给出的字段自动写成“数据字段”。 */
+  fieldMeanings?: Record<string, string>;
+  /** 作为故障/结果标签的字段，检索时会优先抽取正样本作为代表性数据。 */
+  labelFields?: string[];
+}

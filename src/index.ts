@@ -117,8 +117,6 @@ export { parallel, pipeline } from './workflow/pipeline.js';
 export * from './models/index.js';
 
 export * from './learning/types.js';
-export { EvidenceService, seedMetroCatalog } from './learning/evidence.js';
-export { LearningStore } from './learning/store.js';
+export { computeNodeRecommendation, extractQuizQuestions, normalizeKnowledgePointId, normalizeResourceDocument } from './learning/store.js';
+export { crossValidate, normalizeSearchTerms } from './learning/evidence-rules.js';
 export { buildResourceDraft } from './learning/resource-builder.js';
-export { importMetroPt3Csv, getMetroSummary, queryMetroReadings } from './learning/metropt3.js';
-export { openSqlite, getLearningDatabasePath, getDatasetDatabasePath, initializeDatasetDatabase, initializeLearningDatabase } from './learning/sqlite.js';

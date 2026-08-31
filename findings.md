@@ -4,6 +4,21 @@
 
 > 只保留仍然有效的结论与约定，历史推演过程见 Git 历史。改动架构级设计时才更新本文件。
 
+## 模型能力与资源质量决策（2026-08-30）
+
+- 模型的上下文窗口和最大输出属于运行时能力，不再作为用户手工配置项，也不在普通设置界面展示。
+- 新增服务商或切换模型时，优先调用其 OpenAI 兼容 `models` 接口同步模型目录，并解析常见能力元数据；接口未返回限制时保留已缓存能力，最终使用内部安全预算，不把某一家模型的参数套给所有服务商。
+- 当前 OpenCode Go 的 `models` 响应只返回模型身份信息，没有上下文或输出上限字段，因此“实时读取”必须设计成元数据优先、缓存与安全预算兜底，而不是假装标准接口必然提供所有能力。
+- 生成型智能体统一使用角色、目标、输入语义、输出契约、证据纪律和质量自检结构；讲义必须经过教学结构质量门槛，不达标时由模型完整返修一次。
+- 资源生成输入必须包含用户原始任务、当前路径节点、学情分析和难度校准；只传写作要求与证据会丢失教学目标，是当前内容泛化和混乱的主要原因之一。
+
+## 数据源收敛决策（2026-08-31）
+
+- 比赛与日常主线统一使用 PostgreSQL 16 + pgvector，Redis 负责队列、锁和运行事件分发。
+- PostgreSQL 已实测承载 MetroPT-3 全量数据，因此删除 SQLite 运行分支、存储实现、迁移脚本与本地数据库文件，避免两套业务语义长期漂移。
+- 保留 PostgreSQL 的 schema 迁移、数据引导和导出能力；知识卡、AI4I、MetroPT-3 的导入均走 `server/db/pg-evidence.ts`。
+- 与学习领域无关的资料示例中出现的 `database.sqlite` 文本不属于项目 SQLite 依赖，不处理。
+
 ## 0. 下一阶段架构决策（2026-08-29）
 
 - 下一阶段不重做现有工程底座，核心从“能运行的多 Agent DAG”升级为“可解释、可复核、可回放、可对照的可信协同方法”。执行总计划见 `docs/挑战杯多智能体可信协同升级计划.md`。
@@ -25,12 +40,12 @@
 
 ## 2. 架构级决策（已落地）
 
-- **数据分层**：`learning.sqlite` 存用户/路径/资产/作答/证据/画像（20 张表）；`datasets.sqlite` 存数据集字段字典、`metro_readings` 时序、`dataset_rows` 通用表格行、`document_chunks` + FTS5 文档索引。
+- **数据分层**：PostgreSQL 统一存用户/路径/资产/作答/证据/画像、数据集字段字典、`metro_readings` 时序、`dataset_rows` 通用表格行和 `document_chunks`（全文 + pgvector）。
 - **审核门禁**：资源发布固定走 `buildEvidencePack → buildResourceDraft → auditResource → resolveResourcePublication`；`corroborated` 才入库，否则不落库。Claim 逐条核对证据绑定与数字一致性；代码块与数据表格不作为事实声明审核。
 - **路径节点建议**：`computeNodeRecommendation` 纯函数（补强/保持节奏/可进阶/暂无记录），从 `learner_skill_states` + 讲义掌握反馈确定性推导，理由带真实数字；节点 `user_status` 只能由用户手动设置。
 - **知识点贯通**：资源绑定当前路径节点的 `knowledgePointId`（`buildResourceDraft` 第 5 参），作答技能状态因此能对应到节点。
 - **账号隔离**：learnerId 一律来自 Cookie 会话；按账号隔离路径/资产/作答/笔记。
-- **证据规则**：结构化查询（SQL 抽样代表性数据行）+ 文档检索（FTS5，bm25 排序）合并为 EvidencePack；用户上传文件仅作会话级临时参考，不写库、不改画像。
+- **证据规则**：结构化查询（SQL 抽样代表性数据行）+ PostgreSQL 全文/向量混合检索合并为 EvidencePack；用户上传文件仅作会话级临时参考，不写库、不改画像。
 - **服务边界**：学习产品与设置 API 统一使用 Cookie 登录；证据列表按 learnerId 隔离。旧通用 `/api/sessions/*`、通用聊天、任务澄清和 WebSocket 服务已移除，通用多智能体能力只作为内部库保留。
 - **MetroPT-3 数据准备**：仓库不提交 208 MB 原始 CSV；`pnpm data:metropt` 从 UCI 官方地址下载并校验，后端发现 CSV 后自动导入 `metro_readings`。未安装完整数据时仍可使用 AI4I、MetroPT-3 字段说明和故障窗口文档。
 
@@ -39,9 +54,9 @@
 目标是“换数据不换架构”，垂直领域可整体替换：
 
 1. **知识文档**：往 `data/knowledge/*.md` 放带极简 frontmatter（id/title/source/locator/dataset）的卡片，服务启动自动入库参与 FTS 检索，删掉即失效。已有 14 张卡（Python/pandas/清洗/时序/统计/可视化/AI4I 字段与故障机理/证据边界/阈值法）。
-2. **表格数据集**：`src/learning/tabular.ts` 的 `importCsvDataset`（声明式来源 + SHA256 校验和，文件没变跳过、换了自动重导入），行进 `dataset_rows`，字段进 `dataset_fields`（labelFields 标故障标签列）。
+2. **表格数据集**：`server/db/pg-evidence.ts` 的 `importCsvDatasetPg`（声明式来源 + SHA256 校验和，文件没变跳过、换了自动重导入），行进 `dataset_rows`，字段进 `dataset_fields`（labelFields 标故障标签列）。
 3. **代表性证据**：`sampleDatasetRows` 按标签抽故障正样本 + 正常行，作为结构化证据进入每个 EvidencePack；讲义“数据摘录”表格按主题关键词选数据集（pandas/AI4I 主题 → AI4I 行；压缩机主题 → MetroPT-3 行）。
-4. **新增一个垂直领域 = 一份 CSV + 一组知识卡 + 一条 importCsvDataset 配置 + 一份路径生成提示词**，前端和编排完全复用。
+4. **新增一个垂直领域 = 一份 CSV + 一组知识卡 + 一条 `importCsvDatasetPg` 配置 + 一份路径生成提示词**，前端和编排完全复用。
 
 ## 4. 讲义模板（已落地）
 

@@ -8,6 +8,7 @@ import 'dotenv/config';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import OpenAI from 'openai';
 
 import {
   ModelRegistry,
@@ -15,7 +16,7 @@ import {
   createDefaultModelProvidersConfig,
   loadModelProvidersConfig,
 } from '../src/models/index.js';
-import type { ModelProvidersConfig } from '../src/models/config.js';
+import type { ModelConfig, ModelProvidersConfig, ProviderConfig } from '../src/models/config.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -144,10 +145,16 @@ export const multiModelClient = new MultiModelClient({
 });
 
 export function getPrimaryModelRuntime() {
-  const provider = modelRegistry.getDefaultProvider();
-  const model = provider
+  // 工作台默认模型优先于基础配置的 isDefault，避免本地运行时选择已切换模型后仍回退到 DashScope。
+  const configuredModel = runtimeWorkbenchSettings.defaultModelId
+    ? modelRegistry.getModel(runtimeWorkbenchSettings.defaultModelId)
+    : undefined;
+  const provider = configuredModel
+    ? modelRegistry.getProvider(configuredModel.provider)
+    : modelRegistry.getDefaultProvider();
+  const model = configuredModel ?? (provider
     ? modelRegistry.listModels(provider.id)[0]
-    : modelRegistry.listModels()[0];
+    : modelRegistry.listModels()[0]);
 
   return {
     provider: provider?.id ?? 'dashscope',
@@ -173,6 +180,116 @@ export function getRequestedModel(value: unknown): string | undefined {
   return model && modelRegistry.hasModel(model) ? model : undefined;
 }
 
+export type DiscoveredProviderModel = {
+  id: string;
+  displayName: string;
+  contextWindow?: number;
+  maxOutputTokens?: number;
+};
+
+const capabilityRefreshAt = new Map<string, number>();
+const CAPABILITY_REFRESH_TTL_MS = 15 * 60 * 1_000;
+
+function readPositiveInteger(source: Record<string, unknown>, paths: string[]): number | undefined {
+  for (const pathKey of paths) {
+    let current: unknown = source;
+    for (const segment of pathKey.split('.')) {
+      current = current && typeof current === 'object'
+        ? (current as Record<string, unknown>)[segment]
+        : undefined;
+    }
+    const value = typeof current === 'string' ? Number(current) : current;
+    if (typeof value === 'number' && Number.isFinite(value) && value > 0) return Math.floor(value);
+  }
+  return undefined;
+}
+
+/**
+ * OpenAI 兼容服务的 /models 没有统一的能力字段；这里兼容常见供应商扩展。
+ * 没返回的能力保持 unknown，由已有缓存与内部安全预算兜底。
+ */
+function normalizeDiscoveredModel(raw: unknown): DiscoveredProviderModel | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const source = raw as Record<string, unknown>;
+  const id = typeof source['id'] === 'string' ? source['id'].trim() : '';
+  if (!id) return null;
+  const name = [source['display_name'], source['displayName'], source['name']]
+    .find((value) => typeof value === 'string' && value.trim()) as string | undefined;
+  const contextWindow = readPositiveInteger(source, [
+    'context_window', 'contextWindow', 'context_length', 'contextLength',
+    'max_context_length', 'maxContextLength', 'max_model_len', 'input_token_limit',
+    'max_input_tokens', 'limits.context', 'limits.context_window', 'limits.contextWindow',
+    'capabilities.context_window', 'capabilities.contextWindow', 'metadata.context_window',
+    'metadata.context_length', 'architecture.context_length',
+  ]);
+  const maxOutputTokens = readPositiveInteger(source, [
+    'max_output_tokens', 'maxOutputTokens', 'output_token_limit', 'max_completion_tokens',
+    'limits.output', 'limits.max_output_tokens', 'limits.maxOutputTokens',
+    'capabilities.max_output_tokens', 'capabilities.maxOutputTokens',
+    'metadata.max_output_tokens',
+  ]);
+  return {
+    id,
+    displayName: name?.trim() || id,
+    ...(contextWindow ? { contextWindow } : {}),
+    ...(maxOutputTokens ? { maxOutputTokens } : {}),
+  };
+}
+
+export async function discoverProviderModels(provider: Pick<ProviderConfig, 'baseURL' | 'apiKey' | 'headers'>): Promise<DiscoveredProviderModel[]> {
+  const client = new OpenAI({ apiKey: provider.apiKey, baseURL: provider.baseURL, defaultHeaders: provider.headers });
+  const page = await withTimeout(client.models.list(), 15_000, '模型目录读取超时');
+  return page.data
+    .map((model) => normalizeDiscoveredModel(model))
+    .filter((model): model is DiscoveredProviderModel => Boolean(model))
+    .sort((left, right) => left.displayName.localeCompare(right.displayName, 'zh-CN'));
+}
+
+function persistDiscoveredCapabilities(modelId: string, discovered: DiscoveredProviderModel): void {
+  const current = modelRegistry.getModel(modelId);
+  if (!current || (!discovered.contextWindow && !discovered.maxOutputTokens)) return;
+  const updated: ModelConfig = {
+    ...current,
+    ...(discovered.contextWindow ? { contextWindow: discovered.contextWindow } : {}),
+    ...(discovered.maxOutputTokens ? { maxOutputTokens: discovered.maxOutputTokens } : {}),
+  };
+  modelRegistry.registerModel(updated);
+  const runtimeIndex = runtimeModelConfig.models.findIndex((model) => model.id === modelId);
+  if (runtimeIndex >= 0) {
+    runtimeModelConfig.models[runtimeIndex] = updated;
+    saveRuntimeModelConfig();
+  }
+}
+
+/** 模型被选择或开始任务时刷新能力；短 TTL 防止每条消息都请求服务商。 */
+export async function refreshModelCapabilities(modelId: string | undefined, force = false): Promise<{ contextWindow: number; maxOutputTokens: number }> {
+  if (!modelId) return getModelLimits(modelId);
+  const lastRefresh = capabilityRefreshAt.get(modelId) ?? 0;
+  if (!force && Date.now() - lastRefresh < CAPABILITY_REFRESH_TTL_MS) return getModelLimits(modelId);
+  const model = modelRegistry.getModel(modelId);
+  const provider = model ? modelRegistry.getProvider(model.provider) : undefined;
+  if (!model || !provider?.apiKey) return getModelLimits(modelId);
+  try {
+    const models = await discoverProviderModels(provider);
+    const discovered = models.find((item) => item.id === modelId);
+    if (discovered) persistDiscoveredCapabilities(modelId, discovered);
+  } catch {
+    // 部分兼容服务不实现 /models；不影响已配置模型调用，继续使用缓存与安全预算。
+  } finally {
+    capabilityRefreshAt.set(modelId, Date.now());
+  }
+  return getModelLimits(modelId);
+}
+
+/** 由实际选中的模型能力缓存声明上下文预算；未知时使用内部安全预算。 */
+export function getModelLimits(modelId: string | undefined): { contextWindow: number; maxOutputTokens: number } {
+  const model = modelId ? modelRegistry.getModel(modelId) : undefined;
+  return {
+    contextWindow: Math.max(1, model?.contextWindow ?? 128_000),
+    maxOutputTokens: Math.max(1, model?.maxOutputTokens ?? 8_192),
+  };
+}
+
 export function getAgentExecutionSettings(agentId: string, requestedModel: string | undefined, requestedDepth: unknown) {
   const route = (LEARNING_AGENT_IDS as readonly string[]).includes(agentId)
     ? runtimeWorkbenchSettings.agentRouting[agentId as LearningAgentId]
@@ -190,7 +307,7 @@ export function getAgentExecutionSettings(agentId: string, requestedModel: strin
 export function getSettingsPayload() {
   const config = mergeModelConfig();
   const providerMap = new Map(config.providers.map((provider) => [provider.id, provider]));
-  const storageKind = process.env['IM_TRAINING_AGENT_DATA_SOURCE'] === 'sqlite' || !process.env['DATABASE_URL'] ? 'sqlite' : 'postgres';
+  const storageKind = 'postgres' as const;
   const primary = getPrimaryModelRuntime();
   const activeModel = getRequestedModel(runtimeWorkbenchSettings.defaultModelId) ?? primary.model;
   return {
@@ -214,13 +331,13 @@ export function getSettingsPayload() {
         displayName: model.displayName,
         provider: model.provider,
         providerDisplayName: providerMap.get(model.provider)?.displayName ?? model.provider,
-    })),
+      })),
     agentRouting: runtimeWorkbenchSettings.agentRouting,
     privacy: {
       uploadPolicy: 'session_only' as const,
       uploadContentRetained: false as const,
       learnerDataScope: storageKind,
-      dataSource: storageKind === 'postgres' ? 'PostgreSQL' : 'SQLite',
+      dataSource: 'PostgreSQL 16 + pgvector',
     },
   };
 }

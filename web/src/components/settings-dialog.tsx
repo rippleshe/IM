@@ -23,23 +23,30 @@ type PrivacyEvent = {
 };
 
 type DataPrivacyOverview = {
-  source: { kind: "postgres" | "sqlite"; label: string; detail: string };
+  source: { kind: "postgres"; label: string; detail: string };
   records: { assets: number; pathNodes: number; studyMessages: number; resourceQaMessages: number; evidenceItems: number; auditEvents: number; profileEvidence: number };
   retention: { temporaryReference: string; sharedKnowledge: string; audit: string };
 };
 
 const agentLabels: Array<[string, string, string | null]> = [
   ["learning_planning", "学情与路径", null],
-  ["evidence_retrieval", "知识检索", "结构化 + 文档双实例"],
+  ["evidence_retrieval", "知识检索", "同时检索数据和资料"],
   ["domain_expert", "领域诊断", null],
   ["resource_generation", "资源生成", null],
-  ["cross_validation", "交叉验证", "发布前固定关卡，不可关闭"],
-  ["privacy_compliance", "合规与隐私", "发布前固定关卡，不可关闭"],
+  ["cross_validation", "交叉检查", "发布前固定检查，不可关闭"],
+  ["privacy_compliance", "合规与隐私", "发布前固定检查，不可关闭"],
 ];
 
 const privacyEventLabels: Record<string, string> = {
   temporary_reference_used: "临时参考已使用（原文未保存）",
 };
+
+function readableError(reason: unknown, fallback: string) {
+  if (reason instanceof TypeError && /fetch/i.test(reason.message)) {
+    return "无法连接到应用服务，请确认服务已启动后重试。";
+  }
+  return reason instanceof Error && reason.message.trim() ? reason.message : fallback;
+}
 
 function PrivacyPanel({ apiBase }: { apiBase: string }) {
   const [overview, setOverview] = useState<DataPrivacyOverview | null>(null);
@@ -86,10 +93,10 @@ function PrivacyPanel({ apiBase }: { apiBase: string }) {
       <button type="button" disabled={exporting} onClick={exportData} className="mt-3 h-9 w-full rounded-lg border text-xs font-medium hover:bg-muted disabled:opacity-50">{exporting ? "正在导出" : "导出我的学习数据"}</button>
     </section>
     <section className="divide-y rounded-xl border bg-background text-xs">
-      <div className="flex items-center justify-between gap-4 px-4 py-3"><span>学习与画像</span><span className="text-right text-muted-foreground">画像、路径、作答、资源与问答记录</span></div>
+      <div className="flex items-center justify-between gap-4 px-4 py-3"><span>学习情况</span><span className="text-right text-muted-foreground">学习路径、作答、资源与问答记录</span></div>
       <div className="flex items-center justify-between gap-4 px-4 py-3"><span>临时参考资料</span><span className="text-right text-emerald-700">任务结束即丢弃原文</span></div>
       <div className="flex items-center justify-between gap-4 px-4 py-3"><span>公共知识库</span><span className="text-right text-muted-foreground">只读，不写入个人资料</span></div>
-      <div className="flex items-center justify-between gap-4 px-4 py-3"><span className="flex items-center gap-1.5"><Lock className="h-3 w-3" />审核与隐私门禁</span><span className="text-right text-muted-foreground">系统固定保护</span></div>
+      <div className="flex items-center justify-between gap-4 px-4 py-3"><span className="flex items-center gap-1.5"><Lock className="h-3 w-3" />审核与隐私保护</span><span className="text-right text-muted-foreground">系统固定保护</span></div>
     </section>
     <section className="rounded-xl border bg-background">
       <div className="flex items-center justify-between border-b px-4 py-3"><span className="text-xs font-medium">隐私审计记录 · {overview?.records.auditEvents ?? 0}</span><button type="button" disabled={clearing || !events?.length} onClick={() => void clear()} className="rounded-md border px-2.5 py-1.5 text-[11px] text-muted-foreground hover:bg-muted disabled:opacity-40">{clearing ? "清除中" : "清除记录"}</button></div>
@@ -104,16 +111,23 @@ export function SettingsDialog({ apiBase, onClose }: { apiBase: string; onClose:
   const [error, setError] = useState("");
   const [providerOpen, setProviderOpen] = useState(false);
   const [providerForm, setProviderForm] = useState({ id: "", displayName: "", baseURL: "", apiKey: "", modelId: "", modelDisplayName: "" });
+  const [providerModels, setProviderModels] = useState<Array<{ id: string; displayName: string }>>([]);
+  const [discoveringModels, setDiscoveringModels] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [loadingSettings, setLoadingSettings] = useState(true);
+  const [connection, setConnection] = useState<{ state: "idle" | "testing" | "connected" | "failed"; text: string }>({ state: "idle", text: "" });
 
   const loadSettings = useCallback(async () => {
+    setLoadingSettings(true);
     try {
       const response = await fetch(`${apiBase}/api/settings`, { credentials: "include" });
       const data = await response.json() as RuntimeSettings & { success?: boolean };
       if (!response.ok || !data.success) throw new Error("设置读取失败");
       setSettings(data);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "设置读取失败");
+      setError(readableError(reason, "设置读取失败"));
+    } finally {
+      setLoadingSettings(false);
     }
   }, [apiBase]);
 
@@ -131,7 +145,7 @@ export function SettingsDialog({ apiBase, onClose }: { apiBase: string; onClose:
       if (!response.ok || !data.success) throw new Error(data.error || "默认设置保存失败");
       setSettings(data);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "默认设置保存失败");
+      setError(readableError(reason, "默认设置保存失败"));
       await loadSettings();
     } finally { setSaving(false); }
   };
@@ -146,8 +160,32 @@ export function SettingsDialog({ apiBase, onClose }: { apiBase: string; onClose:
       setSettings(data);
       setProviderOpen(false);
       setProviderForm({ id: "", displayName: "", baseURL: "", apiKey: "", modelId: "", modelDisplayName: "" });
-    } catch (reason) { setError(reason instanceof Error ? reason.message : "模型服务保存失败"); }
+      setProviderModels([]);
+    } catch (reason) { setError(readableError(reason, "模型服务保存失败")); }
     finally { setSaving(false); }
+  };
+
+  const discoverModels = async () => {
+    setDiscoveringModels(true);
+    setError("");
+    try {
+      const response = await fetch(`${apiBase}/api/settings/provider-models`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: providerForm.id, baseURL: providerForm.baseURL, apiKey: providerForm.apiKey }),
+      });
+      const data = await response.json() as { success?: boolean; error?: string; models?: Array<{ id: string; displayName: string }> };
+      if (!response.ok || !data.success) throw new Error(data.error || "模型目录读取失败");
+      const models = data.models ?? [];
+      setProviderModels(models);
+      if (models.length === 0) throw new Error("服务商没有返回可用模型，可直接填写模型 ID");
+      const selected = models.find((model) => model.id === providerForm.modelId) ?? models[0]!;
+      setProviderForm((form) => ({ ...form, modelId: selected.id, modelDisplayName: selected.displayName }));
+    } catch (reason) {
+      setProviderModels([]);
+      setError(readableError(reason, "模型目录读取失败"));
+    } finally { setDiscoveringModels(false); }
   };
 
   const saveAgentRoute = async (agentId: string, patch: Partial<AgentRoute>) => {
@@ -158,40 +196,52 @@ export function SettingsDialog({ apiBase, onClose }: { apiBase: string; onClose:
     try {
       const response = await fetch(`${apiBase}/api/settings/agent-routing`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ agentRouting }) });
       const data = await response.json() as RuntimeSettings & { success?: boolean; error?: string };
-      if (!response.ok || !data.success) throw new Error(data.error || "协同设置保存失败");
+      if (!response.ok || !data.success) throw new Error(data.error || "任务分工保存失败");
       setSettings(data);
-    } catch (reason) { setError(reason instanceof Error ? reason.message : "协同设置保存失败"); await loadSettings(); }
+    } catch (reason) { setError(readableError(reason, "任务分工保存失败")); await loadSettings(); }
     finally { setSaving(false); }
   };
 
-  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/25 p-6" role="dialog" aria-modal="true" aria-label="设置">
-    <section className="flex max-h-[calc(100vh-4rem)] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border bg-card shadow-2xl">
-      <header className="flex shrink-0 items-center justify-between border-b px-7 py-5"><h2 className="flex items-center gap-2 text-base font-semibold"><Settings className="h-4.5 w-4.5" />设置</h2><button type="button" onClick={onClose} className="rounded-md px-3 py-1.5 text-sm text-muted-foreground hover:bg-muted">关闭</button></header>
-      <div className="min-h-0 flex-1 overflow-y-auto px-7 py-5">
-      <div className="mt-4 grid grid-cols-3 rounded-lg bg-muted/70 p-1 text-xs">{([["models", "模型服务"], ["agents", "协同编排"], ["privacy", "数据与隐私"]] as const).map(([key, label]) => <button key={key} type="button" onClick={() => { setTab(key); setError(""); }} className={`rounded-md px-2 py-2 ${tab === key ? "bg-background font-medium shadow-sm" : "text-muted-foreground hover:text-foreground"}`}>{label}</button>)}</div>
-      {error && <div className="mt-3 rounded-lg border border-destructive/25 bg-destructive/5 px-3 py-2 text-xs text-destructive">{error}</div>}
+  const testConnection = async () => {
+    setConnection({ state: "testing", text: "正在发送真实模型请求…" });
+    try {
+      const response = await fetch(`${apiBase}/api/settings/model-connection`, { method: "POST", credentials: "include" });
+      const data = await response.json() as { success?: boolean; error?: string; provider?: string; model?: string };
+      if (!response.ok || !data.success) throw new Error(data.error || "模型连接失败");
+      setConnection({ state: "connected", text: `已验证：${data.provider} / ${data.model}，模型能力已自动适配` });
+    } catch (reason) { setConnection({ state: "failed", text: readableError(reason, "模型连接失败") }); }
+  };
+
+  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/25 p-3 sm:p-6" role="dialog" aria-modal="true" aria-label="设置">
+    <section className="flex max-h-[calc(100dvh-2rem)] w-full max-w-[720px] flex-col overflow-hidden rounded-[20px] border bg-card shadow-2xl">
+      <header className="flex shrink-0 items-center justify-between border-b px-5 py-4 sm:px-6"><div><div className="flex items-center gap-2 text-base font-semibold"><Settings className="h-4.5 w-4.5" />设置</div><div className="mt-1 text-[11px] text-muted-foreground">模型连接、任务分工与数据隐私</div></div><button type="button" onClick={onClose} className="rounded-lg px-3 py-1.5 text-sm text-muted-foreground hover:bg-muted">关闭</button></header>
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6 sm:py-5">
+      <div className="grid grid-cols-3 rounded-xl bg-muted/70 p-1 text-xs">{([["models", "模型服务"], ["agents", "任务分工"], ["privacy", "数据与隐私"]] as const).map(([key, label]) => <button key={key} type="button" onClick={() => { setTab(key); setError(""); }} className={`rounded-lg px-2 py-2 transition-colors ${tab === key ? "bg-background font-medium shadow-sm" : "text-muted-foreground hover:text-foreground"}`}>{label}</button>)}</div>
+      {error && <div role="alert" className="mt-3 flex items-center justify-between gap-3 rounded-xl border border-destructive/25 bg-destructive/5 px-3 py-2.5 text-xs text-destructive"><span>{error}</span>{!settings && <button type="button" onClick={() => void loadSettings()} className="shrink-0 rounded-md border border-destructive/25 px-2 py-1 text-[11px] hover:bg-destructive/10">重试</button>}</div>}
       <div className="mt-4 min-h-[300px]">
         {tab === "models" && <div className="space-y-3">
-          <div className="rounded-xl border p-3">
-            <div className="flex items-center justify-between gap-3"><span className="text-xs font-medium">默认执行模型</span><span className="text-[10px] text-muted-foreground">未单独路由的智能体都继承它</span></div>
-            <div className="mt-3 grid grid-cols-[minmax(0,1fr)_100px] gap-2">
-              <select value={settings?.activeModel ?? ""} disabled={saving || !settings?.models.length} onChange={(event) => void saveDefault({ activeModel: event.target.value })} className="h-9 min-w-0 rounded-lg border bg-background px-2 text-xs"><option value="">请选择模型</option>{settings?.models.map((model) => <option key={model.id} value={model.id}>{model.displayName}</option>)}</select>
-              <select value={settings?.defaultThinkingDepth ?? "medium"} disabled={saving || !settings} onChange={(event) => void saveDefault({ defaultThinkingDepth: event.target.value as ThinkingDepth })} className="h-9 rounded-lg border bg-background px-2 text-xs"><option value="low">low</option><option value="medium">medium</option><option value="high">high</option><option value="max">max</option></select>
+          <div className="rounded-2xl border bg-background/80 p-4">
+            <div className="flex items-center justify-between gap-3"><span className="text-xs font-medium">默认执行模型</span><span className="text-[10px] text-muted-foreground">{loadingSettings ? "正在读取模型服务…" : "未单独指定的任务角色都使用它"}</span></div>
+            <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_132px]">
+              <select value={settings?.activeModel ?? ""} disabled={loadingSettings || saving || !settings?.models.length} onChange={(event) => void saveDefault({ activeModel: event.target.value })} className="h-9 min-w-0 rounded-lg border bg-background px-2 text-xs"><option value="">{loadingSettings ? "正在读取…" : "请选择模型"}</option>{settings?.models.map((model) => <option key={model.id} value={model.id}>{model.displayName}</option>)}</select>
+              <select value={settings?.defaultThinkingDepth ?? "medium"} disabled={loadingSettings || saving || !settings} onChange={(event) => void saveDefault({ defaultThinkingDepth: event.target.value as ThinkingDepth })} className="h-9 rounded-lg border bg-background px-2 text-xs"><option value="low">较快</option><option value="medium">平衡</option><option value="high">较稳</option><option value="max">最稳</option></select>
             </div>
-            <p className="mt-2 text-[10px] leading-4 text-muted-foreground">思考深度：低更快，高更稳。</p>
+            <p className="mt-2 text-[10px] leading-4 text-muted-foreground">思考深度：低更快，高更稳。模型能力与上下文由系统自动同步和管理。</p>
+            <div className="mt-3 flex flex-col items-start gap-2 border-t pt-3 sm:flex-row sm:items-center sm:justify-between"><div aria-live="polite" className={`min-h-4 text-[11px] ${connection.state === "connected" ? "text-emerald-600" : connection.state === "failed" ? "text-destructive" : "text-muted-foreground"}`}>{connection.text || (loadingSettings ? "正在读取模型服务…" : "点击测试连接，发送一次真实请求")}</div><button type="button" disabled={loadingSettings || connection.state === "testing" || !settings?.activeModel} onClick={() => void testConnection()} className="shrink-0 rounded-lg border px-2.5 py-1.5 text-[11px] font-medium hover:bg-muted disabled:opacity-40">{connection.state === "testing" ? "验证中…" : connection.state === "failed" ? "重试连接" : "测试连接"}</button></div>
           </div>
-          <div className="rounded-xl border p-3">
+          <div className="rounded-2xl border bg-background/80 p-4">
             <div className="flex items-center justify-between"><span className="text-xs font-medium">已配置服务</span><button type="button" onClick={() => setProviderOpen((value) => !value)} className="rounded-md border px-2.5 py-1.5 text-xs hover:bg-muted">添加服务</button></div>
             <div className="mt-3 space-y-2">
-              {settings?.providers.map((provider) => <div key={provider.id} className="flex items-center justify-between gap-3 rounded-lg bg-muted/50 px-3 py-2.5"><div className="min-w-0"><div className="truncate text-xs font-medium">{provider.displayName}</div><div className="mt-1 truncate text-[10px] text-muted-foreground">{provider.models.map((model) => model.displayName).join("、") || "未添加模型"}</div></div><span className={`shrink-0 text-[10px] ${provider.apiKeyConfigured ? "text-emerald-600" : "text-muted-foreground"}`}>{provider.apiKeyConfigured ? "已连接" : "未配置"}</span></div>)}
+              {settings?.providers.map((provider) => <div key={provider.id} className="flex items-center justify-between gap-3 rounded-lg bg-muted/50 px-3 py-2.5"><div className="min-w-0"><div className="truncate text-xs font-medium">{provider.displayName}</div><div className="mt-1 truncate text-[10px] text-muted-foreground">{provider.models.map((model) => model.displayName).join("、") || "未添加模型"}</div></div><span className={`shrink-0 text-[10px] ${provider.apiKeyConfigured ? "text-emerald-600" : "text-muted-foreground"}`}>{provider.apiKeyConfigured ? "密钥已配置" : "未配置"}</span></div>)}
             </div>
             {providerOpen && <div className="mt-3 grid grid-cols-2 gap-2 border-t pt-3">
-              <input value={providerForm.displayName} onChange={(event) => setProviderForm((form) => ({ ...form, displayName: event.target.value }))} placeholder="服务名称" className="h-8 rounded-md border bg-background px-2 text-xs" />
-              <input value={providerForm.id} onChange={(event) => setProviderForm((form) => ({ ...form, id: event.target.value }))} placeholder="服务 ID" className="h-8 rounded-md border bg-background px-2 text-xs" />
-              <input value={providerForm.baseURL} onChange={(event) => setProviderForm((form) => ({ ...form, baseURL: event.target.value }))} placeholder="接口地址 https://…" className="col-span-2 h-8 rounded-md border bg-background px-2 text-xs" />
-              <input type="password" value={providerForm.apiKey} onChange={(event) => setProviderForm((form) => ({ ...form, apiKey: event.target.value }))} placeholder="API Key" className="col-span-2 h-8 rounded-md border bg-background px-2 text-xs" />
-              <input value={providerForm.modelId} onChange={(event) => setProviderForm((form) => ({ ...form, modelId: event.target.value }))} placeholder="模型 ID" className="h-8 rounded-md border bg-background px-2 text-xs" />
-              <input value={providerForm.modelDisplayName} onChange={(event) => setProviderForm((form) => ({ ...form, modelDisplayName: event.target.value }))} placeholder="模型显示名" className="h-8 rounded-md border bg-background px-2 text-xs" />
+              <div className="col-span-2 text-[10px] font-medium tracking-wide text-muted-foreground">1 · 连接模型服务</div>
+              <label className="col-span-2 space-y-1"><span className="text-[10px] text-muted-foreground">服务名称</span><input value={providerForm.displayName} onChange={(event) => setProviderForm((form) => ({ ...form, displayName: event.target.value }))} placeholder="例如：团队模型服务" className="h-8 w-full rounded-md border bg-background px-2 text-xs" /></label>
+              <label className="col-span-2 space-y-1"><span className="text-[10px] text-muted-foreground">接口地址</span><input value={providerForm.baseURL} onChange={(event) => setProviderForm((form) => ({ ...form, baseURL: event.target.value }))} placeholder="https://…" className="h-8 w-full rounded-md border bg-background px-2 text-xs" /></label>
+              <label className="col-span-2 space-y-1"><span className="text-[10px] text-muted-foreground">服务密钥</span><input type="password" value={providerForm.apiKey} onChange={(event) => setProviderForm((form) => ({ ...form, apiKey: event.target.value }))} placeholder="只保存在本机运行配置中" className="h-8 w-full rounded-md border bg-background px-2 text-xs" /></label>
+              <button type="button" disabled={discoveringModels || !providerForm.baseURL || !providerForm.apiKey} onClick={() => void discoverModels()} className="col-span-2 h-8 rounded-md border text-xs font-medium hover:bg-muted disabled:opacity-40">{discoveringModels ? "正在读取模型…" : "读取可用模型"}</button>
+              <div className="col-span-2 mt-1 text-[10px] font-medium tracking-wide text-muted-foreground">2 · 选择默认模型</div>
+              {providerModels.length > 0 ? <select aria-label="选择模型" value={providerForm.modelId} onChange={(event) => { const selected = providerModels.find((model) => model.id === event.target.value); setProviderForm((form) => ({ ...form, modelId: event.target.value, modelDisplayName: selected?.displayName ?? event.target.value })); }} className="col-span-2 h-8 rounded-md border bg-background px-2 text-xs"><option value="">请选择模型</option>{providerModels.map((model) => <option key={model.id} value={model.id}>{model.displayName}</option>)}</select> : <input aria-label="模型 ID" value={providerForm.modelId} onChange={(event) => setProviderForm((form) => ({ ...form, modelId: event.target.value, modelDisplayName: event.target.value }))} placeholder="目录不可用时可填写模型名称" className="col-span-2 h-8 rounded-md border bg-background px-2 text-xs" />}
               <button type="button" disabled={saving} onClick={() => void saveProvider()} className="col-span-2 h-8 rounded-md bg-foreground text-xs text-background disabled:opacity-50">{saving ? "保存中…" : "保存服务"}</button>
             </div>}
           </div>
@@ -204,7 +254,7 @@ export function SettingsDialog({ apiBase, onClose }: { apiBase: string; onClose:
                 <div className="grid grid-cols-[minmax(0,1fr)_150px_95px] items-center gap-3">
                   <span className="text-xs font-medium">{label}</span>
                   <select value={route.modelId} disabled={saving || !settings} onChange={(event) => void saveAgentRoute(id, { modelId: event.target.value })} className="h-8 min-w-0 rounded-md border bg-background px-2 text-xs"><option value="">继承默认模型</option>{settings?.models.map((model) => <option key={model.id} value={model.id}>{model.displayName}</option>)}</select>
-                  <select value={route.thinkingDepth} disabled={saving || !settings} onChange={(event) => void saveAgentRoute(id, { thinkingDepth: event.target.value as AgentRoute["thinkingDepth"] })} className="h-8 rounded-md border bg-background px-2 text-xs"><option value="inherit">继承默认</option><option value="low">low</option><option value="medium">medium</option><option value="high">high</option><option value="max">max</option></select>
+                  <select value={route.thinkingDepth} disabled={saving || !settings} onChange={(event) => void saveAgentRoute(id, { thinkingDepth: event.target.value as AgentRoute["thinkingDepth"] })} className="h-8 rounded-md border bg-background px-2 text-xs"><option value="inherit">继承默认</option><option value="low">较快</option><option value="medium">平衡</option><option value="high">较稳</option><option value="max">最稳</option></select>
                 </div>
                 {note ? <div className="mt-1.5 text-[10px] text-muted-foreground">{note.startsWith("发布前") ? <span className="inline-flex items-center gap-1"><Lock className="h-3 w-3" />{note}</span> : note}</div> : null}
               </div>;
