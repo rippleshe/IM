@@ -186,6 +186,14 @@ summary:focus-visible {
   outline-offset: 2px;
 }
 
+/* Native controls keep their own readable scale unless the settings panel
+   explicitly opts into the compact desktop type scale. */
+.settings-dialog select,
+.settings-dialog option {
+  font-size: 12px !important;
+  line-height: 1.25;
+}
+
 * {
   scrollbar-color: #b9c6d5 transparent;
   scrollbar-width: thin;

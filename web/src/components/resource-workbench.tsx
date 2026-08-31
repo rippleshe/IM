@@ -83,6 +83,12 @@ function MermaidDiagram({ code }: { code: string }) {
             fontFamily: "inherit",
           },
         });
+        // 先静默校验语法，再渲染，避免 Mermaid 把错误 SVG 注入页面顶部。
+        const parsed = await mermaid.parse(code, { suppressErrors: true });
+        if (!parsed) {
+          if (active) setFailed(true);
+          return;
+        }
         const { svg: rendered } = await mermaid.render(renderId, code);
         // mermaid 解析失败时不总是抛错，有时直接返回错误图——按内容识别并降级为源码展示
         if (active) {
@@ -149,13 +155,12 @@ function runIdOfAsset(assetId: string): string | null {
 /** 可信溯源条：由哪次 run 生成、通过何种裁决、难度为何匹配；可跳转验证页 */
 function ProvenanceStrip({ asset, onOpenValidation }: { asset: ResourceAsset; onOpenValidation: (runId: string) => void }) {
   const runId = runIdOfAsset(asset.id);
-  return <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b bg-muted/20 px-5 py-2 text-[11px]">
+  return <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b bg-blue-50/35 px-5 py-1.5 text-[10px]">
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-      <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] text-emerald-700">{asset.auditStatus === "passed" ? "已通过检查" : "等待检查"}</span>
-      <span className="text-muted-foreground">难度 {asset.difficulty.toFixed(2)}（按掌握度校准）</span>
-      {runId ? <span className="font-mono text-[10px] text-muted-foreground">{runId}</span> : <span className="text-[10px] text-muted-foreground">历史资源</span>}
+      <span className="font-medium text-emerald-700">{asset.auditStatus === "passed" ? "已通过检查" : "等待检查"}</span>
+      <span className="text-slate-500">难度 {asset.difficulty.toFixed(2)} · 按掌握度校准</span>
     </div>
-    {runId ? <button type="button" onClick={() => onOpenValidation(runId)} className="rounded-lg border px-2.5 py-1 text-[11px] font-medium hover:bg-muted">查看验证记录</button> : null}
+    {runId ? <button type="button" onClick={() => onOpenValidation(runId)} className="rounded-md px-2 py-1 font-medium text-blue-700 hover:bg-blue-100/70">查看验证记录</button> : null}
   </div>;
 }
 
@@ -301,8 +306,8 @@ function LectureReader({ reader, onExport }: { reader: ReaderData; onExport: (fo
     setProgress(max > 4 ? Math.min(1, el.scrollTop / max) : 0);
   };
   return <div className="flex min-h-0 flex-1 flex-col">
-    <div className="flex shrink-0 items-center justify-between gap-3 border-b px-5 py-3.5">
-      <div className="min-w-0"><div className="text-[11px] text-muted-foreground">讲义 · 持续阅读</div><h1 className="truncate text-sm font-semibold">{reader.asset.title}</h1></div>
+    <div className="flex shrink-0 items-center justify-between gap-3 border-b px-5 py-3">
+      <div className="min-w-0"><div className="text-[10px] text-muted-foreground">讲义</div><h1 className="truncate text-[13px] font-semibold tracking-tight">{reader.asset.title}</h1></div>
       <div className="flex shrink-0 items-center gap-1.5">
         {headings.length > 0 && <div className="relative">
           <button type="button" onClick={() => setTocOpen((open) => !open)} className="h-8 rounded-lg border px-3 text-xs hover:bg-muted">章节</button>
@@ -314,7 +319,7 @@ function LectureReader({ reader, onExport }: { reader: ReaderData; onExport: (fo
     <div ref={scrollRef} onScroll={handleScroll} className="min-h-0 flex-1 overflow-y-auto bg-background/40">
       <div className="sticky top-0 z-10 h-0.5 bg-transparent"><div className="h-full rounded-r-full bg-gradient-to-r from-blue-500 to-indigo-500 transition-[width] duration-150" style={{ width: `${Math.round(progress * 100)}%` }} /></div>
       <article className="mx-auto max-w-3xl px-8 py-8">
-        {reader.asset.learningObjectives.length > 0 && <div className="mb-8 rounded-xl border border-blue-100 bg-gradient-to-br from-blue-50/80 to-indigo-50/50 p-5"><div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-blue-700"><Target className="h-3.5 w-3.5" />学习目标</div><ul className="mt-3 space-y-2">{reader.asset.learningObjectives.map((objective) => <li key={objective} className="flex gap-2.5 text-[13px] leading-6 text-blue-950"><span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-blue-500" />{objective}</li>)}</ul></div>}
+        {reader.asset.learningObjectives.length > 0 && <div className="mb-8 border-y border-blue-100 bg-blue-50/45 px-5 py-4"><div className="flex items-center gap-2 text-[11px] font-semibold tracking-wide text-blue-700"><Target className="h-3.5 w-3.5" />学习目标</div><ul className="mt-3 space-y-2">{reader.asset.learningObjectives.map((objective) => <li key={objective} className="flex gap-2.5 text-[13px] leading-6 text-blue-950"><span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-blue-500" />{objective}</li>)}</ul></div>}
         <div className="space-y-7">{blocks.map((block) => <section key={block.id} id={block.type === "heading" ? `sec-${block.id}` : undefined} className="scroll-mt-4">{renderBlockContent(block, sectionNumber.get(block.id))}</section>)}</div>
         <div className="h-12" />
       </article>

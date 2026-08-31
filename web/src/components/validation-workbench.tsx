@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   BadgeCheck,
+  ChevronDown,
   Download,
   FileJson,
   Link2,
@@ -188,6 +189,8 @@ export function ValidationWorkbench({ apiBase, user, onLogout, onNavigate, onUse
   const [notice, setNotice] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
+  const [processExpanded, setProcessExpanded] = useState(false);
+  const [claimsExpanded, setClaimsExpanded] = useState(false);
 
   const loadRuns = useCallback(async () => {
     const response = await fetch(`${apiBase}/api/learning/runs`, { credentials: "include" });
@@ -309,9 +312,14 @@ export function ValidationWorkbench({ apiBase, user, onLogout, onNavigate, onUse
           </section>
 
           {/* 3. 处理过程 */}
-          <section aria-label="处理过程" className="rounded-2xl border bg-card p-5">
-             <div className="flex items-center gap-2"><Link2 className="h-4 w-4" /><h2 className="text-sm font-semibold">处理过程</h2></div>
-            <div className="mt-3 space-y-2">
+          <section aria-label="处理过程" className="overflow-hidden rounded-2xl border bg-card">
+            <div>
+              <button type="button" aria-expanded={processExpanded} onClick={() => setProcessExpanded((expanded) => !expanded)} className="group flex w-full items-center justify-between gap-3 px-5 py-4 text-left text-sm hover:bg-blue-50/45">
+                <span className="flex items-center gap-2"><Link2 className="h-4 w-4 text-muted-foreground" /><h2 className="font-semibold">处理过程</h2></span>
+                <span className="flex items-center gap-2 text-[11px] text-muted-foreground">{trace.nodes.length} 项 <ChevronDown className={`h-4 w-4 transition-transform ${processExpanded ? "rotate-180" : ""}`} /></span>
+              </button>
+              {processExpanded && <div className="border-t px-5 pb-5 pt-3">
+                <div className="space-y-2">
               {trace.nodes.map((node) => {
                 const artifact = trace.artifacts.find((item) => item.nodeKey === node.nodeKey && item.attempt === node.attempt && ["learner_snapshot", "evidence_set", "domain_brief", "resource_draft", "claim_audit", "challenge_set", "adjudication", "privacy_decision", "publication_decision"].includes(item.artifactType));
                 return <details key={`${node.nodeKey}-${node.attempt}`} className="rounded-xl border bg-background px-3.5 py-3">
@@ -336,14 +344,21 @@ export function ValidationWorkbench({ apiBase, user, onLogout, onNavigate, onUse
                   </div>
                 </details>;
               })}
+                </div>
+              </div>}
             </div>
           </section>
 
           {/* 4. 声明证据表 */}
-          <section aria-label="声明证据表" className="rounded-2xl border bg-card p-5">
-            <div className="flex items-center gap-2"><Table2 className="h-4 w-4" /><h2 className="text-sm font-semibold">内容与依据</h2></div>
-            {trace.claimTrace.length === 0 ? <p className="mt-3 text-xs text-muted-foreground">该运行没有可核对的声明。</p> : (
-              <div className="mt-3 overflow-x-auto">
+          <section aria-label="声明证据表" className="overflow-hidden rounded-2xl border bg-card">
+            <div>
+              <button type="button" aria-expanded={claimsExpanded} onClick={() => setClaimsExpanded((expanded) => !expanded)} className="group flex w-full items-center justify-between gap-3 px-5 py-4 text-left text-sm hover:bg-blue-50/45">
+                <span className="flex items-center gap-2"><Table2 className="h-4 w-4 text-muted-foreground" /><h2 className="font-semibold">内容与依据</h2></span>
+                <span className="flex items-center gap-2 text-[11px] text-muted-foreground">{trace.claimTrace.length} 条 <ChevronDown className={`h-4 w-4 transition-transform ${claimsExpanded ? "rotate-180" : ""}`} /></span>
+              </button>
+              {claimsExpanded && <div className="border-t px-5 pb-5 pt-3">
+              {trace.claimTrace.length === 0 ? <p className="text-xs text-muted-foreground">该运行没有可核对的声明。</p> : (
+              <div className="overflow-x-auto">
                 <table className="w-full min-w-[640px] text-left text-[11px]">
                   <thead><tr className="border-b text-muted-foreground"><th className="py-2 pr-3 font-medium">内容</th><th className="py-2 pr-3 font-medium">类型</th><th className="py-2 pr-3 font-medium">处理轮次</th><th className="py-2 pr-3 font-medium">最终结论</th><th className="py-2 pr-3 font-medium">依据</th><th className="py-2 font-medium">待处理问题</th></tr></thead>
                   <tbody>
@@ -362,6 +377,8 @@ export function ValidationWorkbench({ apiBase, user, onLogout, onNavigate, onUse
                 </table>
               </div>
             )}
+              </div>}
+            </div>
           </section>
 
           {/* 5. 前后对照 */}

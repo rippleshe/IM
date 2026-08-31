@@ -491,7 +491,7 @@ function MessageCard({ message, onExport }: { message: StudyMessage; onExport: (
   const kind = message.metadata.kind;
   const asset = message.metadata.asset;
   if (isUser) {
-    return <article className="ml-auto max-w-[84%]"><div className="rounded-2xl rounded-tr-md border border-blue-200 bg-blue-50 px-4 py-3 text-sm leading-6 text-blue-950"><MessageRichText text={message.content} /></div><div className="mt-1 text-right text-[10px] text-muted-foreground">{new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit" }).format(message.createdAt)}</div></article>;
+    return <article className="ml-auto max-w-[84%] border-r border-blue-200 pr-3 text-right text-[13px] leading-6 text-blue-950"><MessageRichText text={message.content} /><div className="mt-1 text-[10px] text-muted-foreground">{new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit" }).format(message.createdAt)}</div></article>;
   }
   if (kind === "asset" && asset) {
     return <article className="max-w-[94%]"><div className="rounded-2xl rounded-tl-md border bg-muted/20 px-4 py-3"><div className="mb-2 flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground"><Download className="h-3.5 w-3.5" />已生成资源</div><AssetCard asset={asset} onExport={onExport} /></div><div className="mt-1 text-[10px] text-muted-foreground">{new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit" }).format(message.createdAt)}</div></article>;
@@ -503,7 +503,7 @@ function MessageCard({ message, onExport }: { message: StudyMessage; onExport: (
       <span className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-semibold ${agentTone(agentId)}`}>{agentName.slice(0, 1)}</span>
       <div className="min-w-0 flex-1">
         <div className="text-[11px] font-medium text-muted-foreground">{agentName}</div>
-        <div className="mt-1 rounded-2xl rounded-tl-md border bg-card px-4 py-3 text-sm leading-6"><MessageRichText text={readableProcessText(message.content)} /></div>
+        <div className="mt-1 text-[13px] leading-7 text-slate-700"><MessageRichText text={readableProcessText(message.content)} /></div>
       </div>
     </div>
     <div className="mt-1 pl-[42px] text-[10px] text-muted-foreground">{new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit" }).format(message.createdAt)}</div>

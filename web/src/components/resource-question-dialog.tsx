@@ -81,8 +81,8 @@ export function ResourceQuestionDialog({ apiBase, selectedAssetId, selectedAsset
       </header>
       <div ref={scrollRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto px-5 py-4">
         {loading ? <div className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />正在读取问答记录</div> : messages.length === 0 ? <div className="flex h-full flex-col items-center justify-center px-8 text-center text-sm leading-6 text-muted-foreground"><MessageCircleQuestion className="mb-3 h-7 w-7 text-muted-foreground/45" />还没有提问记录，例如：「这几份资源里对这个概念的解释有什么区别？」</div> : messages.map((message) => message.role === "user"
-          ? <article key={message.id} className="ml-auto max-w-[88%] rounded-2xl rounded-tr-md border border-blue-200 bg-blue-50 px-3.5 py-2.5 text-sm leading-6 text-blue-950"><p className="whitespace-pre-wrap">{message.content}</p></article>
-          : <article key={message.id} className="max-w-[92%] rounded-2xl rounded-tl-md border bg-card px-4 py-3 text-sm leading-6"><RichText text={message.content} /></article>)}
+          ? <article key={message.id} className="ml-auto max-w-[88%] border-r border-blue-200 pr-3 text-right text-[13px] leading-6 text-blue-950"><p className="whitespace-pre-wrap">{message.content}</p></article>
+          : <article key={message.id} className="max-w-[92%] border-l border-blue-200 pl-3 text-[13px] leading-7 text-slate-700"><RichText text={message.content} /></article>)}
         {sending ? <div className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" />正在根据资源整理回答</div> : null}
       </div>
       <footer className="shrink-0 border-t bg-background p-4">

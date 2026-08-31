@@ -62,15 +62,16 @@ function tokenize(text: string): Token[] {
   return tokens;
 }
 
-const INLINE_PATTERN = /(\*\*[^*]+\*\*|\*[^*\n]+\*|`[^`]+`|\[[^\]]+\]\([^)]+\))/g;
+const INLINE_PATTERN = /(\*\*[^*]+\*\*|__[^_]+__|~~[^~]+~~|\*[^*\n]+\*|_[^_\n]+_|`[^`]+`|\[[^\]]+\]\([^)]+\))/g;
 
 /** 行内 Markdown 渲染（加粗/斜体/行内代码/链接），供标题等单行场景单独使用 */
 export function RichInlineText({ text }: { text: string }) {
   const parts = text.split(INLINE_PATTERN).filter(Boolean);
   return <>
     {parts.map((part, index) => {
-      if (part.startsWith("**") && part.endsWith("**")) return <strong key={index} className="font-semibold">{part.slice(2, -2)}</strong>;
-      if (/^\*[^*]+\*$/.test(part)) return <em key={index}>{part.slice(1, -1)}</em>;
+      if ((part.startsWith("**") && part.endsWith("**")) || (part.startsWith("__") && part.endsWith("__"))) return <strong key={index} className="font-semibold">{part.slice(2, -2)}</strong>;
+      if ((part.startsWith("*") && part.endsWith("*")) || (part.startsWith("_") && part.endsWith("_"))) return <em key={index} className="italic">{part.slice(1, -1)}</em>;
+      if (part.startsWith("~~") && part.endsWith("~~")) return <del key={index} className="text-muted-foreground">{part.slice(2, -2)}</del>;
       if (part.startsWith("`") && part.endsWith("`")) return <code key={index} className="rounded bg-muted px-1.5 py-0.5 font-mono text-[0.85em] text-foreground">{part.slice(1, -1)}</code>;
       const link = part.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
       if (link) return <a key={index} href={link[2]} target="_blank" rel="noreferrer" className="text-blue-600 underline underline-offset-2 hover:text-blue-700">{link[1]}</a>;
@@ -95,7 +96,7 @@ export function DescriptionList({ text, compact = false }: { text: string; compa
   </ul>;
 }
 
-function CodeFigure({ language, code, caption }: { language: string; code: string; caption?: string }) {
+function CodeFigure({ language, code, caption, invert = false }: { language: string; code: string; caption?: string; invert?: boolean }) {
   const [copied, setCopied] = useState(false);
   const copy = async () => {
     try {
@@ -104,23 +105,23 @@ function CodeFigure({ language, code, caption }: { language: string; code: strin
       window.setTimeout(() => setCopied(false), 1_600);
     } catch { /* 剪贴板不可用时忽略 */ }
   };
-  return <figure className="my-3 overflow-hidden rounded-xl border border-zinc-800 bg-zinc-950">
-    <figcaption className="flex items-center justify-between gap-2 border-b border-zinc-800 px-3.5 py-2">
-      <span className="truncate text-[11px] font-medium text-zinc-300">{caption ?? (language || "代码")}</span>
-      <button type="button" onClick={() => void copy()} className="inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-1 text-[10px] text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-200">
+  return <figure className={`my-4 overflow-hidden rounded-xl border shadow-[0_4px_14px_rgb(71_108_168_/_6%)] ${invert ? "border-zinc-800 bg-zinc-950" : "border-blue-100 bg-[#f7faff]"}`}>
+    <figcaption className={`flex items-center justify-between gap-2 border-b px-3.5 py-2 ${invert ? "border-zinc-800" : "border-blue-100 bg-blue-50/55"}`}>
+      <span className={`truncate text-[11px] font-medium ${invert ? "text-zinc-300" : "text-blue-900/75"}`}>{caption ?? (language || "代码")}</span>
+      <button type="button" onClick={() => void copy()} className={`inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-1 text-[10px] transition-colors ${invert ? "text-sky-300 hover:bg-zinc-800 hover:text-sky-100" : "text-blue-700 hover:bg-blue-100 hover:text-blue-900"}`}>
         {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}{copied ? "已复制" : "复制"}
       </button>
     </figcaption>
-    <pre className="overflow-x-auto px-3.5 py-3 text-xs leading-6"><code className="font-mono text-zinc-100">{code}</code></pre>
+    <pre className="overflow-x-auto px-3.5 py-3 text-xs leading-6"><code className={`font-mono ${invert ? "text-zinc-100" : "text-slate-700"}`}>{code}</code></pre>
   </figure>;
 }
 
 function MarkdownTable({ header, rows }: { header: string[]; rows: string[][] }) {
-  return <div className="my-3 overflow-hidden rounded-xl border">
+  return <div className="my-4 overflow-hidden rounded-xl border border-blue-100 bg-white shadow-[0_4px_14px_rgb(71_108_168_/_5%)]">
     <div className="overflow-x-auto">
       <table className="w-full text-left text-xs">
-        <thead><tr className="border-b bg-muted/25 text-muted-foreground">{header.map((cell, index) => <th key={index} className="whitespace-nowrap px-3 py-2 font-medium"><InlineText text={cell} /></th>)}</tr></thead>
-        <tbody>{rows.map((row, rowIndex) => <tr key={rowIndex} className="border-b last:border-b-0">{row.map((cell, cellIndex) => <td key={cellIndex} className="px-3 py-2 align-top text-muted-foreground"><InlineText text={cell} /></td>)}</tr>)}</tbody>
+        <thead><tr className="border-b border-blue-100 bg-blue-50/70 text-blue-900/80">{header.map((cell, index) => <th key={index} className="whitespace-nowrap px-3 py-2.5 font-semibold"><InlineText text={cell} /></th>)}</tr></thead>
+        <tbody>{rows.map((row, rowIndex) => <tr key={rowIndex} className={`border-b border-blue-50 last:border-b-0 ${rowIndex % 2 ? "bg-slate-50/45" : "bg-white"}`}>{row.map((cell, cellIndex) => <td key={cellIndex} className="px-3 py-2.5 align-top text-slate-700"><InlineText text={cell} /></td>)}</tr>)}</tbody>
       </table>
     </div>
   </div>;
@@ -138,9 +139,9 @@ export function RichText({ text, invert = false, variant = "chat" }: RichTextPro
     const items = listItems;
     listItems = [];
     nodes.push(isDoc ? (
-      listOrdered
-        ? <ol key={key} className="my-2 space-y-1.5 ps-1">{items.map((item, index) => <li key={index} className="flex gap-2.5 text-[15px] leading-7 text-muted-foreground"><span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-muted text-[11px] font-semibold text-foreground">{index + 1}</span><span><InlineText text={item} /></span></li>)}</ol>
-        : <ul key={key} className="my-2 space-y-1.5 ps-1">{items.map((item, index) => <li key={index} className="flex gap-2.5 text-[15px] leading-7 text-muted-foreground"><span className="mt-[13px] h-1.5 w-1.5 shrink-0 rounded-full bg-foreground/45" /><span><InlineText text={item} /></span></li>)}</ul>
+        listOrdered
+        ? <ol key={key} className="my-3 space-y-2 ps-1">{items.map((item, index) => <li key={index} className="flex gap-2.5 text-[14px] leading-7 text-blue-950"><span className="mt-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-blue-50 text-[10px] font-semibold text-blue-700">{index + 1}</span><span><InlineText text={item} /></span></li>)}</ol>
+        : <ul key={key} className="my-3 space-y-2 ps-1">{items.map((item, index) => <li key={index} className="flex gap-2.5 text-[14px] leading-7 text-blue-950"><span className="mt-[12px] h-1.5 w-1.5 shrink-0 rounded-full bg-blue-400" /><span><InlineText text={item} /></span></li>)}</ul>
     ) : (
       <div key={key} className="space-y-1">
         {items.map((item, index) => listOrdered
@@ -153,7 +154,7 @@ export function RichText({ text, invert = false, variant = "chat" }: RichTextPro
   tokens.forEach((token, tokenIndex) => {
     if (token.kind === "code") {
       flushList(`pre-list-${tokenIndex}`);
-      nodes.push(<div key={tokenIndex} className={invert ? "[&_figure]:border-zinc-700" : ""}><CodeFigure language={token.language} code={token.code} caption={token.caption} /></div>);
+      nodes.push(<div key={tokenIndex} className={invert ? "[&_figure]:border-zinc-700" : ""}><CodeFigure language={token.language} code={token.code} caption={token.caption} invert={invert} /></div>);
       return;
     }
     if (token.kind === "table") {
@@ -170,9 +171,9 @@ export function RichText({ text, invert = false, variant = "chat" }: RichTextPro
       const level = heading[1]!.length;
       const content = <InlineText text={heading[2]!} />;
       nodes.push(isDoc ? (
-        level <= 1 ? <h2 key={tokenIndex} className="mt-6 mb-2 text-lg font-semibold tracking-tight text-foreground first:mt-0">{content}</h2>
-        : level === 2 ? <h3 key={tokenIndex} className="mt-5 mb-1.5 text-base font-semibold tracking-tight text-foreground">{content}</h3>
-        : <h4 key={tokenIndex} className="mt-4 mb-1 text-sm font-semibold text-foreground">{content}</h4>
+        level <= 1 ? <h2 key={tokenIndex} className="mt-7 mb-2.5 text-[17px] font-semibold tracking-tight text-foreground first:mt-0">{content}</h2>
+        : level === 2 ? <h3 key={tokenIndex} className="mt-6 mb-2 text-[15px] font-semibold tracking-tight text-foreground">{content}</h3>
+        : <h4 key={tokenIndex} className="mt-5 mb-1.5 text-[13px] font-semibold text-foreground">{content}</h4>
       ) : (
         <div key={tokenIndex} className={`mt-2 font-semibold first:mt-0 ${level <= 2 ? "text-[15px]" : "text-sm"}`}><InlineText text={heading[2]!} /></div>
       ));
@@ -189,12 +190,12 @@ export function RichText({ text, invert = false, variant = "chat" }: RichTextPro
     }
     if (/^>\s?/.test(trimmed)) {
       flushList(`pre-quote-${tokenIndex}`);
-      nodes.push(<blockquote key={tokenIndex} className={`my-2 rounded-r-lg border-l-2 border-foreground/30 px-3 py-2 text-[13px] leading-6 ${invert ? "bg-background/10 text-background/85" : "bg-muted/40 text-muted-foreground"}`}><InlineText text={trimmed.replace(/^>\s?/, "")} /></blockquote>);
+      nodes.push(<blockquote key={tokenIndex} className={`my-4 rounded-r-lg border-l border-blue-300 px-4 py-2.5 text-[13px] leading-6 ${invert ? "bg-background/10 text-background/85" : "bg-blue-50/60 text-blue-950"}`}><InlineText text={trimmed.replace(/^>\s?/, "")} /></blockquote>);
       return;
     }
     flushList(`pre-p-${tokenIndex}`);
     nodes.push(isDoc
-      ? <p key={tokenIndex} className="text-[15px] leading-8 text-muted-foreground"><InlineText text={trimmed} /></p>
+      ? <p key={tokenIndex} className="text-[14px] leading-7 text-slate-700"><InlineText text={trimmed} /></p>
       : <p key={tokenIndex} className="whitespace-pre-wrap leading-6"><InlineText text={trimmed} /></p>);
   });
   flushList("tail-list");

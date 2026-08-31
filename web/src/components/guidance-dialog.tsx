@@ -148,8 +148,8 @@ export function GuidanceDialog({ apiBase, pathNodeId, user, onClose, onGenerateR
         ) : (
           <div className="space-y-4">
             {turns.map((turn, index) => <div key={index} className="space-y-2">
-              <div className="rounded-2xl rounded-tl-md border bg-muted/30 px-4 py-3 text-sm leading-6"><p className="text-[11px] font-medium text-muted-foreground">追问 {index + 1}</p><p className="mt-1">{turn.question}</p></div>
-              <div className="ml-auto max-w-[88%] rounded-2xl rounded-tr-md border border-blue-200 bg-blue-50 px-4 py-3 text-sm leading-6 text-blue-950"><p className="whitespace-pre-wrap">{turn.answer}</p></div>
+              <div className="border-l border-slate-200 pl-3 text-[13px] leading-6"><p className="text-[11px] font-medium text-muted-foreground">追问 {index + 1}</p><p className="mt-1">{turn.question}</p></div>
+              <div className="ml-auto max-w-[88%] border-r border-blue-200 pr-3 text-right text-[13px] leading-6 text-blue-950"><p className="whitespace-pre-wrap">{turn.answer}</p></div>
               <div className="rounded-xl border bg-background px-3.5 py-2.5 text-xs">
                 <span className={`mr-2 inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ${turn.verdict === "correct" ? "bg-emerald-100 text-emerald-700" : turn.verdict === "partial" ? "bg-amber-100 text-amber-700" : "bg-rose-100 text-rose-700"}`}>{VERDICT_LABELS[turn.verdict]}</span>
                 <span className="leading-5 text-muted-foreground">{turn.comment}</span>

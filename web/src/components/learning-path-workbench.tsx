@@ -494,14 +494,14 @@ export function LearningPathWorkbench({ apiBase, user, onLogout, onNavigate, onU
          <div ref={feedRef} role="log" aria-live="polite" aria-busy={sending} className="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-6">
           <div className="mx-auto max-w-2xl space-y-5">
             {loading ? <div className="flex min-h-[250px] items-center justify-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4" />正在加载路径对话</div> : messages.length === 0 ? null : messages.map((chat) => chat.role === "user"
-              ? <article key={chat.id} className="ml-auto max-w-[84%]"><div className="rounded-2xl rounded-tr-md border border-blue-200 bg-blue-50 px-4 py-3 text-sm leading-6 text-blue-950"><RichText text={chat.content} /></div><div className="mt-1 text-right text-[10px] text-muted-foreground">{new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit" }).format(chat.createdAt)}</div></article>
+              ? <article key={chat.id} className="ml-auto max-w-[84%] border-r border-blue-200 pr-3 text-right text-[13px] leading-6 text-blue-950"><RichText text={chat.content} /><div className="mt-1 text-[10px] text-muted-foreground">{new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit" }).format(chat.createdAt)}</div></article>
               : <article key={chat.id} className="max-w-[94%]">
                 <div className="flex items-start gap-2.5">
                   <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-blue-200 bg-blue-50 text-blue-600"><Bot className="h-4 w-4" /></span>
                   <div className="min-w-0 flex-1">
                     <div className="text-[11px] font-medium text-muted-foreground">路径助手</div>
-                    <div className="mt-1 rounded-2xl rounded-tl-md border bg-card px-4 py-3 text-sm leading-6"><RichText text={chat.content} /></div>
-                    {chat.metadata.activities?.length || chat.metadata.pathChanged ? <div className="mt-2 rounded-xl border bg-muted/25 p-3 text-xs text-muted-foreground"><div className="mb-1.5 font-medium text-foreground">处理过程{chat.metadata.pathChanged ? " · 路径已更新" : ""}</div>{chat.metadata.activities?.map((activity) => <div className="flex gap-2 py-1.5" key={`${chat.id}-${activity.agentId}`}><span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-foreground/45" /><span><b className="font-medium text-foreground">{readablePathActivityText(activity.name)}</b>：{readablePathActivityText(activity.action)}</span></div>)}</div> : null}
+                    <div className="mt-1 text-[13px] leading-7 text-slate-700"><RichText text={chat.content} /></div>
+                    {chat.metadata.activities?.length || chat.metadata.pathChanged ? <div className="mt-3 border-l border-teal-200 bg-teal-50/45 py-2 pl-3 text-xs text-teal-900"><div className="mb-1 font-medium text-teal-950">处理过程{chat.metadata.pathChanged ? " · 路径已更新" : ""}</div>{chat.metadata.activities?.map((activity) => <div className="flex gap-2 py-1" key={`${chat.id}-${activity.agentId}`}><span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-teal-400" /><span><b className="font-medium text-teal-950">{readablePathActivityText(activity.name)}</b>：{readablePathActivityText(activity.action)}</span></div>)}</div> : null}
                   </div>
                 </div>
                 <div className="mt-1 pl-[42px] text-[10px] text-muted-foreground">{new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit" }).format(chat.createdAt)}</div>
