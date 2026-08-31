@@ -1,8 +1,9 @@
 "use client";
 
-import { Loader2, MessageCircleQuestion, Send, Trash2, X } from "lucide-react";
+import { Eraser, Loader2, MessageCircleQuestion, Send, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { RichText } from "@/components/rich-text";
+import { ContextClearDialog } from "@/components/context-clear-dialog";
 
 type QaMessage = { id: string; role: "user" | "assistant"; content: string; metadata?: { assetId?: string | null }; createdAt: number };
 
@@ -19,6 +20,7 @@ export function ResourceQuestionDialog({ apiBase, selectedAssetId, selectedAsset
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [clearing, setClearing] = useState(false);
+  const [clearDialogOpen, setClearDialogOpen] = useState(false);
   const [notice, setNotice] = useState("");
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
@@ -61,7 +63,6 @@ export function ResourceQuestionDialog({ apiBase, selectedAssetId, selectedAsset
 
   const clearConversation = async () => {
     if (clearing || !messages.length) return;
-    if (!window.confirm("清除全部资源问答历史和后续模型对话上下文？不会删除学习资源。")) return;
     setClearing(true);
     setNotice("");
     try {
@@ -69,15 +70,17 @@ export function ResourceQuestionDialog({ apiBase, selectedAssetId, selectedAsset
       const data = await response.json() as { success?: boolean; error?: string };
       if (!response.ok || !data.success) throw new Error(data.error || "清除问答失败");
       setMessages([]);
+      setClearDialogOpen(false);
     } catch (error) { setNotice(error instanceof Error ? error.message : "清除问答失败"); }
     finally { setClearing(false); }
   };
 
-  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/20 p-4" role="dialog" aria-modal="true" aria-label="资源问答">
+  return <>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/20 p-4" role="dialog" aria-modal="true" aria-label="资源问答">
     <section className="flex h-[min(720px,calc(100vh-32px))] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border bg-background shadow-2xl">
       <header className="flex shrink-0 items-start justify-between gap-4 border-b px-5 py-4">
         <div>{selectedAssetTitle ? <h2 className="text-sm font-semibold">资源问答 · 聚焦《{selectedAssetTitle}》</h2> : <h2 className="text-sm font-semibold">资源问答</h2>}</div>
-        <div className="flex items-center gap-1"><button type="button" disabled={clearing || sending || messages.length === 0} onClick={() => void clearConversation()} className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"><Trash2 className="h-3.5 w-3.5" />{clearing ? "清除中" : "清除上下文"}</button><button type="button" onClick={onClose} className="rounded-lg p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground" aria-label="关闭资源问答"><X className="h-4 w-4" /></button></div>
+        <div className="flex items-center gap-1"><button type="button" disabled={clearing || sending || messages.length === 0} onClick={() => setClearDialogOpen(true)} className="inline-flex h-7 items-center gap-1.5 rounded-md border border-transparent px-2 text-[11px] font-medium text-muted-foreground transition-colors hover:border-rose-100 hover:bg-rose-50 hover:text-rose-700 disabled:opacity-40"><Eraser className="h-3.5 w-3.5" />{clearing ? "清除中" : "清除上下文"}</button><button type="button" onClick={onClose} className="rounded-lg p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground" aria-label="关闭资源问答"><X className="h-4 w-4" /></button></div>
       </header>
       <div ref={scrollRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto px-5 py-4">
         {loading ? <div className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />正在读取问答记录</div> : messages.length === 0 ? <div className="flex h-full flex-col items-center justify-center px-8 text-center text-sm leading-6 text-muted-foreground"><MessageCircleQuestion className="mb-3 h-7 w-7 text-muted-foreground/45" />还没有提问记录，例如：「这几份资源里对这个概念的解释有什么区别？」</div> : messages.map((message) => message.role === "user"
@@ -90,5 +93,7 @@ export function ResourceQuestionDialog({ apiBase, selectedAssetId, selectedAsset
         <div className="flex items-end gap-2 rounded-xl border bg-card p-2 focus-within:ring-2 focus-within:ring-foreground/10"><textarea value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void send(); } }} rows={2} placeholder="针对资源提出问题" className="min-h-[38px] flex-1 resize-none bg-transparent px-2 py-1.5 text-sm outline-none placeholder:text-muted-foreground" /><button type="button" disabled={!draft.trim() || sending} onClick={() => void send()} className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-400 text-white shadow-sm shadow-blue-200 disabled:opacity-35" aria-label="发送问题"><Send className="h-4 w-4" /></button></div>
       </footer>
     </section>
-  </div>;
+  </div>
+    <ContextClearDialog open={clearDialogOpen} pending={clearing} title="清除问答记录" description="仅清空资源问答和后续参考；已保存的学习资源不会受到影响。" onClose={() => setClearDialogOpen(false)} onConfirm={() => void clearConversation()} />
+  </>;
 }

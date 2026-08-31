@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Bot,
   Download,
+  Eraser,
   FilePlus2,
   ListTree,
   LogOut,
@@ -12,7 +13,6 @@ import {
   Paperclip,
   Send,
   Sparkles,
-  Trash2,
   UserRound,
   X,
 } from "lucide-react";
@@ -21,6 +21,7 @@ import { SettingsDialog } from "@/components/settings-dialog";
 import { AvatarBubble, ProfileDialog } from "@/components/profile-dialog";
 import { PathNodeDetails, RecommendationBadge, type PathGraph, type PathNode, TreeCanvas } from "@/components/learning-path-workbench";
 import { RichText, DescriptionList } from "@/components/rich-text";
+import { ContextClearDialog } from "@/components/context-clear-dialog";
 
 type ResourceType = "lecture" | "tiered_quiz" | "presentation" | "concept_map";
 type AgentId = "learning_planning" | "evidence_retrieval" | "domain_expert" | "resource_generation" | "cross_validation" | "privacy_compliance" | "orchestrator";
@@ -131,6 +132,7 @@ export function LearningWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [clearingConversation, setClearingConversation] = useState(false);
+  const [clearDialogOpen, setClearDialogOpen] = useState(false);
   const [studyRunning, setStudyRunning] = useState(false);
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const [finishedRunId, setFinishedRunId] = useState<string | null>(null);
@@ -348,6 +350,19 @@ export function LearningWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
     setMentionOpen(false);
   };
 
+  // 学习页不直接修改路径：把明确的调整意图带到路径页，由用户确认后再发起调整。
+  const requestPathAdjustment = (kind: string) => {
+    if (!selectedNode) return;
+    try {
+      window.localStorage.setItem("im-training-agent:path-prefill", JSON.stringify({
+        draft: `@${selectedNode.title} 请添加一个${kind}节点：`,
+        nodeId: selectedNode.id,
+        createdAt: Date.now(),
+      }));
+    } catch { /* 存储不可用时仍可进入路径页继续调整 */ }
+    onNavigate("path");
+  };
+
   const readAttachment = async (file: File) => {
     const supported = file.type.startsWith("text/") || /\.(md|txt|csv|json)$/i.test(file.name);
     if (!supported) { setNotice("当前临时参考仅支持 Markdown、文本、表格或数据文件"); return; }
@@ -378,7 +393,6 @@ export function LearningWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
 
   const clearConversation = async () => {
     if (studyRunning || clearingConversation) return;
-    if (!window.confirm("清除当前任务对话的全部历史和后续模型对话上下文？不会删除学习路径、已生成资源或验证记录。")) return;
     setClearingConversation(true);
     setNotice("");
     try {
@@ -391,6 +405,7 @@ export function LearningWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
       setLiveEvents([]);
       setLiveSummary("");
       window.localStorage.removeItem(progressStorageKey);
+      setClearDialogOpen(false);
     } catch (error) { setNotice(error instanceof Error ? error.message : "清除对话失败"); }
     finally { setClearingConversation(false); }
   };
@@ -429,7 +444,7 @@ export function LearningWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
       <section className="flex min-w-[390px] flex-1 flex-col bg-card" aria-label="学习任务对话">
         <div className="workspace-pane-titlebar flex shrink-0 items-center justify-between border-b px-5 py-3.5">
           <div className="flex items-center gap-2"><Sparkles className="h-4 w-4" /><h2 className="text-sm font-semibold">学习助手</h2></div>
-          <div className="flex items-center gap-3"><span className="text-xs text-muted-foreground">{selectedNode ? `关联：${selectedNode.title}` : "选择路径节点后开始任务"}</span><button type="button" disabled={studyRunning || clearingConversation || messages.length === 0} onClick={() => void clearConversation()} className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40" title={studyRunning ? "任务结束后才能清除上下文" : "清除对话上下文"}><Trash2 className="h-3 w-3" />{clearingConversation ? "清除中" : "清除上下文"}</button></div>
+          <div className="flex min-w-0 items-center gap-2"><span className="max-w-[270px] truncate text-xs text-muted-foreground">{selectedNode ? `关联：${selectedNode.title}` : "选择路径节点后开始任务"}</span><button type="button" disabled={studyRunning || clearingConversation || messages.length === 0} onClick={() => setClearDialogOpen(true)} className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-transparent px-2 text-[11px] font-medium text-muted-foreground transition-colors hover:border-rose-100 hover:bg-rose-50 hover:text-rose-700 disabled:cursor-not-allowed disabled:opacity-40" title={studyRunning ? "任务结束后才能清除上下文" : "清除对话上下文"}><Eraser className="h-3.5 w-3.5" />{clearingConversation ? "清除中" : "清除上下文"}</button></div>
         </div>
         <div ref={feedRef} className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
           <div className="mx-auto max-w-3xl space-y-4">
@@ -449,39 +464,44 @@ export function LearningWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
         <div className="shrink-0 border-t bg-background p-4">
           {notice && <div className="mx-auto mb-2 max-w-3xl rounded-lg border border-destructive/25 bg-destructive/5 px-3 py-2 text-xs text-destructive">{notice}</div>}
           {attachedFile && <div className="mx-auto mb-2 flex max-w-3xl items-center justify-between rounded-lg border bg-muted/30 px-3 py-2 text-xs"><span className="truncate">临时参考：{attachedFile.name}</span><button type="button" onClick={() => setAttachedFile(null)} aria-label="移除临时参考"><X className="h-3.5 w-3.5" /></button></div>}
-          <div className="mx-auto max-w-3xl rounded-2xl border bg-card p-2 focus-within:ring-2 focus-within:ring-foreground/10">
+          <div className="mx-auto max-w-3xl rounded-2xl border border-[#dce6f1] bg-card p-2.5 shadow-[0_5px_16px_rgb(57_86_120_/_5%)] focus-within:ring-2 focus-within:ring-blue-200">
             <textarea value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void send(); } }} rows={2} placeholder="输入任务，或 @ 引用路径节点" className="max-h-32 min-h-[44px] w-full resize-none bg-transparent px-2 py-2 text-sm leading-5 outline-none placeholder:text-muted-foreground" />
-            <div className="flex items-center justify-between gap-2 border-t px-1 pt-2">
+            <div className="flex items-center justify-between gap-2 border-t border-[#edf2f7] px-1 pt-2">
               <div className="flex min-w-0 items-center gap-2">
                 <input ref={fileInputRef} type="file" className="hidden" onChange={(event) => { const file = event.target.files?.[0]; if (file) void readAttachment(file); event.currentTarget.value = ""; }} />
-                <button type="button" onClick={() => fileInputRef.current?.click()} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border hover:bg-muted" aria-label="添加临时参考文件"><Paperclip className="h-3.5 w-3.5" /></button>
-                <div className="relative">
-                  <button type="button" onClick={() => setMentionOpen((value) => !value)} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border text-sm hover:bg-muted" aria-label="引用路径节点">@</button>
-                  {mentionOpen && <div className="absolute bottom-10 left-0 z-20 max-h-56 w-56 overflow-y-auto rounded-xl border bg-card p-1 shadow-lg">{path.nodes.map((node) => <button key={node.id} type="button" onClick={() => addMention(node)} className="w-full rounded-lg px-2.5 py-2 text-left text-xs hover:bg-muted">{node.title}</button>)}</div>}
+                <div className="inline-flex h-8 shrink-0 items-center gap-0.5 rounded-lg bg-[#f3f7fc] p-0.5">
+                  <button type="button" onClick={() => fileInputRef.current?.click()} className="flex h-7 w-7 items-center justify-center rounded-md text-slate-500 transition-colors hover:bg-white hover:text-[#587db7]" aria-label="添加临时参考文件" title="添加临时参考"><Paperclip className="h-3.5 w-3.5" /></button>
+                  <div className="relative">
+                    <button type="button" onClick={() => setMentionOpen((value) => !value)} className="flex h-7 w-7 items-center justify-center rounded-md text-sm text-slate-500 transition-colors hover:bg-white hover:text-[#587db7]" aria-label="引用路径节点" title="引用路径节点">@</button>
+                    {mentionOpen && <div className="absolute bottom-10 left-0 z-20 max-h-56 w-60 overflow-y-auto rounded-xl border border-[#dce6f1] bg-card p-1.5 shadow-[0_12px_26px_rgb(57_86_120_/_12%)]">{path.nodes.map((node) => <button key={node.id} type="button" onClick={() => addMention(node)} className="w-full rounded-lg px-2.5 py-2 text-left text-xs text-slate-600 transition-colors hover:bg-[#f2f6fc] hover:text-slate-800">{node.title}</button>)}</div>}
+                  </div>
                 </div>
-                <select value={resourceType} onChange={(event) => setResourceType(event.target.value as ResourceType)} className="h-8 min-w-0 rounded-lg border bg-background px-2 text-xs">{resourceOptions.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select>
+                <label className="inline-flex h-8 min-w-0 items-center rounded-lg bg-[#f3f7fc] pl-2 pr-1 text-[10px] text-slate-400"><span className="mr-1.5 shrink-0">生成</span><select value={resourceType} onChange={(event) => setResourceType(event.target.value as ResourceType)} className="h-7 min-w-0 rounded-md border-0 bg-transparent px-1.5 text-xs font-medium text-slate-600 outline-none">{resourceOptions.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
               </div>
-              <button type="button" disabled={!draft.trim() || sending || studyRunning} onClick={() => void send()} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-foreground text-background disabled:cursor-not-allowed disabled:opacity-35" aria-label="开始任务"><Send className="h-4 w-4" /></button>
+              <button type="button" disabled={!draft.trim() || sending || studyRunning} onClick={() => void send()} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#789ce6] text-white shadow-sm shadow-blue-200 transition-colors hover:bg-[#6d91db] disabled:cursor-not-allowed disabled:opacity-35" aria-label="开始任务"><Send className="h-3.5 w-3.5" /></button>
             </div>
           </div>
         </div>
       </section>
 
       <div role="separator" aria-orientation="vertical" onMouseDown={() => setResizing("right")} className="w-1.5 shrink-0 cursor-col-resize bg-border/60 transition-colors hover:bg-foreground/30" />
-      <aside style={{ width: rightWidth }} className="flex shrink-0 flex-col bg-muted/15" aria-label="当前学习路径"><div className="workspace-pane-titlebar flex shrink-0 items-center justify-between border-b bg-background px-4 py-3.5"><div className="flex items-center gap-2"><Network className="h-4 w-4" /><h2 className="text-sm font-semibold">学习路径</h2></div><span className="text-xs text-muted-foreground">{path.nodes.length} 个节点</span></div><div className="min-h-0 basis-[59%] p-3">{path.nodes.length ? <TreeCanvas graph={path} selectedNodeId={selectedNodeId} onSelect={(node) => setSelectedNodeId(node.id)} /> : <div className="flex h-full items-center justify-center rounded-xl border border-dashed text-xs text-muted-foreground">尚未建立学习路径</div>}</div><div className="min-h-0 basis-[41%] overflow-y-auto border-t bg-background p-4">{selectedNode ? <PathNodeDetails apiBase={apiBase} node={selectedNode} primaryLabel="引用到问题" onPrimary={() => addMention(selectedNode)} onUpdateNode={updateNode} saving={savingNodeId === selectedNode.id} compact /> : <div className="flex h-full items-center justify-center text-xs text-muted-foreground">选择一个节点</div>}</div></aside>
+      <aside style={{ width: rightWidth }} className="flex shrink-0 flex-col bg-muted/15" aria-label="当前学习路径"><div className="workspace-pane-titlebar flex shrink-0 items-center justify-between border-b bg-background px-4 py-3.5"><div className="flex items-center gap-2"><Network className="h-4 w-4" /><h2 className="text-sm font-semibold">学习路径</h2></div><span className="text-xs text-muted-foreground">{path.nodes.length} 个节点</span></div><div className="min-h-0 basis-[59%] p-3">{path.nodes.length ? <TreeCanvas graph={path} selectedNodeId={selectedNodeId} onSelect={(node) => setSelectedNodeId(node.id)} /> : <div className="flex h-full items-center justify-center rounded-xl border border-dashed text-xs text-muted-foreground">尚未建立学习路径</div>}</div><div className="min-h-0 basis-[41%] overflow-y-auto border-t bg-background p-4">{selectedNode ? <PathNodeDetails apiBase={apiBase} node={selectedNode} primaryLabel="引用到问题" onPrimary={() => addMention(selectedNode)} onRequestNodeAddition={requestPathAdjustment} onUpdateNode={updateNode} saving={savingNodeId === selectedNode.id} compact /> : <div className="flex h-full items-center justify-center text-xs text-muted-foreground">选择一个节点</div>}</div></aside>
     </div>
 
     {profileOpen && <ProfileDialog apiBase={apiBase} user={user} onUserChange={onUserChange} onClose={() => setProfileOpen(false)} />}
     {settingsOpen && <SettingsDialog apiBase={apiBase} onClose={() => setSettingsOpen(false)} />}
+    <ContextClearDialog open={clearDialogOpen} pending={clearingConversation} title="清除本次对话" description="仅清空当前学习任务的对话和后续参考；学习路径、已生成资源与验证记录会保留。" onClose={() => setClearDialogOpen(false)} onConfirm={() => void clearConversation()} />
   </main>;
 }
 
 /** 实时展示各处理步骤的公开进度；校验细节统一放到“验证”页。 */
 function RunProgressStrip({ states, summary, events, completed }: { states: Array<{ key: string; state: RunNodeState }>; summary: string; events: Array<{ id: string; type: string; nodeKey: string | null; summary: string }>; completed: boolean }) {
+  // 历史任务与本地快照可能都携带同一处理步骤；界面只保留各步骤的最新状态。
+  const visibleStates = [...states.reduce((latest, item) => latest.set(item.key, item), new Map<string, { key: string; state: RunNodeState }>()).values()];
   return <section aria-label="任务处理进度" className="rounded-xl border bg-muted/20 px-3.5 py-3">
-    <div className="flex items-center justify-between text-[10px] font-medium tracking-wide text-muted-foreground"><span>{completed ? "处理完成" : "处理中"}</span><span>完成 {states.filter((item) => item.state === "succeeded").length} 项</span></div>
+    <div className="flex items-center justify-between text-[10px] font-medium tracking-wide text-muted-foreground"><span>{completed ? "处理完成" : "处理中"}</span><span>完成 {visibleStates.filter((item) => item.state === "succeeded").length} 项</span></div>
     <div className="mt-2 flex flex-wrap gap-1.5">
-      {states.map((item) => <span key={item.key} className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] ${item.state === "succeeded" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : item.state === "failed" ? "border-destructive/30 bg-destructive/10 text-destructive" : item.state === "revising" ? "border-amber-200 bg-amber-50 text-amber-700" : "border-border bg-background text-foreground"}`}><span className={`h-1.5 w-1.5 rounded-full ${item.state === "succeeded" ? "bg-emerald-600" : item.state === "failed" ? "bg-destructive" : item.state === "revising" ? "bg-amber-500" : "animate-pulse bg-foreground"}`} />{nodeLabels[item.key]?.name ?? item.key}</span>)}
+      {visibleStates.map((item) => <span key={item.key} className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] ${item.state === "succeeded" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : item.state === "failed" ? "border-destructive/30 bg-destructive/10 text-destructive" : item.state === "revising" ? "border-amber-200 bg-amber-50 text-amber-700" : "border-border bg-background text-foreground"}`}><span className={`h-1.5 w-1.5 rounded-full ${item.state === "succeeded" ? "bg-emerald-600" : item.state === "failed" ? "bg-destructive" : item.state === "revising" ? "bg-amber-500" : "animate-pulse bg-foreground"}`} />{nodeLabels[item.key]?.name ?? item.key}</span>)}
     </div>
     {summary && <p className="mt-2 line-clamp-2 text-[11px] leading-4 text-muted-foreground">{readableProcessText(summary)}</p>}
     {events.length > 0 && <div className="mt-3 border-t pt-2 text-xs"><p className="mb-1.5 font-medium text-foreground">处理记录</p><div className="space-y-1.5">{events.map((event) => <div key={event.id} className="flex gap-2 leading-5 text-muted-foreground"><span className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${event.type === "node.failed" ? "bg-rose-500" : event.type === "node.succeeded" ? "bg-emerald-500" : "bg-sky-500"}`} /><span>{readableProcessText(event.summary)}</span></div>)}</div></div>}

@@ -417,6 +417,19 @@ export function LearningPathWorkbench({ apiBase, user, onLogout, onNavigate, onU
   const [settingsOpen, setSettingsOpen] = useState(false);
   const feedRef = useRef<HTMLDivElement | null>(null);
 
+  const consumePathPrefill = useCallback((graph: PathGraph) => {
+    try {
+      const raw = window.localStorage.getItem("im-training-agent:path-prefill");
+      if (!raw) return null;
+      window.localStorage.removeItem("im-training-agent:path-prefill");
+      const parsed = JSON.parse(raw) as { draft?: unknown; nodeId?: unknown; createdAt?: unknown };
+      if (typeof parsed.draft !== "string" || !parsed.draft.trim()) return null;
+      if (typeof parsed.createdAt === "number" && Date.now() - parsed.createdAt > 120_000) return null;
+      setDraft(parsed.draft);
+      return typeof parsed.nodeId === "string" && graph.nodes.some((node) => node.id === parsed.nodeId) ? parsed.nodeId : null;
+    } catch { return null; }
+  }, []);
+
   const loadWorkbench = useCallback(async () => {
     const [pathResponse, profileResponse, chatResponse] = await Promise.all([
       fetch(`${apiBase}/api/learning/path-graph`, { credentials: "include" }),
@@ -428,11 +441,12 @@ export function LearningPathWorkbench({ apiBase, user, onLogout, onNavigate, onU
     const profileData = await profileResponse.json() as { profile?: ProfileMetric };
     const chatData = await chatResponse.json() as { messages?: ChatMessage[] };
     const nextPath = pathData.path ?? { nodes: [], edges: [] };
+    const preferredNodeId = consumePathPrefill(nextPath);
     setPath(nextPath);
     setProfile(profileData.profile ?? null);
     setMessages(chatData.messages ?? []);
-    setSelectedNodeId((current) => current && nextPath.nodes.some((node) => node.id === current) ? current : nextPath.nodes[0]?.id ?? null);
-  }, [apiBase]);
+    setSelectedNodeId((current) => preferredNodeId ?? (current && nextPath.nodes.some((node) => node.id === current) ? current : nextPath.nodes[0]?.id ?? null));
+  }, [apiBase, consumePathPrefill]);
 
   useEffect(() => {
     let alive = true;
