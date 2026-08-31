@@ -1001,6 +1001,13 @@ app.post('/api/learning/evidence', async (req, res) => {
   }
 });
 
+/** 可选 Web 补全服务的公开状态；不暴露任何密钥，也不要求服务必须已启动。 */
+app.get('/api/learning/web-search/status', async (req, res) => {
+  const learner = await requireLearner(req, res);
+  if (!learner) return;
+  res.json({ success: true, webSearch: evidenceService.getWebSearchStatus() });
+});
+
 app.get('/api/learning/assets', async (req, res) => {
   const learner = await requireLearner(req, res);
   if (!learner) return;

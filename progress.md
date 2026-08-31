@@ -4,6 +4,13 @@
 
 > 说明：本文保留历史实现记录；当前运行时已收敛为 PostgreSQL 16 + pgvector，历史条目中的本地文件数据库描述不代表现行架构。
 
+## 2026-08-31 SearXNG 可选 Web 补全检索（完成）
+
+- 新增 `server/search/searxng.ts`：环境开关、低覆盖/时效资料/Claim 复核触发、JSON 结果规范化、超时降级和敏感检索词阻断。
+- 网络结果仅以 `web_search` 低可信临时线索进入 EvidencePack，并在证据规则、运行事件、Claim 反证和资源提示词中明确“不能替代本地交叉验证”。
+- 新增 Compose `search` profile、`deploy/searxng/settings.yml`、环境变量与状态接口；本机 SearXNG 已实测 JSON API 200、适配器成功规范化 3 条结果。
+- 回归通过：`pnpm typecheck`、`pnpm test`（24 文件 / 185 项）、`pnpm lint`、`pnpm build`、前端生产构建、Compose 配置检查；API/worker/SearXNG 已重新启动。
+
 ## 2026-08-31 普通用户界面文案收敛（完成）
 
 - 学习路径节点不再直接展示掌握概率、置信度和补强阈值，改为“建议补强 / 保持节奏 / 可进阶”等可执行建议。

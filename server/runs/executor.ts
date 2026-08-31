@@ -151,6 +151,9 @@ function evidenceDigest(pack: EvidencePack | null, options: { itemCount?: number
     title: item.sourceTitle,
     locator: item.locator,
     content: item.content.slice(0, contentLimit),
+    sourceType: item.sourceType,
+    trustLevel: item.trustLevel,
+    provider: item.metadata?.['provider'] ?? null,
   }));
 }
 
@@ -259,14 +262,22 @@ async function mergeEvidencePacks(ctx: RunContext, query: string): Promise<Evide
     }
   }
   const base = packs[0]!;
+  const webSearch = packs.map((pack) => pack.webSearch).find((item) => Boolean(item));
   const merged: EvidencePack = {
     ...base,
     id: `evidence-pack-${randomUUID()}`,
     items,
     retrievalPlan: [...new Set(packs.flatMap((pack) => pack.retrievalPlan))],
+    coverageScore: Math.max(...packs.map((pack) => pack.coverageScore)),
     structuredCount: items.filter((item) => item.sourceType === 'dataset').length,
     documentCount: items.filter((item) => item.sourceType === 'document').length,
+    temporaryCount: packs.reduce((total, pack) => total + pack.temporaryCount, 0),
+    privacy: {
+      temporaryReferenceUsed: packs.some((pack) => pack.privacy.temporaryReferenceUsed),
+      retained: false,
+    },
     crossValidation: crossValidate(items),
+    ...(webSearch ? { webSearch } : {}),
   };
   await evidenceService.persistEvidencePack(merged);
   return merged;
@@ -343,9 +354,28 @@ async function retrieveEvidence(run: StudyRunRow, node: RunNodeSpec, attempt: nu
       await emitEvent(run, node, 'node.progress', `混合检索降级：${reasonText}，已回退全文检索。`, { hybrid: pack.hybrid });
       await bubble(run, node.role, `注意：向量检索暂不可用（${reasonText}），文档证据已降级为全文检索，不影响门禁流程。`);
     }
-    await bubble(run, node.role, pack.items.length > 0
-      ? `完成文档检索：按相关度命中 ${pack.items.length} 份资料，最相关《${pack.items[0]?.sourceTitle ?? ''}》${pack.items[0]?.locator ? `（${pack.items[0].locator}）` : ''}。`
-      : '文档检索未命中可用资料，将提示生成端只依赖结构化数据并保守表达。');
+    const localDocuments = pack.items.filter((item) => item.sourceType === 'document');
+    const localDocumentCount = localDocuments.length;
+    const leadingDocument = localDocuments[0];
+    const webResultCount = pack.webSearch?.resultCount ?? 0;
+    if (webResultCount > 0) {
+      await emitEvent(run, node, 'node.progress', `网络资料补全：新增 ${webResultCount} 条可回溯来源，作为待复核线索。`, {
+        provider: 'searxng',
+        trigger: pack.webSearch?.trigger ?? null,
+        resultCount: webResultCount,
+      });
+    } else if (pack.webSearch?.reason === 'privacy_filtered') {
+      await emitEvent(run, node, 'node.progress', '网络资料补全已跳过：查询中包含敏感信息，未向外部搜索服务发送。', { provider: 'searxng' });
+    } else if (pack.webSearch?.reason) {
+      await emitEvent(run, node, 'node.progress', '网络资料补全暂不可用，已继续使用本地证据链。', {
+        provider: 'searxng', reason: pack.webSearch.reason,
+      });
+    }
+    await bubble(run, node.role, localDocumentCount > 0
+      ? `完成文档检索：命中 ${localDocumentCount} 份本地资料，最相关《${leadingDocument?.sourceTitle ?? ''}》${leadingDocument?.locator ? `（${leadingDocument.locator}）` : ''}${webResultCount > 0 ? `；另补充 ${webResultCount} 条网络来源，关键结论仍需复核。` : '。'}`
+      : webResultCount > 0
+        ? `本地资料暂未命中，已补充 ${webResultCount} 条网络来源作为待复核线索；生成内容会保持审慎表达。`
+        : '文档检索未命中可用资料，将提示生成端只依赖结构化数据并保守表达。');
   }
   await persistNodeArtifact(run, node, attempt, 'evidence_set', {
     packId: pack.id,
@@ -355,6 +385,7 @@ async function retrieveEvidence(run: StudyRunRow, node: RunNodeSpec, attempt: nu
     coverageScore: pack.coverageScore,
     crossValidation: pack.crossValidation,
     hybrid: pack.hybrid ?? null,
+    webSearch: pack.webSearch ?? null,
     items: pack.items.slice(0, 12).map((item) => ({
       id: item.id,
       sourceType: item.sourceType,
@@ -371,6 +402,7 @@ async function retrieveEvidence(run: StudyRunRow, node: RunNodeSpec, attempt: nu
       `${plan.includes('structured') ? '结构化' : '文档'}检索取回 ${pack.items.length} 条证据`,
       `证据覆盖度 ${pack.coverageScore}`,
       degraded ? '向量检索降级为全文检索' : '混合检索两路可用',
+      pack.webSearch?.resultCount ? `网络补全 ${pack.webSearch.resultCount} 条待复核来源` : '未使用网络补全来源',
     ],
     basisRefs: pack.items.slice(0, 6).map((item) => item.id),
     decision: pack.items.length > 0
@@ -746,7 +778,7 @@ async function runDebateChallenge(run: StudyRunRow, node: RunNodeSpec, attempt: 
   const criticIssues = (await criticAgentIssues(run, audit))
     .filter((issue) => !ruleKeys.has(`${issue.issueType}:${issue.targetClaimId ?? ''}`));
   issues.push(...criticIssues);
-  // 里程碑 D 第 7 条：counterevidence_request → 在已有知识库和数据中执行反证检索，不联网
+  // Claim 审核提出反证请求时：先查本地知识库，再由已启用的 SearXNG 补充可回溯线索。
   const counterevidence: Array<{ request: string; packId: string | null; found: number; note: string }> = [];
   for (const issue of issues.filter((item) => item.issueType === 'counterevidence_request').slice(0, 2)) {
     try {
@@ -754,6 +786,7 @@ async function runDebateChallenge(run: StudyRunRow, node: RunNodeSpec, attempt: 
         learnerId: run.learnerId,
         sessionId: `study-run-${run.id}`,
         retrievalPlan: ['document'],
+        webSearch: 'force',
       });
       counterevidence.push({
         request: issue.argument.slice(0, 120),
@@ -769,7 +802,15 @@ async function runDebateChallenge(run: StudyRunRow, node: RunNodeSpec, attempt: 
             if (!items.some((existing) => existing.id === item.id)) items.push(item);
           }
           await mergeRunContext(run.id, {
-            merged_pack: { ...current, items, documentCount: items.filter((item) => item.sourceType === 'document').length, crossValidation: crossValidate(items) },
+            merged_pack: {
+              ...current,
+              items,
+              retrievalPlan: [...new Set([...current.retrievalPlan, ...pack.retrievalPlan])],
+              documentCount: items.filter((item) => item.sourceType === 'document').length,
+              temporaryCount: current.temporaryCount + pack.temporaryCount,
+              crossValidation: crossValidate(items),
+              ...(pack.webSearch ? { webSearch: pack.webSearch } : {}),
+            },
             counterevidence,
           });
         } else {

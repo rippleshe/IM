@@ -1,0 +1,17 @@
+# IM-Training-Agent 的本地 SearXNG 配置。
+# 仅暴露 JSON 摘要接口；服务端不会抓取或持久化网页正文。
+use_default_settings: true
+
+server:
+  bind_address: "0.0.0.0"
+  port: 8080
+  limiter: false
+  public_instance: false
+  # Docker Compose 通过 SEARXNG_SECRET 覆盖此值；部署时请使用随机值。
+  secret_key: "replace-with-a-random-local-secret"
+
+search:
+  safe_search: 1
+  formats:
+    - html
+    - json

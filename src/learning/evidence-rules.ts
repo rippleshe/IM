@@ -67,6 +67,7 @@ export function normalizeSearchTerms(query: string): string[] {
 export function crossValidate(items: EvidenceItem[]): CrossValidationResult {
   const structured = items.filter((item) => item.sourceType === 'dataset');
   const documents = items.filter((item) => item.sourceType === 'document');
+  const webSearch = items.filter((item) => item.sourceType === 'web_search');
   const locatable = items.filter((item) => item.locator.trim().length > 0);
   const checks = [
     {
@@ -93,6 +94,15 @@ export function crossValidate(items: EvidenceItem[]): CrossValidationResult {
       evidenceIds: items.map((item) => item.id),
     },
     {
+      id: 'web-search-source',
+      label: '网络补全来源',
+      status: webSearch.length > 0 ? 'passed' as const : 'review' as const,
+      detail: webSearch.length > 0
+        ? `已补充 ${webSearch.length} 条 SearXNG 搜索摘要；仅作待复核线索，不替代库内领域文档`
+        : '本次未使用网络补全来源',
+      evidenceIds: webSearch.map((item) => item.id),
+    },
+    {
       id: 'source-locator',
       label: '来源定位完整',
       status: locatable.length === items.length && items.length > 0 ? 'passed' as const : 'failed' as const,
@@ -100,8 +110,10 @@ export function crossValidate(items: EvidenceItem[]): CrossValidationResult {
       evidenceIds: locatable.map((item) => item.id),
     },
   ];
-  const passed = checks.filter((check) => check.status === 'passed').length;
-  const score = items.length === 0 ? 0 : Math.round(((passed / checks.length) * 0.7 + Math.min(1, items.length / 10) * 0.3) * 100) / 100;
+  // 未启用 Web 补全时不降低既有评分；启用后网络来源被计入可见覆盖，但不能取代本地域文档的交叉验证。
+  const scoringChecks = webSearch.length > 0 ? checks : checks.filter((check) => check.id !== 'web-search-source');
+  const passed = scoringChecks.filter((check) => check.status === 'passed').length;
+  const score = items.length === 0 ? 0 : Math.round(((passed / scoringChecks.length) * 0.7 + Math.min(1, items.length / 10) * 0.3) * 100) / 100;
   const status = items.length === 0
     ? 'unsupported'
     : structured.length > 0 && documents.length > 0
@@ -111,8 +123,11 @@ export function crossValidate(items: EvidenceItem[]): CrossValidationResult {
     status,
     score,
     checks,
-    notes: status === 'corroborated'
-      ? ['结构化数据和领域文档已同时提供，生成内容仍需逐条 Claim 审核。']
-      : ['当前证据来源不完整，不能把模型输出当作确定结论。'],
+    notes: [
+      ...(status === 'corroborated'
+        ? ['结构化数据和领域文档已同时提供，生成内容仍需逐条 Claim 审核。']
+        : ['当前证据来源不完整，不能把模型输出当作确定结论。']),
+      ...(webSearch.length > 0 ? ['网络搜索只提供摘要与链接；关键结论仍需由库内证据或原始来源复核。'] : []),
+    ],
   };
 }

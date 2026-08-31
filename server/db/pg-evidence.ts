@@ -17,6 +17,12 @@ import { from as copyFrom } from 'pg-copy-streams';
 
 import { crossValidate, normalizeSearchTerms } from '../../src/learning/evidence-rules.js';
 import { hybridDocumentRowsPg } from './pg-retrieval.js';
+import {
+  chooseWebSearchTrigger,
+  getSearxngConfig,
+  getWebSearchStatus as getSearxngStatus,
+  searchSearxng,
+} from '../search/searxng.js';
 import type {
   CsvDatasetSource,
   DatasetSummary,
@@ -342,6 +348,40 @@ export interface EvidenceBuildOptions {
   temporaryReference?: { name: string; content: string } | null;
   /** DAG 检索节点按路径拆分：不传 = 双路全检（docs/挑战杯技术开发总规.md §5.2） */
   retrievalPlan?: Array<'structured' | 'document'>;
+  /** false 时禁用；force 供 Claim 反证复核使用；缺省按触发条件自动决定。 */
+  webSearch?: boolean | 'force';
+}
+
+function coverageScoreOf(documentCount: number, structuredCount: number, webCount = 0): number {
+  // 网络摘要只能小幅补全覆盖面，永远不能替代本地文档与结构化数据的权重。
+  const score = 0.35
+    + Math.min(0.35, documentCount * 0.06)
+    + Math.min(0.3, structuredCount * 0.04)
+    + Math.min(0.12, webCount * 0.025);
+  return Math.min(1, Math.round(score * 100) / 100);
+}
+
+async function recordBlockedWebSearch(
+  pool: Pool,
+  query: string,
+  options: Pick<EvidenceBuildOptions, 'learnerId' | 'sessionId'>,
+  redactedFields: string[],
+): Promise<void> {
+  if (redactedFields.length === 0) return;
+  await pool.query(
+    `INSERT INTO privacy_audit_events
+      (id, learner_id, session_id, event_type, file_name, byte_count, content_hash, redacted_fields_json, retained, created_at)
+     VALUES ($1, $2, $3, $4, NULL, NULL, $5, $6, false, $7)`,
+    [
+      `privacy-${randomUUID()}`,
+      options.learnerId ?? null,
+      options.sessionId ?? null,
+      'web_search_blocked',
+      createHash('sha256').update(query).digest('hex'),
+      JSON.stringify(redactedFields),
+      Date.now(),
+    ],
+  );
 }
 
 export class PgEvidenceService {
@@ -349,6 +389,10 @@ export class PgEvidenceService {
 
   async getCatalog(): Promise<DatasetSummary> {
     return getMetroSummaryPg(this.pool);
+  }
+
+  getWebSearchStatus() {
+    return getSearxngStatus();
   }
 
   async buildEvidencePack(query: string, options: EvidenceBuildOptions = {}): Promise<EvidencePack> {
@@ -374,7 +418,46 @@ export class PgEvidenceService {
         metadata: { title: row.title, termsMatched: terms.length, via: row.via },
       }));
     }
-    const items = [...structured, ...documents];
+    const localCoverage = coverageScoreOf(documents.length, structured.length);
+    const config = getSearxngConfig();
+    const trigger = wantDocuments && options.webSearch !== false && config.enabled
+      ? options.webSearch === 'force'
+        ? 'claim_review'
+        : chooseWebSearchTrigger(query, documents.length, localCoverage, config)
+      : null;
+    let webSearch: EvidenceItem[] = [];
+    let webSearchInfo: EvidencePack['webSearch'];
+    if (trigger) {
+      const outcome = await searchSearxng(query, config);
+      webSearch = outcome.results.map((result, index) => evidenceItem({
+        sourceType: 'web_search',
+        sourceId: result.url,
+        sourceTitle: result.title,
+        locator: result.url,
+        content: result.content,
+        retrievalMethod: 'web',
+        relevanceScore: Math.max(0.42, 0.62 - index * 0.04),
+        trustLevel: 'low',
+        scope: 'web_search',
+        metadata: {
+          provider: 'searxng',
+          queryKind: 'web_search',
+          engines: result.engines.join(', ') || 'unknown',
+          ...(result.publishedDate ? { publishedDate: result.publishedDate } : {}),
+        },
+      }));
+      webSearchInfo = {
+        provider: 'searxng',
+        trigger,
+        attempted: outcome.reason !== 'privacy_filtered',
+        resultCount: webSearch.length,
+        ...(outcome.reason ? { reason: outcome.reason } : {}),
+      };
+      if (outcome.reason === 'privacy_filtered') {
+        await recordBlockedWebSearch(this.pool, query, options, outcome.redactedFields ?? []);
+      }
+    }
+    const items = [...structured, ...documents, ...webSearch];
     for (const item of items) await persistEvidencePg(this.pool, item);
     const crossValidation = crossValidate(items);
     const pack: EvidencePack = {
@@ -384,14 +467,16 @@ export class PgEvidenceService {
       retrievalPlan: [
         ...(wantStructured && structured.length > 0 ? ['structured' as const] : []),
         ...(wantDocuments && documents.length > 0 ? ['document' as const] : []),
+        ...(webSearch.length > 0 ? ['web_search' as const] : []),
       ],
-      coverageScore: Math.min(1, Math.round((0.35 + Math.min(0.35, documents.length * 0.06) + Math.min(0.3, structured.length * 0.04)) * 100) / 100),
+      coverageScore: coverageScoreOf(documents.length, structured.length, webSearch.length),
       crossValidation,
       structuredCount: structured.length,
       documentCount: documents.length,
-      temporaryCount: options.temporaryReference ? 1 : 0,
+      temporaryCount: (options.temporaryReference ? 1 : 0) + webSearch.length,
       privacy: { temporaryReferenceUsed: Boolean(options.temporaryReference), retained: false },
       hybrid,
+      ...(webSearchInfo ? { webSearch: webSearchInfo } : {}),
       learnerId: options.learnerId,
       sessionId: options.sessionId,
       createdAt: Date.now(),

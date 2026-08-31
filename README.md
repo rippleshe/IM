@@ -222,6 +222,24 @@ pnpm db:migrate                       # 应用 PostgreSQL schema 迁移
 
 `.env` 中配置 `DATABASE_URL` 与 `REDIS_URL`（见 `.env.example`）。运行时只连接 PostgreSQL 16 + pgvector；若本机 5432/6379 已被原生服务占用，在 `.env` 中改用 `POSTGRES_PORT`/`REDIS_PORT` 指定空闲端口。
 
+### 可选网络补全：SearXNG
+
+SearXNG 是一个**可选检索插件**，不替代 PostgreSQL，也不会变成启动应用的前置条件。默认关闭；启用后，流程是“本地 SQL + 文档混合检索 → 必要时网络摘要补全 → 领域分析 → 资源生成 → Claim 审核”。
+
+- 仅在本地文档证据偏少、用户明确询问最新资料/标准/论文，或 Claim 复核要求寻找反证时调用；
+- 只接收 SearXNG 的标题、摘要、链接与搜索引擎名，不下载网页正文，也不写入向量库；
+- 每条网络结果以 `web_search` 证据类型记录，可信度为低，不能替代本地结构化数据和领域文档的交叉验证；
+- 包含密钥、邮箱、手机号或身份证号的查询会被隐私门禁拦截，不会转发；服务不可用、超时或返回异常时自动退回本地证据链。
+
+启动本机搜索服务并在 `.env` 中把 `SEARXNG_ENABLED=true` 后，重启 `pnpm server` 和 `pnpm worker`：
+
+```bash
+docker compose --profile search up -d searxng
+curl "http://127.0.0.1:8088/search?q=工业设备轴承故障诊断方法&format=json"
+```
+
+注意：SearXNG 本身在本机运行，但它会把经过隐私门禁的检索词转发给所启用的公开搜索源；“本地部署”不等于搜索请求永远不出网。部署配置和可调阈值见 `.env.example`，搜索状态可由已登录用户通过 `GET /api/learning/web-search/status` 查看。
+
 ### 同时启动
 
 ```bash

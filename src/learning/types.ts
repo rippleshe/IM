@@ -12,9 +12,10 @@ export function isLearningResourceType(value: unknown): value is LearningResourc
   return typeof value === 'string' && (LEARNING_RESOURCE_TYPE_VALUES as readonly string[]).includes(value);
 }
 
-export type EvidenceSourceType = 'dataset' | 'document' | 'learner_state' | 'upload';
-export type RetrievalMethod = 'sql' | 'fts' | 'vector' | 'none';
-export type EvidenceScope = 'system' | 'session_upload' | 'learner_private';
+export type EvidenceSourceType = 'dataset' | 'document' | 'learner_state' | 'upload' | 'web_search';
+export type RetrievalMethod = 'sql' | 'fts' | 'vector' | 'web' | 'none';
+export type EvidenceScope = 'system' | 'session_upload' | 'learner_private' | 'web_search';
+export type EvidenceRetrievalPlan = 'structured' | 'document' | 'web_search';
 
 /** 混合检索信息（总规 §7.5）：向量路是否可用与降级原因 */
 export interface HybridRetrievalInfo {
@@ -54,11 +55,20 @@ export interface EvidenceItem {
   metadata?: Record<string, string | number | boolean>;
 }
 
+/** 可选网络补全检索的公开运行状态；仅保存来源摘要，不抓取网页正文。 */
+export interface WebSearchInfo {
+  provider: 'searxng';
+  trigger: 'local_evidence_sparse' | 'freshness_or_reference' | 'claim_review' | null;
+  attempted: boolean;
+  resultCount: number;
+  reason?: string;
+}
+
 export interface EvidencePack {
   id: string;
   query: string;
   items: EvidenceItem[];
-  retrievalPlan: Array<'structured' | 'document'>;
+  retrievalPlan: EvidenceRetrievalPlan[];
   coverageScore: number;
   crossValidation: CrossValidationResult;
   structuredCount: number;
@@ -70,6 +80,8 @@ export interface EvidencePack {
   };
   /** 混合检索信息（总规 §7.5）：向量路是否可用与降级原因，仅 PG 数据源填充 */
   hybrid?: HybridRetrievalInfo;
+  /** SearXNG 是可选的临时补全源，永远不替代库内 SQL/文档证据。 */
+  webSearch?: WebSearchInfo;
   learnerId?: string;
   sessionId?: string;
   createdAt: number;
