@@ -1,4 +1,4 @@
--- VACP 可验证协同协议（docs/挑战杯多智能体可信协同升级计划.md §5.1）
+-- VACP 可验证协同协议（docs/挑战杯技术开发总规.md §4、§6）
 -- 全部新增列为 nullable 或带默认值，保留历史行：已有运行与演示数据不受影响。
 CREATE TABLE IF NOT EXISTS "collaboration_artifacts" (
 	"id" text PRIMARY KEY,

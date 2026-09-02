@@ -1,5 +1,5 @@
 /**
- * 离线回放（docs/挑战杯多智能体可信协同升级计划.md 里程碑 F）
+ * 离线回放（docs/挑战杯技术开发总规.md §8.3）
  *
  * 用法：pnpm replay:run data/exports/<file>.json
  * 不连接模型：根据导出包内的 artifact 与 Claim 重算每轮幻觉率、确定性门禁，

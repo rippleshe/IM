@@ -1,5 +1,5 @@
 /**
- * Claim 追溯链（docs/挑战杯多智能体可信协同升级计划.md 里程碑 D）
+ * Claim 追溯链（docs/挑战杯技术开发总规.md §4）
  *
  * 通过 logicalKey / supersedes_claim_id 把同一逻辑声明的初稿 → 质询 → 裁决 →
  * 修订 → 终稿串成一条可回溯链，支撑：

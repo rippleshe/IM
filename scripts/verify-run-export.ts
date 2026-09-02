@@ -1,5 +1,5 @@
 /**
- * 导出包完整性校验（docs/挑战杯多智能体可信协同升级计划.md 里程碑 F）
+ * 导出包完整性校验（docs/挑战杯技术开发总规.md §8.3）
  *
  * 用法：pnpm verify:export data/exports/<file>.json
  * 只做离线规则复算：不连接数据库、不调用模型。

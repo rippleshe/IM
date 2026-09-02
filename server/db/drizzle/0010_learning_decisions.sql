@@ -1,4 +1,4 @@
--- 反馈驱动的持久化学习决策（docs/挑战杯多智能体可信协同升级计划.md 里程碑 E / G12）
+-- 反馈驱动的持久化学习决策（docs/挑战杯技术开发总规.md §7）
 CREATE TABLE IF NOT EXISTS "learning_decisions" (
 	"id" text PRIMARY KEY,
 	"learner_id" text NOT NULL,

@@ -1,5 +1,5 @@
 /**
- * 苏格拉底追问会话编排（docs/挑战杯技术开发总规.md §7.4、sol 的第一份计划 §3 接口契约）
+ * 苏格拉底追问会话编排（docs/挑战杯技术开发总规.md §7.4）
  * - 会话与轮次落 guidance_sessions / guidance_turns（PostgreSQL），无内存态、可恢复；
  * - 提问与评价由 learning_planning 角色的 LLM 生成，失败回退确定性模板（src/learning/socratic.ts）；
  * - 每轮回答驱动 BKT 更新（applySkillObservation），终止后输出“生成资源 / 更新路径建议”决策。

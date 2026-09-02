@@ -1,5 +1,5 @@
 /**
- * 学情状态快照（docs/挑战杯多智能体可信协同升级计划.md §5.1 run_state_snapshots）
+ * 学情状态快照（docs/挑战杯技术开发总规.md §6）
  *
  * - run_start：createStudyRun 时立即固化，后续 BKT 变化不影响（修 G7 导出语义）；
  * - generation_end：发布收尾时固化，供前后对照；
