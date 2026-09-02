@@ -258,6 +258,16 @@ async function calibrateForLearner(run: StudyRunRow, pathNode: Awaited<ReturnTyp
   });
 }
 
+function instructionalModeOf(calibration: DifficultyCalibration): string {
+  if (calibration.targetDifficulty <= 0.35) {
+    return '起步补强：默认学习者只会基础表格操作或少量 Python。先解释每个核心词，再演示一个最小动作，最后才介绍原理和边界。';
+  }
+  if (calibration.targetDifficulty <= 0.65) {
+    return '稳步练习：先用一个已解释的例子复习，再逐步增加判断和迁移，不连续引入多个新术语。';
+  }
+  return '巩固迁移：可以增加对比和综合判断，但每个新字段、新缩写和新方法仍必须先用中文解释。';
+}
+
 async function mergeEvidencePacks(ctx: RunContext, query: string): Promise<EvidencePack> {
   const packs = [ctx.ev_structured, ctx.ev_document].filter((item): item is EvidencePack => Boolean(item));
   if (packs.length === 0) {
@@ -322,6 +332,8 @@ async function runAssessLearner(run: StudyRunRow, node: RunNodeSpec, attempt: nu
       JSON.stringify({
         node: pathNode ? { title: pathNode.title, description: pathNode.description, recommendation: pathNode.recommendation } : null,
         profile: { accuracy: profile.accuracy, studyMinutes: profile.studyMinutes, assetsCount: profile.assetsCount, skills: profile.skills.slice(0, 6) },
+        resourceType: run.request.resourceType,
+        resourceLabel: RESOURCE_TYPE_LABELS[run.request.resourceType] ?? '学习资源',
         task: { resourceType: run.request.resourceType, content: taskLabel },
         conversation: conciseConversationContext(run),
       }));
@@ -448,7 +460,7 @@ async function runAnalyzeDomain(run: StudyRunRow, node: RunNodeSpec, attempt: nu
     systemPrompt = DOMAIN_ANALYST_SYSTEM;
     const raw = await callAgent('domain_expert',
       systemPrompt,
-      JSON.stringify({ task: run.request.task, conversation: conciseConversationContext(run), evidence: evidenceDigest(merged) }));
+       JSON.stringify({ resourceType: run.request.resourceType, resourceLabel: RESOURCE_TYPE_LABELS[run.request.resourceType] ?? '学习资源', task: run.request.task, conversation: conciseConversationContext(run), evidence: evidenceDigest(merged) }));
     const parsed = parseJson<{ points?: unknown; boundaries?: unknown }>(raw) ?? {};
     points = Array.isArray(parsed.points) ? parsed.points.map((item) => String(item).slice(0, 100)).filter(Boolean).slice(0, 5) : [];
     boundaries = Array.isArray(parsed.boundaries) ? parsed.boundaries.map((item) => String(item).slice(0, 100)).filter(Boolean).slice(0, 3) : [];
@@ -538,6 +550,8 @@ async function runGenerateResource(run: StudyRunRow, node: RunNodeSpec, attempt:
   const forbidStrongClaims = run.verificationPolicy?.['forbidStrongFactualClaims'] === true;
   generationPrompt = resourceGenerationSystem({ type, isRevision, forbidStrongClaims });
   const sharedInput = {
+    resourceType: type,
+    resourceLabel: RESOURCE_TYPE_LABELS[type] ?? '学习资源',
     task: run.request.task,
     pathNode: pathNode ? {
       knowledgePointId: pathNode.knowledgePointId,
@@ -550,11 +564,21 @@ async function runGenerateResource(run: StudyRunRow, node: RunNodeSpec, attempt:
       requirements: assess.requirements,
     },
     difficultyCalibration: calibration,
+    instructionalMode: instructionalModeOf(calibration),
   };
   const payload = isRevision
     ? {
         ...sharedInput,
         failedClaims: ctx.revision_failed ?? [],
+        // 修订轮必须拿到上一版完整成品，否则模型只能根据失败声明重新起稿，
+        // 很容易把已经满足的章节、例子和教学脚手架一起删掉，出现“修订后变短”。
+        // 仅传当前资源文档，不传内部运行上下文，保持证据与隐私边界不变。
+        previousDraft: ctx.draft ? {
+          title: ctx.draft.title,
+          type: ctx.draft.type,
+          lead: ctx.draft.blocks.find((block) => block.type === 'paragraph')?.content ?? '',
+          blocks: ctx.draft.blocks,
+        } : null,
         domainPoints: domain.points,
         domainBoundaries: domain.boundaries,
         evidence: evidenceDigest(merged, { itemCount: 14, contentLimit: 500 }),

@@ -59,6 +59,12 @@ METRO_ROW.metadata = { queryKind: 'recent_rows' };
 
 const METRO_PACK = { ...pack([METRO_ROW]), query: '空压机传感器时间序列数据清洗' };
 
+const METRO_MATCHED_ROW = {
+  ...METRO_ROW,
+  id: 'metro-matched-row-1',
+  metadata: { queryKind: 'query_matched_rows' },
+};
+
 describe('parseLlmResourceDraft：结构校验与回退', () => {
   it('讲义：完整输出解析为各字段，缺失字段被剔除', () => {
     const draft = parseLlmResourceDraft('lecture', {
@@ -79,6 +85,21 @@ describe('parseLlmResourceDraft：结构校验与回退', () => {
     expect(draft.sections[0]?.code?.code).toContain('pandas');
     expect(draft.misconceptions).toHaveLength(1);
     expect(draft.reviewQuestions).toHaveLength(1);
+  });
+
+  it('四类资源：解析并保留面向初学者的术语入口', () => {
+    const draft = parseLlmResourceDraft('lecture', {
+      title: '从一行记录开始',
+      objectives: ['读懂一行记录', '完成一次观察'],
+      glossary: [
+        { term: '时间字段', plainMeaning: '记录每次测量发生时间的列，用来把记录按先后顺序排列。', example: '同一设备的两次读数可以按时间先后比较。', use: '开始观察趋势前先确认它。' },
+        { term: '测量值', plainMeaning: '传感器在某个时刻读到的数值，用来描述设备当时的状态。', example: '压力和温度都可能是测量值。', use: '跟着示例观察变化。' },
+        { term: '风险判断', plainMeaning: '根据已有记录指出需要继续核对的方向，不等于已经证明故障。', example: '某段读数持续偏离时先标为风险线索。', use: '最后整理下一步复核动作。' },
+      ],
+      sections: [{ heading: '先看问题', text: '先理解要观察什么。' }, { heading: '再做一步', text: '再按顺序完成观察。' }],
+    });
+    expect(draft?.kind).toBe('lecture');
+    expect(draft?.glossary).toHaveLength(3);
   });
 
   it('讲义：缺标题或小节不足 2 → 返回 null（模板兜底）', () => {
@@ -139,6 +160,42 @@ describe('validateLlmResourceDraftQuality：可交付质量门槛', () => {
     expect(issues.some((issue) => issue.includes('正文不足'))).toBe(true);
     expect(issues.some((issue) => issue.includes('记忆点'))).toBe(true);
     expect(issues.some((issue) => issue.includes('自测问题'))).toBe(true);
+    expect(issues.some((issue) => issue.includes('白话术语表'))).toBe(true);
+  });
+
+  it('术语表缺例子或使用场景时不能通过质量门槛', () => {
+    const draft = parseLlmResourceDraft('presentation', {
+      title: '入门演示',
+      objectives: ['读懂概念', '完成观察'],
+      glossary: [
+        { term: '时间字段', plainMeaning: '记录每次测量发生时间的列，用来把记录按先后顺序排列。' },
+        { term: '测量值', plainMeaning: '传感器在某个时刻读到的数值，用来描述设备当时的状态。' },
+        { term: '风险判断', plainMeaning: '根据已有记录指出需要继续核对的方向，不等于已经证明故障。' },
+      ],
+      slides: Array.from({ length: 8 }, (_, index) => ({ heading: `第${index + 1}页`, bullets: ['先看问题', '跟着做一步', '说明能否判断'], notes: '先用中文解释这一页，再带学习者完成一个小动作并说明下一步。' })),
+    })!;
+    const issues = validateLlmResourceDraftQuality(draft);
+    expect(issues.some((issue) => issue.includes('例子或使用场景'))).toBe(true);
+  });
+
+  it('知识脉络路径过长且没有小检查时不能通过质量门槛', () => {
+    const draft = parseLlmResourceDraft('concept_map', {
+      title: '数据清洗入门',
+      objectives: ['看懂数据问题', '完成基础检查'],
+      glossary: [
+        { term: '时间戳', plainMeaning: '记录一条数据在什么时候产生的时间信息，帮助我们按先后顺序观察变化。', example: '例如一条记录写着上午十点。', use: '用来检查顺序和时间间隔。' },
+        { term: '缺失值', plainMeaning: '本来应该有内容的单元格变成空白或无效值，说明这条记录的信息不完整。', example: '例如温度这一格没有读数。', use: '用来判断能否直接计算。' },
+        { term: '重复值', plainMeaning: '同一条数据被完整记录了不止一次，可能让统计结果看起来比实际更多。', example: '例如两行内容完全相同。', use: '用来决定是否保留多余记录。' },
+      ],
+      map: {
+        mermaid: 'flowchart TD\nA-->B\nB-->C',
+        nodes: Array.from({ length: 8 }, (_, index) => ({ label: `节点${index}`, explanation: '这是一段足够长的节点解释，用于说明它为什么重要、如何观察以及学习者下一步可以做什么。' })),
+        readingPaths: [{ title: '入门', steps: ['节点1', '节点2', '节点3', '节点4', '节点5', '节点6'] }, { title: '复核', steps: ['节点2', '节点3'] }],
+      },
+    })!;
+    const issues = validateLlmResourceDraftQuality(draft);
+    expect(issues.some((issue) => issue.includes('超过 5 步'))).toBe(true);
+    expect(issues.some((issue) => issue.includes('小检查问题'))).toBe(true);
   });
 
   it('解析与组装保留最多 8 个讲义小节', () => {
@@ -185,6 +242,25 @@ describe('buildLlmResourceDocument：块组装与证据绑定', () => {
       if (block.type === 'paragraph' && String(block.content).startsWith('flowchart')) continue;
       expect(block.evidenceIds.length).toBeGreaterThan(0);
     }
+  });
+
+  it('讲义：术语表会先于正文呈现，作为学习者入口', () => {
+    const llm = parseLlmResourceDraft('lecture', {
+      title: '从一行记录开始',
+      lead: '先从一个小问题开始。',
+      objectives: ['读懂字段', '完成观察'],
+      glossary: [
+        { term: '时间字段', plainMeaning: '记录每次测量发生时间的列，用来把记录按先后顺序排列。', example: '两次读数按时间先后比较。', use: '开始观察前确认它。' },
+        { term: '测量值', plainMeaning: '传感器在某个时刻读到的数值，用来描述设备当时的状态。', example: '压力和温度都是测量值。', use: '跟着示例观察变化。' },
+        { term: '风险判断', plainMeaning: '根据已有记录指出需要继续核对的方向，不等于已经证明故障。', example: '读数持续偏离时先标为线索。', use: '最后整理复核动作。' },
+      ],
+      sections: [{ heading: '先看问题', text: '先理解要观察什么。' }, { heading: '再做一步', text: '再按顺序完成观察。' }],
+    })!;
+    const doc = buildLlmResourceDocument('task-glossary', '设备数据入门', 'lecture', pack(EVIDENCE), 'kp', llm);
+    const glossaryHeading = doc.blocks.findIndex((block) => block.type === 'heading' && block.content === '先把几个词说清楚');
+    expect(glossaryHeading).toBeGreaterThan(0);
+    expect(doc.blocks[glossaryHeading + 1]?.type).toBe('list');
+    expect(JSON.stringify(doc.blocks[glossaryHeading + 1]?.content)).toContain('按时间先后比较');
   });
 
   it('PPT：每页为 heading + 要点列表 + 讲解词段落', () => {
@@ -281,6 +357,23 @@ describe('buildResourceDraft：长内容与数据集跟随', () => {
     expect(code).not.toContain('Air temperature [K]');
   });
 
+  it('混合数据集时优先当前命中的行，通用 pandas 词不能把空压机切成 AI4I', () => {
+    const aiRow = { ...EVIDENCE[2]!, id: 'ai4i-row-mixed' };
+    const mixedPack = {
+      ...pack([aiRow, METRO_MATCHED_ROW]),
+      query: '请用 pandas 整理空压机的时间字段',
+    };
+    const doc = buildResourceDraft('task-mixed-dataset', mixedPack.query, 'lecture', mixedPack, 'kp');
+    const table = doc.blocks.find((block) => block.type === 'table')?.content as { columns: string[]; evidenceIds: string[] } | undefined;
+    expect(table?.columns).toContain('timestamp');
+    expect(table?.columns).not.toContain('Machine failure');
+    expect(table?.evidenceIds).toEqual(['metro-matched-row-1']);
+    const code = String((doc.blocks.find((block) => block.type === 'code')?.content as { code?: string } | undefined)?.code ?? '');
+    expect(code).toContain('MetroPT3(AirCompressor).csv');
+    expect(code).toContain("timestamp");
+    expect(code).not.toContain('Machine failure');
+  });
+
   it('知识脉络模板兜底包含可读的关系图、节点解释和两条阅读路径', () => {
     const doc = buildResourceDraft('task-long-map', '空压机传感器证据到风险判断', 'concept_map', METRO_PACK, 'kp');
     const mermaid = String(doc.blocks.find((block) => block.type === 'paragraph' && String(block.content).startsWith('flowchart'))?.content ?? '');
@@ -288,6 +381,19 @@ describe('buildResourceDraft：长内容与数据集跟随', () => {
     expect(doc.blocks.filter((block) => block.type === 'heading').length).toBeGreaterThanOrEqual(3);
     expect(doc.blocks.some((block) => String(block.content).includes('阅读路径：从证据到行动'))).toBe(true);
     expect(doc.blocks.some((block) => String(block.content).includes('dvPressure'))).toBe(true);
+  });
+
+  it('知识脉络会把节点小检查放在节点解释后', () => {
+    const llm = parseLlmResourceDraft('concept_map', {
+      title: '带检查的知识脉络',
+      objectives: ['看懂关系'],
+      map: {
+        mermaid: 'flowchart TD\nA-->B\nB-->C',
+        nodes: [{ label: '问题', explanation: '先从一个真实问题开始，观察现象并决定下一步动作。', checkQuestion: '你现在要先确认什么？' }],
+      },
+    })!;
+    const doc = buildLlmResourceDocument('task-map-check', '知识脉络', 'concept_map', METRO_PACK, 'kp', llm);
+    expect(doc.blocks.some((block) => String(block.content).includes('小检查：你现在要先确认什么？'))).toBe(true);
   });
 });
 

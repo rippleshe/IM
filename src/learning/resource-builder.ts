@@ -15,26 +15,56 @@ function applyDifficulty(resource: ResourceDocument, calibration?: DifficultyCal
 }
 
 const isRowEvidence = (item: EvidenceItem): boolean => item.sourceType === 'dataset'
-  && (item.metadata?.['queryKind'] === 'recent_rows' || item.metadata?.['queryKind'] === 'dataset_row');
+  && (item.metadata?.['queryKind'] === 'recent_rows'
+    || item.metadata?.['queryKind'] === 'dataset_row'
+    || item.metadata?.['queryKind'] === 'query_matched_rows');
 
 // 按查询主题优先选择对应数据集，让讲义里的代码示例与数据摘录保持一致。
 const DATASET_HINTS: Array<[string, RegExp]> = [
-  ['ai4i-2020', /pandas|python|csv|代码|编程|预测性维护|扭矩|转速|刀具|质量等级|machine\s*failure/i],
-  ['metropt-3', /压缩机|compressor|泄漏|leak|压力|pressure|油温|oil|时序|传感器|干燥塔/i],
+  ['metropt-3', /metropt|air\s*compressor|空压机|压缩机|泄漏|leak|压力|pressure|油温|oil|时序|传感器|干燥塔/i],
+  ['ai4i-2020', /ai4i|tool\s*wear|torque|machine\s*failure|hdf|osf|pwf|rnf|twf|扭矩|转速|刀具|质量等级/i],
 ];
 
 // 从结构化证据里挑代表性数据行，生成讲义中的“数据摘录”表格：主标签列在前，其次时间列，再是普通字段。
 function representativeTable(pack: EvidencePack): { caption: string; columns: string[]; rows: Array<Array<string | number | null>>; sources: string[]; evidenceIds: string[] } | null {
   const allRowItems = pack.items.filter(isRowEvidence);
-  let rowItems = allRowItems.slice(0, 3);
-  for (const [datasetId, hint] of DATASET_HINTS) {
-    if (!hint.test(pack.query)) continue;
-    const preferred = allRowItems.filter((item) => item.sourceId === datasetId);
-    if (preferred.length > 0) rowItems = preferred.slice(0, 3);
-    break;
+  if (allRowItems.length === 0) return null;
+
+  // 先用当前问题中的明确数据集/领域词定位来源；通用的 pandas、Python、CSV
+  // 只能说明工具或格式，不能决定数据集，避免“讲空压机却展示 AI4I”这类串台。
+  const hintedDatasetId = DATASET_HINTS.find(([, hint]) => hint.test(pack.query))?.[0];
+  const hintedRows = hintedDatasetId
+    ? allRowItems.filter((item) => item.sourceId === hintedDatasetId)
+    : [];
+  if (hintedRows.length > 0) {
+    return buildRepresentativeTable(hintedRows);
   }
-  const evidenceIds = rowItems.map((item) => item.id);
-  const parsed = rowItems.flatMap((item) => {
+
+  // 没有明确数据集词时，优先使用结构化检索按当前问题命中的行。
+  // 它们比“按数据集抽样”的行更能代表本次任务，不能被泛化的旧样本覆盖。
+  const matchedRows = allRowItems.filter((item) => item.metadata?.['queryKind'] === 'query_matched_rows');
+  const candidateRows = matchedRows.length > 0 ? matchedRows : allRowItems;
+
+  // 仍然存在多个来源时，只选择来源最集中的一组。
+  // 这样混合检索的排序变化不会把不同数据集的行拼成一张不存在的表。
+  const sourceGroups = new Map<string, EvidenceItem[]>();
+  for (const item of candidateRows) {
+    const group = sourceGroups.get(item.sourceId) ?? [];
+    group.push(item);
+    sourceGroups.set(item.sourceId, group);
+  }
+  const dominantRows = [...sourceGroups.values()]
+    .sort((left, right) => {
+      const score = (items: EvidenceItem[]) => items.reduce((total, item) => total + item.relevanceScore, 0);
+      return score(right) - score(left) || right.length - left.length;
+    })[0] ?? [];
+  return buildRepresentativeTable(dominantRows);
+}
+
+function buildRepresentativeTable(rowItems: EvidenceItem[]): { caption: string; columns: string[]; rows: Array<Array<string | number | null>>; sources: string[]; evidenceIds: string[] } | null {
+  const selectedRows = rowItems.slice(0, 3);
+  const evidenceIds = selectedRows.map((item) => item.id);
+  const parsed = selectedRows.flatMap((item) => {
     try { return [JSON.parse(item.content) as Record<string, unknown>]; } catch { return []; }
   });
   if (parsed.length === 0) return null;
@@ -62,7 +92,7 @@ function representativeTable(pack: EvidencePack): { caption: string; columns: st
     caption: '代表性数据摘录：来自结构化数据集查询，可回溯到具体行',
     columns,
     rows,
-    sources: Array.from(new Set(rowItems.map((item) => item.locator))),
+    sources: Array.from(new Set(selectedRows.map((item) => item.locator))),
     evidenceIds,
   };
 }
@@ -84,12 +114,12 @@ export function buildResourceDraft(
     type: 'paragraph',
     position: 0,
     content: isLecture
-      ? '本资源只使用当前 EvidencePack 中的结构化数据和领域说明。传感器异常用于支持风险判断，不直接等同于确定故障。'
+      ? '如果你第一次接触这类设备数据，不用先记住所有字段。我们会先说清要解决的问题，再用一个小例子认识最关键的词，然后一步一步完成观察。遇到资料没有说明的地方，会明确标出来，不让你靠猜。'
       : isPresentation
-      ? '这份 PPT 按“问题、证据、判断、行动”组织，每页只表达一个可回溯的学习要点。'
+      ? '如果你第一次接触这类设备数据，请先看每页的中文解释，再跟着讲解词做一个小动作。整份 PPT 按“问题、看到什么、怎么判断、下一步做什么”展开。'
       : type === 'tiered_quiz'
-      ? '练习按基础理解、证据判断和迁移应用分层。先独立作答，再查看提示和证据定位。'
-      : '下面的 Mermaid 图把学习目标、数据证据、风险判断和现场复核串成一条可追溯关系。',
+      ? '练习按“先看懂、再判断、最后迁移”分层。题干会先交代情境；遇到不熟的词，先回到题干里的中文解释，再作答。'
+      : '先从学习者要解决的问题开始，再看关键概念、跟做步骤和复核行动。图里的每条关系都服务于“下一步该做什么”，不要求你先背完整字段表。',
     knowledgePointIds: [knowledgePoint],
     evidenceIds: pack.items.map((item) => item.id),
   };
@@ -109,11 +139,29 @@ export function buildResourceDraft(
   };
 
   const extraBlocks: ResourceBlock[] = [];
+  if (!isLecture && !isPresentation) {
+    pushHeading(extraBlocks, '开始前先记住', pack.items.map((item) => item.id), knowledgePoint);
+    pushList(extraBlocks, [
+      '不需要先背完整字段表，只看完成本次任务所需的几个词。',
+      '每个新词先看中文解释，再看例子，最后跟着做一个小动作。',
+      '资料没有说明的地方会保留待核对，不把猜测写成结论。',
+    ], pack.items.map((item) => item.id), knowledgePoint);
+  }
   if (isLecture) {
-    const datasetTitle = pack.items.find((item) => item.sourceType === 'dataset')?.sourceTitle ?? '当前检索数据';
     const table = representativeTable(pack);
+    const selectedTableItem = table
+      ? pack.items.find((item) => table.evidenceIds.includes(item.id))
+      : undefined;
+    const datasetTitle = selectedTableItem?.sourceTitle
+      ?? pack.items.find((item) => item.sourceType === 'dataset')?.sourceTitle
+      ?? '当前检索数据';
     const fields = table?.columns.filter((column) => !/^(rowId|rowid|id|udi)$/i.test(column)).slice(0, 6) ?? [];
     const fieldText = fields.length > 0 ? fields.join('、') : '当前证据中的观测字段';
+    pushHeading(extraBlocks, '先把关键词说清楚', pack.items.map((item) => item.id), knowledgePoint);
+    pushList(extraBlocks, (fields.length > 0 ? fields.slice(0, 3) : ['当前观测字段']).map((field) => {
+      const plainName = /timestamp|time|时间/i.test(field) ? '时间字段' : '数据字段';
+      return `**${plainName}（${field}）**：先根据资料确认它记录什么，再观察它在相邻记录中的变化；如果资料没有说明含义，就先标记为待核对，不要凭字段名猜结论。`;
+    }), pack.items.map((item) => item.id), knowledgePoint);
     const fallbackSections: Array<[string, string, string[]]> = [
       ['先把问题说清楚', `这份材料围绕“${query.trim().slice(0, 100)}”展开。拿到${datasetTitle}的记录后，不要直接跳到异常或故障结论，先确认数据来自什么设备、每列代表什么、时间字段能否排序，以及本次判断到底需要回答哪个问题。对初学者来说，数据清洗不是把所有“奇怪”的值删掉，而是把原始记录变成可解释、可复查的分析输入。每一步都要留下处理前后的依据，后面看到趋势或差异时才能知道它来自数据本身，还是来自清洗操作。`, ['先定义分析问题，再决定清洗动作', '每一步处理都要能说明理由']],
       ['检查字段与数据类型', `当前证据中可观察到的字段包括${fieldText}。先用表格查看列名、缺失情况和数据类型，再确认哪些列是时间、哪些列是连续测量值、哪些列是状态或标识。字段名相似不代表含义相同，尤其是压力、电流和温度等变量，必须结合资料中的字段说明与单位解释。时间列如果仍是字符串，排序结果可能只是字符顺序；数值列如果混入文本，也会让统计结果失真。因此，清洗的第一项产出应是一张字段字典：列名、类型、单位、允许的空值处理方式，以及对应的来源位置。`, ['字段含义和单位先于数值解释', '类型转换要记录成功与失败的行']],
@@ -347,16 +395,24 @@ export interface LlmQuizQuestion {
 /** 知识脉络：Mermaid 图 + 节点解释 + 阅读路径 */
 export interface LlmConceptMapDraft {
   mermaid: string;
-  nodes: Array<{ label: string; explanation: string }>;
+  nodes: Array<{ label: string; explanation: string; checkQuestion?: string }>;
   readingPaths?: Array<{ title: string; steps: string[] }>;
+}
+
+/** 生成端必须先交付的术语翻译层，避免正文直接把证据字段当成先验知识。 */
+export interface LlmGlossaryEntry {
+  term: string;
+  plainMeaning: string;
+  example?: string;
+  use?: string;
 }
 
 /** 四种资源的 LLM 草稿（按 type 判别） */
 export type LlmResourceDraft =
-  | { kind: 'lecture'; title: string; lead?: string; objectives: string[]; sections: LlmLectureSection[]; misconceptions?: Array<{ wrong: string; correct: string }>; reviewQuestions?: string[] }
-  | { kind: 'presentation'; title: string; lead?: string; objectives: string[]; slides: LlmPresentationSlide[] }
-  | { kind: 'tiered_quiz'; title: string; lead?: string; objectives: string[]; questions: LlmQuizQuestion[] }
-  | { kind: 'concept_map'; title: string; lead?: string; objectives: string[]; map: LlmConceptMapDraft };
+  | { kind: 'lecture'; title: string; lead?: string; objectives: string[]; glossary?: LlmGlossaryEntry[]; sections: LlmLectureSection[]; misconceptions?: Array<{ wrong: string; correct: string }>; reviewQuestions?: string[] }
+  | { kind: 'presentation'; title: string; lead?: string; objectives: string[]; glossary?: LlmGlossaryEntry[]; slides: LlmPresentationSlide[] }
+  | { kind: 'tiered_quiz'; title: string; lead?: string; objectives: string[]; glossary?: LlmGlossaryEntry[]; questions: LlmQuizQuestion[] }
+  | { kind: 'concept_map'; title: string; lead?: string; objectives: string[]; glossary?: LlmGlossaryEntry[]; map: LlmConceptMapDraft };
 
 function asStringArray(value: unknown, limit: number): string[] {
   return Array.isArray(value)
@@ -368,6 +424,17 @@ function asString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+function parseGlossary(value: unknown): LlmGlossaryEntry[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    const entry = item && typeof item === 'object' ? item as Record<string, unknown> : {};
+    const term = asString(entry['term']);
+    const plainMeaning = asString(entry['plainMeaning']);
+    if (!term || !plainMeaning) return [];
+    return [{ term: term.slice(0, 48), plainMeaning: plainMeaning.slice(0, 180), example: asString(entry['example']).slice(0, 120) || undefined, use: asString(entry['use']).slice(0, 120) || undefined }];
+  }).slice(0, 5);
+}
+
 /**
  * 解析资源生成的 LLM 原始输出为按类型判别的草稿。
  * 结构不满足该类型的最低要求时返回 null，调用方回退确定性模板。
@@ -377,7 +444,8 @@ export function parseLlmResourceDraft(type: LearningResourceType, raw: unknown):
   const title = asString(source['title']);
   const lead = asString(source['lead']);
   const objectives = asStringArray(source['objectives'], 4);
-  const base = { title, lead: lead || undefined, objectives };
+  const glossary = parseGlossary(source['glossary']);
+  const base = { title, lead: lead || undefined, objectives, glossary: glossary.length > 0 ? glossary : undefined };
   if (type === 'lecture') {
     const sections = Array.isArray(source['sections']) ? source['sections'].flatMap((item) => {
       const section = item && typeof item === 'object' ? item as Record<string, unknown> : {};
@@ -456,7 +524,8 @@ export function parseLlmResourceDraft(type: LearningResourceType, raw: unknown):
     const node = item && typeof item === 'object' ? item as Record<string, unknown> : {};
     const label = asString(node['label']);
     const explanation = asString(node['explanation']);
-    return label && explanation ? [{ label, explanation }] : [];
+    const checkQuestion = asString(node['checkQuestion']);
+    return label && explanation ? [{ label, explanation, checkQuestion: checkQuestion || undefined }] : [];
   }).slice(0, 14) : [];
   const readingPaths = Array.isArray(mapRaw['readingPaths']) ? mapRaw['readingPaths'].flatMap((item) => {
     const path = item && typeof item === 'object' ? item as Record<string, unknown> : {};
@@ -477,6 +546,14 @@ export function parseLlmResourceDraft(type: LearningResourceType, raw: unknown):
 export function validateLlmResourceDraftQuality(draft: LlmResourceDraft): string[] {
   const issues: string[] = [];
   if (draft.objectives.length < 2) issues.push('学习目标少于 2 条');
+  if ((draft.glossary?.length ?? 0) < 3) issues.push('缺少至少 3 个核心词的白话术语表');
+  const glossary = draft.glossary ?? [];
+  const incompleteGlossary = glossary.filter((entry) => !entry.example?.trim() || !entry.use?.trim()).length;
+  if (incompleteGlossary > 0) issues.push(`有 ${incompleteGlossary} 个核心词缺少例子或使用场景`);
+  const weakGlossary = glossary.filter((entry) => entry.plainMeaning.replace(/\s/g, '').length < 20 || !/[\u4e00-\u9fff]/u.test(entry.plainMeaning)).length;
+  if (weakGlossary > 0) issues.push(`有 ${weakGlossary} 个核心词缺少足够的中文白话解释`);
+  const learnerFacingText = JSON.stringify(draft);
+  if (/(?:evidence|claim|audit|agent|pipeline|JSON)/i.test(learnerFacingText)) issues.push('学习者正文混入内部流程术语，需要改写为自然中文');
   if (draft.kind === 'lecture') {
     if (draft.sections.length < 6 || draft.sections.length > 8) issues.push('讲义必须包含 6 到 8 个完整小节');
     const totalTextLength = draft.sections.reduce((sum, section) => sum + section.text.replace(/\s/g, '').length, 0);
@@ -506,6 +583,15 @@ export function validateLlmResourceDraftQuality(draft: LlmResourceDraft): string
   } else {
     if (draft.map.nodes.length < 8) issues.push('知识脉络关键节点少于 8 个');
     if ((draft.map.readingPaths?.length ?? 0) < 2) issues.push('知识脉络阅读路径少于 2 条');
+    const longPaths = (draft.map.readingPaths ?? []).filter((path) => path.steps.length > 5).length;
+    const shortPaths = (draft.map.readingPaths ?? []).filter((path) => path.steps.length < 3).length;
+    if (longPaths > 0) issues.push(`有 ${longPaths} 条知识脉络路径超过 5 步，学习负担过重`);
+    if (shortPaths > 0) issues.push(`有 ${shortPaths} 条知识脉络路径少于 3 步，缺少完整行动链`);
+    const checkpointCount = draft.map.nodes.filter((node) => node.checkQuestion?.trim()).length;
+    if (checkpointCount < 3) issues.push('知识脉络关键节点缺少至少 3 个小检查问题');
+  }
+  if (/(?:本内容假定你已|假设你已经|假定你已经|默认你已(?:经)?|默认学习者已|无需.*(?:Python|pandas).*(?:基础|了解))/u.test(learnerFacingText)) {
+    issues.push('正文假定学习者已有前置知识，需要从零解释');
   }
   return issues;
 }
@@ -615,7 +701,16 @@ export function buildLlmResourceDocument(
   if (lead) {
     pushParagraph(blocks, lead, evidenceIdList, knowledgePoint);
   } else {
-    pushParagraph(blocks, `本讲围绕“${query.trim().slice(0, 80)}”展开。你会先理解问题与关键字段，再沿着分析步骤观察证据、解释现象，并在最后用自测问题检查自己是否真正掌握。`, evidenceIdList, knowledgePoint);
+      pushParagraph(blocks, `本讲围绕“${query.trim().slice(0, 80)}”展开。你会先理解问题与关键字段，再沿着分析步骤观察证据、解释现象，并在最后用自测问题检查自己是否真正掌握。`, evidenceIdList, knowledgePoint);
+  }
+
+  if (llm.glossary && llm.glossary.length > 0) {
+    pushHeading(blocks, '先把几个词说清楚', evidenceIdList, knowledgePoint);
+    pushList(blocks, llm.glossary.map((entry) => {
+      const example = entry.example ? `例如：${entry.example}` : '';
+      const use = entry.use ? `用在：${entry.use}` : '';
+      return `**${entry.term}**：${entry.plainMeaning}${example ? `；${example}` : ''}${use ? `；${use}` : ''}`;
+    }), evidenceIdList, knowledgePoint);
   }
 
   let hasLlmCode = false;
@@ -728,7 +823,8 @@ export function buildLlmResourceDocument(
         pushHeading(blocks, '关键节点解读', evidenceIdList, knowledgePoint);
         for (const node of llm.map.nodes.slice(0, 14)) {
           if (!node.label?.trim() || !node.explanation?.trim()) continue;
-          pushParagraph(blocks, `**${node.label.trim().slice(0, 40)}**：${node.explanation.trim()}`, evidenceIdList, knowledgePoint);
+          const checkpoint = node.checkQuestion?.trim() ? `\n小检查：${node.checkQuestion.trim().slice(0, 160)}` : '';
+          pushParagraph(blocks, `**${node.label.trim().slice(0, 40)}**：${node.explanation.trim()}${checkpoint}`, evidenceIdList, knowledgePoint);
         }
       }
       for (const path of (llm.map.readingPaths ?? []).slice(0, 3)) {
@@ -775,8 +871,11 @@ function conciseResourceTitle(value: string, type: LearningResourceType, fallbac
 }
 
 function analysisCodeBlock(knowledgePoint: string, pack: EvidencePack): ResourceBlock {
-  const dataset = pack.items.find((item) => item.sourceType === 'dataset');
-  const row = pack.items.find(isRowEvidence);
+  const table = representativeTable(pack);
+  const selectedEvidenceIds = new Set(table?.evidenceIds ?? []);
+  const selectedDataset = pack.items.find((item) => selectedEvidenceIds.has(item.id));
+  const dataset = selectedDataset ?? pack.items.find((item) => item.sourceType === 'dataset');
+  const row = selectedDataset ?? pack.items.find(isRowEvidence);
   let record: Record<string, unknown> = {};
   if (row) {
     try { record = JSON.parse(row.content) as Record<string, unknown>; } catch { /* 证据不是 JSON 行时仍生成通用代码 */ }

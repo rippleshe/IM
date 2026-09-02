@@ -69,6 +69,19 @@ function typeLabel(type: ResourceType) {
   return typeItems.find((item) => item.type === type)?.label ?? "资源";
 }
 
+function ResourcePrimer({ type }: { type: ResourceType }) {
+  const message = type === "tiered_quiz"
+    ? "不会的词不用硬背。先读题干里的中文说明，再判断这一题只问哪一个小问题。"
+    : type === "presentation"
+      ? "每页只抓一个重点：先看它在解决什么问题，再看示例和讲解词，最后跟着做一个小动作。"
+      : "不用先记住整张字段表。每个新词都会先用中文说明，再给一个小例子，最后带你做一步。";
+  return <div className="mb-7 rounded-xl border border-amber-200 bg-amber-50/70 px-5 py-4 text-[12px] leading-6 text-amber-950" aria-label="阅读方法提示">
+    <div className="flex items-center gap-2 font-semibold"><BookOpen className="h-3.5 w-3.5 text-amber-700" />先这样读</div>
+    <p className="mt-1.5">{message}</p>
+    <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-amber-800"><span>① 先看懂</span><span>② 跟着做</span><span>③ 再判断</span></div>
+  </div>;
+}
+
 function conciseAssetTitle(title: string, type: ResourceType): string {
   const cleaned = title.replace(/\s+/g, " ").replace(/^(压缩机诊断讲义|诊断训练\s*PPT|分层练习|知识脉络|讲义|PPT)\s*[·:：-]?\s*/u, "").trim();
   const subject = cleaned || typeLabel(type);
@@ -223,10 +236,10 @@ function renderBlockContent(block: ResourceBlock, sectionNumber?: number) {
   if (block.content && typeof block.content === "object") {
     const data = block.content as { label?: string; locator?: string; summary?: string; language?: string; caption?: string; code?: string; columns?: unknown; rows?: unknown };
     if (Array.isArray(data.columns) && Array.isArray(data.rows)) {
-      return <div className="resource-data-table"><div className="border-b bg-muted/30 px-4 py-2.5 text-xs font-medium">{data.caption ?? "数据摘录"}</div><div className="overflow-x-auto"><table className="w-full text-left text-xs"><thead><tr className="border-b bg-muted/15 text-muted-foreground">{(data.columns as string[]).map((column) => <th key={column} className="whitespace-nowrap px-3 py-2 font-medium">{column}</th>)}</tr></thead><tbody>{(data.rows as Array<Array<string | number | null>>).map((row, rowIndex) => <tr key={rowIndex} className="border-b transition-colors last:border-b-0 hover:bg-muted/20">{row.map((cell, cellIndex) => <td key={cellIndex} className="whitespace-nowrap px-3 py-2 font-mono text-[11px] text-muted-foreground">{cell === null ? "—" : String(cell)}</td>)}</tr>)}</tbody></table></div></div>;
+      return <div className="resource-data-table"><div className="border-b bg-muted/30 px-4 py-3"><div className="text-xs font-medium">先看一小段数据</div><p className="mt-1 text-[11px] leading-5 text-muted-foreground">每一行是一次记录，每一列是一个观察项。字段名先不用背，先对照上面的中文解释，观察它记录了什么。</p></div><div className="overflow-x-auto"><table className="w-full text-left text-xs"><thead><tr className="border-b bg-muted/15 text-muted-foreground">{(data.columns as string[]).map((column) => <th key={column} className="whitespace-nowrap px-3 py-2 font-medium">{column}</th>)}</tr></thead><tbody>{(data.rows as Array<Array<string | number | null>>).map((row, rowIndex) => <tr key={rowIndex} className="border-b transition-colors last:border-b-0 hover:bg-muted/20">{row.map((cell, cellIndex) => <td key={cellIndex} className="whitespace-nowrap px-3 py-2 font-mono text-[11px] text-muted-foreground">{cell === null ? "—" : String(cell)}</td>)}</tr>)}</tbody></table></div></div>;
     }
     if (typeof data.code === "string") {
-      return <CodeFigure language={data.language ?? "python"} code={data.code} caption={data.caption ?? "代码示例"} />;
+      return <div><div className="mb-2 rounded-lg bg-slate-50 px-3 py-2 text-[11px] leading-5 text-slate-600">跟着做：这段代码只完成当前这一步。先看注释，运行后只检查它是否完成了本节要解决的小问题。</div><CodeFigure language={data.language ?? "python"} code={data.code} caption={data.caption ?? "代码示例"} /></div>;
     }
     if (data.summary || data.locator) return <div className="resource-callout"><div className="flex items-center gap-1.5 text-xs font-medium"><span className="flex h-4 w-4 items-center justify-center rounded bg-[#e5f2e9] text-[9px] font-bold text-[#397b61]">证</span>{data.label ?? "证据说明"}</div><p className="mt-2 text-sm leading-6 text-[#53645a]">{data.summary}</p></div>;
   }
@@ -238,6 +251,15 @@ function getQuizQuestions(asset: ResourceAsset): QuizQuestion[] {
   const raw = block?.content as { questions?: unknown } | undefined;
   if (!Array.isArray(raw?.questions)) return [];
   return raw.questions.filter((item): item is QuizQuestion => Boolean(item) && typeof item === "object" && typeof (item as QuizQuestion).id === "string" && typeof (item as QuizQuestion).prompt === "string");
+}
+
+function getGlossaryItems(asset: ResourceAsset): string[] {
+  const headingIndex = asset.blocks.findIndex((block) => block.type === "heading" && String(block.content) === "先把几个词说清楚");
+  if (headingIndex < 0) return [];
+  const glossaryBlock = asset.blocks.slice(headingIndex + 1).find((block) => block.type === "list" && Array.isArray(block.content));
+  return glossaryBlock && Array.isArray(glossaryBlock.content)
+    ? glossaryBlock.content.filter((item): item is string => typeof item === "string").slice(0, 5)
+    : [];
 }
 
 type ResourceWorkbenchProps = {
@@ -486,6 +508,7 @@ function LectureReader({ reader, onExport, onQuote }: { reader: ReaderData; onEx
     <div ref={scrollRef} onScroll={handleScroll} onMouseUp={captureSelection} className="min-h-0 flex-1 overflow-y-auto bg-background/40">
       <div className="sticky top-0 z-10 h-0.5 bg-transparent"><div className="h-full rounded-r-full bg-gradient-to-r from-blue-500 to-indigo-500 transition-[width] duration-150" style={{ width: `${Math.round(progress * 100)}%` }} /></div>
       <article className="mx-auto max-w-3xl px-8 py-8">
+        <ResourcePrimer type="lecture" />
         {reader.asset.learningObjectives.length > 0 && <div className="mb-8 border-y border-blue-100 bg-blue-50/45 px-5 py-4"><div className="flex items-center gap-2 text-[11px] font-semibold tracking-wide text-blue-700"><Target className="h-3.5 w-3.5" />学习目标</div><ul className="mt-3 space-y-2">{reader.asset.learningObjectives.map((objective) => <li key={objective} className="flex gap-2.5 text-[13px] leading-6 text-blue-950"><span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-blue-500" />{objective}</li>)}</ul></div>}
         <div className="space-y-7">{blocks.map((block) => <section key={block.id} id={block.type === "heading" ? `sec-${block.id}` : undefined} className="scroll-mt-4">{renderBlockContent(block, sectionNumber.get(block.id))}</section>)}</div>
         <div className="h-12" />
@@ -533,6 +556,7 @@ function PresentationReader({ reader, onExport }: { reader: ReaderData; onExport
               <h2 className="mt-4 text-4xl font-bold leading-tight tracking-tight text-slate-900">{reader.asset.title}</h2>
               <div className="mt-5 h-1 w-16 rounded-full bg-blue-600" />
               <div className="mt-6 max-w-2xl space-y-3">{noteBlocks.map((block) => <RichText key={block.id} text={String(block.content)} />)}</div>
+              {bulletBlocks.length > 0 && <div className="mt-6 max-w-2xl rounded-xl bg-slate-50 px-4 py-3"><div className="text-[10px] font-semibold tracking-[0.12em] text-slate-500">先看这几步</div><ul className="mt-2 space-y-1.5 text-[12px] leading-5 text-slate-700">{bulletBlocks.flatMap((block) => block.content as string[]).slice(0, 5).map((item, itemIndex) => <li key={itemIndex} className="flex gap-2"><span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-blue-500" /> <RichInlineText text={item} /></li>)}</ul></div>}
               <div className="mt-8 text-xs text-slate-400">{reader.asset.learningObjectives[0] ?? "基于证据的多智能体学习材料"}</div>
             </div> : <>
               <div className="flex items-start justify-between gap-4">
@@ -622,6 +646,7 @@ function QuizReader({ apiBase, reader, onReaderChange }: { apiBase: string; read
   const startedAt = useRef<number | null>(null);
   useEffect(() => { startedAt.current = currentTimestamp(); }, []);
   const question = questions[index];
+  const glossary = useMemo(() => getGlossaryItems(reader.asset), [reader.asset]);
   const questionType: QuizQuestionType = question?.type ?? "choice";
   const latest = reader.quizAttempts.filter((attempt) => attempt.questionId === question?.id).at(-1) ?? null;
   const jump = (next: number) => { setIndex(next); setAnswerId(""); setShowReference(false); setSubmitError(""); startedAt.current = currentTimestamp(); };
@@ -671,7 +696,7 @@ function QuizReader({ apiBase, reader, onReaderChange }: { apiBase: string; read
     }
   };
   const canSubmit = questionType === "choice" ? Boolean(answerId) : questionType === "blank" ? Boolean(answerId.trim()) : Boolean(answerId.trim()) && showReference;
-  return <div className="flex min-h-0 flex-1 flex-col"><div className="flex shrink-0 items-center justify-between border-b px-5 py-3.5"><div className="text-[10px] font-medium tracking-wide text-[#74837b]">开始练习</div><div className="flex items-center gap-2"><span className="rounded-full border px-2.5 py-1 text-[11px]">{question.level}</span><span className="rounded-full bg-muted px-2.5 py-1 text-[11px] font-medium">{QUESTION_TYPE_LABELS[questionType]}</span>{answered ? <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-medium ${latest!.correct ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700"}`}>{latest!.correct ? <CheckCircle2 className="h-3 w-3" /> : <XCircle className="h-3 w-3" />}{latest!.correct ? "答对" : "再想想"}</span> : null}</div></div><div className="min-h-0 flex-1 overflow-y-auto"><article className="mx-auto max-w-3xl px-8 py-10"><div className="text-xs text-muted-foreground">第 {index + 1} 题 / 共 {questions.length} 题</div><h2 className="mt-4 text-xl font-semibold leading-8">{question.prompt}</h2>
+  return <div className="flex min-h-0 flex-1 flex-col"><div className="flex shrink-0 items-center justify-between border-b px-5 py-3.5"><div className="text-[10px] font-medium tracking-wide text-[#74837b]">开始练习</div><div className="flex items-center gap-2"><span className="rounded-full border px-2.5 py-1 text-[11px]">{question.level}</span><span className="rounded-full bg-muted px-2.5 py-1 text-[11px] font-medium">{QUESTION_TYPE_LABELS[questionType]}</span>{answered ? <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-medium ${latest!.correct ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700"}`}>{latest!.correct ? <CheckCircle2 className="h-3 w-3" /> : <XCircle className="h-3 w-3" />}{latest!.correct ? "答对" : "再想想"}</span> : null}</div></div><div className="min-h-0 flex-1 overflow-y-auto"><article className="mx-auto max-w-3xl px-8 py-10"><ResourcePrimer type="tiered_quiz" />{glossary.length > 0 && <div className="mb-7 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3"><div className="text-xs font-semibold text-slate-700">先认识几个词</div><ul className="mt-2 space-y-1.5 text-xs leading-5 text-slate-700">{glossary.map((item, itemIndex) => <li key={itemIndex}><RichInlineText text={item} /></li>)}</ul></div>}<div className="text-xs text-muted-foreground">第 {index + 1} 题 / 共 {questions.length} 题</div><h2 className="mt-4 text-xl font-semibold leading-8">{question.prompt}</h2>
     {questionType === "choice" ? <div className="mt-8 space-y-3">{(question.options ?? []).map((option) => {
       const state = optionState(option.id);
       return <button key={option.id} type="button" onClick={() => setAnswerId(option.id)} className={`flex w-full items-start gap-3 rounded-xl border p-4 text-left text-sm leading-6 transition-all ${optionClass(state)}`}><span className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md border text-[11px] font-semibold transition-colors ${chipClass(state)}`}>{option.id}</span><span>{option.text}</span></button>;
@@ -704,7 +729,7 @@ function QuizAnswerPanel({ reader }: { reader: ReaderData }) {
 
 function GenericReader({ reader, onExport }: { apiBase: string; reader: ReaderData; onReaderChange: (data: ReaderData) => void; onExport: (format: "md" | "txt" | "json" | "ppt") => void }) {
   const blocks = useMemo(() => visibleLearningBlocks(reader.asset.blocks), [reader.asset.blocks]);
-  return <div className="resource-generic-reader flex min-h-0 flex-1 flex-col"><div className="resource-reading-toolbar flex shrink-0 items-center justify-between border-b px-5 py-3.5"><div className="resource-reading-title"><MapIcon className="h-4 w-4" /><span>知识脉络</span></div><ResourceExportMenu assetType={reader.asset.type} onExport={onExport} /></div><div className="min-h-0 flex-1 overflow-y-auto"><article className="mx-auto max-w-3xl space-y-7 px-8 py-9"><div className="resource-learning-objectives"><div className="text-[11px] font-semibold text-slate-700">学习目标</div><ul className="mt-3 space-y-2 text-sm leading-6 text-muted-foreground">{reader.asset.learningObjectives.map((objective) => <li key={objective} className="flex gap-2"><span className="resource-objective-dot" />{objective}</li>)}</ul></div>{blocks.map((block) => <section key={block.id}>{renderBlockContent(block)}</section>)}</article></div></div>;
+  return <div className="resource-generic-reader flex min-h-0 flex-1 flex-col"><div className="resource-reading-toolbar flex shrink-0 items-center justify-between border-b px-5 py-3.5"><div className="resource-reading-title"><MapIcon className="h-4 w-4" /><span>知识脉络</span></div><ResourceExportMenu assetType={reader.asset.type} onExport={onExport} /></div><div className="min-h-0 flex-1 overflow-y-auto"><article className="mx-auto max-w-3xl space-y-7 px-8 py-9"><ResourcePrimer type="concept_map" /><div className="resource-learning-objectives"><div className="text-[11px] font-semibold text-slate-700">学习目标</div><ul className="mt-3 space-y-2 text-sm leading-6 text-muted-foreground">{reader.asset.learningObjectives.map((objective) => <li key={objective} className="flex gap-2"><span className="resource-objective-dot" />{objective}</li>)}</ul></div>{blocks.map((block) => <section key={block.id}>{renderBlockContent(block)}</section>)}</article></div></div>;
 }
 
 function GenericFeedback({ apiBase, reader, onReaderChange, onReinforce }: { apiBase: string; reader: ReaderData; onReaderChange: (data: ReaderData) => void; onReinforce: () => void }) {
