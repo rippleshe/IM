@@ -19,6 +19,7 @@ type PrivacyEvent = {
   fileName: string | null;
   byteCount: number | null;
   redactedFieldCount: number;
+  retained: boolean;
   createdAt: number;
 };
 
@@ -38,7 +39,7 @@ const agentLabels: Array<[string, string, string | null]> = [
 ];
 
 const privacyEventLabels: Record<string, string> = {
-  temporary_reference_used: "临时参考已使用（原文未保存）",
+  temporary_reference_used: "资料已完成隐私审计",
 };
 
 function readableError(reason: unknown, fallback: string) {
@@ -94,13 +95,13 @@ function PrivacyPanel({ apiBase }: { apiBase: string }) {
     </section>
     <section className="divide-y rounded-xl border bg-background text-xs">
       <div className="flex items-center justify-between gap-4 px-4 py-3"><span>画像</span><span className="text-right text-muted-foreground">学习路径、作答、资源与问答记录</span></div>
-      <div className="flex items-center justify-between gap-4 px-4 py-3"><span>临时参考资料</span><span className="text-right text-emerald-700">任务结束即丢弃原文</span></div>
-      <div className="flex items-center justify-between gap-4 px-4 py-3"><span>公共知识库</span><span className="text-right text-muted-foreground">只读，不写入个人资料</span></div>
+      <div className="flex items-center justify-between gap-4 px-4 py-3"><span>上传资料</span><span className="text-right text-emerald-700">默认临时使用；明确同意且智能筛选通过后才沉淀</span></div>
+      <div className="flex items-center justify-between gap-4 px-4 py-3"><span>公共知识库</span><span className="text-right text-muted-foreground">由智能策展维护，不写入个人画像</span></div>
       <div className="flex items-center justify-between gap-4 px-4 py-3"><span className="flex items-center gap-1.5"><Lock className="h-3 w-3" />审核与隐私保护</span><span className="text-right text-muted-foreground">系统固定保护</span></div>
     </section>
     <section className="rounded-xl border bg-background">
       <div className="flex items-center justify-between border-b px-4 py-3"><span className="text-xs font-medium">隐私审计记录 · {overview?.records.auditEvents ?? 0}</span><button type="button" disabled={clearing || !events?.length} onClick={() => void clear()} className="rounded-md border px-2.5 py-1.5 text-[11px] text-muted-foreground hover:bg-muted disabled:opacity-40">{clearing ? "清除中" : "清除记录"}</button></div>
-      <div className="max-h-48 overflow-y-auto p-2">{events === null ? <div className="px-2 py-3 text-xs text-muted-foreground">正在读取</div> : events.length === 0 ? <div className="px-2 py-3 text-xs text-muted-foreground">暂无审计记录</div> : events.map((event) => <div key={event.id} className="flex items-center justify-between gap-2 rounded-lg px-2 py-2 text-[11px] hover:bg-muted/50"><span className="min-w-0 truncate">{privacyEventLabels[event.eventType] ?? event.eventType}<span className="text-muted-foreground"> · {event.fileName ?? "未知文件"}</span></span><span className="shrink-0 text-muted-foreground">{event.byteCount === null ? "" : `${Math.max(1, Math.round(event.byteCount / 1024))} KB · `}{new Intl.DateTimeFormat("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(event.createdAt)}</span></div>)}</div>
+      <div className="max-h-48 overflow-y-auto p-2">{events === null ? <div className="px-2 py-3 text-xs text-muted-foreground">正在读取</div> : events.length === 0 ? <div className="px-2 py-3 text-xs text-muted-foreground">暂无审计记录</div> : events.map((event) => <div key={event.id} className="flex items-center justify-between gap-2 rounded-lg px-2 py-2 text-[11px] hover:bg-muted/50"><span className="min-w-0 truncate">{event.retained ? "已通过智能筛选并沉淀" : privacyEventLabels[event.eventType] ?? event.eventType}<span className="text-muted-foreground"> · {event.fileName ?? "未知文件"}</span></span><span className="shrink-0 text-muted-foreground">{event.byteCount === null ? "" : `${Math.max(1, Math.round(event.byteCount / 1024))} KB · `}{new Intl.DateTimeFormat("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(event.createdAt)}</span></div>)}</div>
     </section>
   </div>;
 }

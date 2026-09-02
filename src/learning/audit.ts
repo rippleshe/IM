@@ -16,12 +16,18 @@ const FIELD_HINTS = ['字段', '含义', '表示', '是指', '定义为', '指�
 const STEP_HINTS = ['步骤', '首先', '然后', '最后', '方法：', '流程', '依次', '操作：'];
 const ADVICE_HINTS = ['风险', '可能', '建议', '注意', '警惕', '或存在', '倾向于'];
 
+/** 教学练习里的假设数据不是当前数据集的事实，不能因示例日期或步骤编号被误当成待证实的数值结论。 */
+function isNonFactualTeachingText(text: string): boolean {
+  return NON_FACTUAL_HINTS.some((hint) => text.includes(hint))
+    && !ADVICE_HINTS.some((hint) => text.includes(hint));
+}
+
 /** 声明分类（确定性启发式，可单测）：因果 > 数值 > 非事实教学表达 > 字段含义 > 方法步骤 > 风险建议 */
 export function classifyClaimText(text: string): ClaimType {
   const hasNumber = /\b\d+(?:\.\d+)?\b|[０-９]/.test(text);
   if (CAUSAL_HINTS.some((hint) => text.includes(hint))) return 'causal';
+  if (isNonFactualTeachingText(text)) return 'non_factual';
   if (hasNumber) return 'numeric';
-  if (NON_FACTUAL_HINTS.some((hint) => text.includes(hint)) && !ADVICE_HINTS.some((hint) => text.includes(hint))) return 'non_factual';
   if (FIELD_HINTS.some((hint) => text.includes(hint))) return 'field_meaning';
   if (STEP_HINTS.some((hint) => text.includes(hint))) return 'method_step';
   if (ADVICE_HINTS.some((hint) => text.includes(hint))) return 'risk_advice';
@@ -69,10 +75,25 @@ function claimText(content: unknown): string[] {
   return [];
 }
 
-function hasNumericSupport(text: string, evidenceText: string): boolean {
-  const numbers = text.match(/\b\d+(?:\.\d+)?\b/g);
-  if (!numbers || numbers.length === 0) return true;
-  return numbers.every((number) => evidenceText.includes(number));
+/**
+ * 精确证据可支持保守的中文数量下界：1516948 行可支持“超过 150 万行”。
+ * 其他数字（日期、单位、具体数值）仍必须原样可定位。
+ */
+export function numericAssertionsSupported(text: string, evidenceText: string): boolean {
+  const coveredIndexes = new Set<number>();
+  const evidenceNumbers = [...evidenceText.matchAll(/\d+(?:\.\d+)?/g)].map((match) => Number(match[0]));
+  const lowerBound = /(?:超过|大于|不少于|至少)\s*(\d+(?:\.\d+)?)\s*(万|亿)/g;
+  for (const match of text.matchAll(lowerBound)) {
+    const value = Number(match[1]) * (match[2] === '亿' ? 100_000_000 : 10_000);
+    if (!evidenceNumbers.some((number) => number >= value)) return false;
+    for (let index = match.index ?? 0; index < (match.index ?? 0) + match[0].length; index += 1) coveredIndexes.add(index);
+  }
+  for (const match of text.matchAll(/\d+(?:\.\d+)?/g)) {
+    const index = match.index ?? 0;
+    if (coveredIndexes.has(index)) continue;
+    if (!evidenceText.includes(match[0])) return false;
+  }
+  return true;
 }
 
 export function auditResource(resource: ResourceDocument, pack: EvidencePack): ResourceAuditResult {
@@ -86,7 +107,7 @@ export function auditResource(resource: ResourceDocument, pack: EvidencePack): R
         .map((id) => pack.items.find((item) => item.id === id)?.content ?? '')
         .join('\n');
       const hasEvidence = evidenceIds.length > 0;
-      const numericSupported = hasNumericSupport(text, evidenceText);
+      const numericSupported = numericAssertionsSupported(text, evidenceText);
       const verdict = !hasEvidence ? 'unsupported' : !numericSupported ? 'review' : 'supported';
       claims.push({
         id: `${resource.id}-claim-${claims.length + 1}`,
@@ -95,7 +116,7 @@ export function auditResource(resource: ResourceDocument, pack: EvidencePack): R
         critique: !hasEvidence
           ? '没有绑定证据定位，不能发布为确定结论。'
           : !numericSupported
-          ? '数字或单位未在绑定证据中找到，需要人工复核。'
+          ? '数字或单位未在绑定证据中找到，需要智能体补充核验。'
           : '已绑定结构化数据或领域文档证据。',
         factualScore: verdict === 'supported' ? 1 : verdict === 'review' ? 0.6 : 0,
         evidenceIds,

@@ -1,0 +1,24 @@
+{
+  "id": "2026-08-29-three-profile-run-exports",
+  "description": "挑战杯固定真实运行队列：三种学习画像各一份已发布、可离线回放的运行导出。任何内容散列不一致都会使消融实验失败，日常运行不会改变此处统计。",
+  "runs": [
+    {
+      "persona": "learner-foundation",
+      "file": "data/exports/learner-foundation-run-export.json",
+      "sha256": "c1a8c61ae75736e5a41329bf54bb8c0935aba660d779c2709b7f0cb6bab57c4f",
+      "runId": "study-run-2d6e3d83-b1e9-498c-aeb6-de6347a55d15"
+    },
+    {
+      "persona": "learner-advanced",
+      "file": "data/exports/learner-advanced-run-export.json",
+      "sha256": "464e4b0a86aae38f0be9d6b6459318bb0e794044e5e92516d802d0cadb350c90",
+      "runId": "study-run-a59359bb-ca6b-4606-9951-67948f51458e"
+    },
+    {
+      "persona": "learner-maintenance",
+      "file": "data/exports/learner-maintenance-run-export.json",
+      "sha256": "5d240b00fdd2a170b74660a6782c9c68abf1bf36385607ee4cd9dd734a904be2",
+      "runId": "study-run-531c5732-6541-4118-aacc-25d20e6bd5af"
+    }
+  ]
+}

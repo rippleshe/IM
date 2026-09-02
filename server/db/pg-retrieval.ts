@@ -56,6 +56,24 @@ interface ChunkRow {
   content: string;
 }
 
+/**
+ * 兼容升级前的知识卡（source_version_id 为 NULL），但新的受管资料必须同时满足
+ * “来源已审核 + 版本已启用 + 切片启用”才可参与正式检索。
+ */
+const approvedDocumentScope = `
+  document_chunks.enabled = TRUE
+  AND (
+    document_chunks.source_version_id IS NULL
+    OR EXISTS (
+      SELECT 1
+      FROM knowledge_source_versions
+      JOIN knowledge_sources ON knowledge_sources.id = knowledge_source_versions.source_id
+      WHERE knowledge_source_versions.id = document_chunks.source_version_id
+        AND knowledge_source_versions.version_status = 'active'
+        AND knowledge_sources.review_status = 'approved'
+    )
+  )`;
+
 function toHybridRow(row: ChunkRow, via: 'fts' | 'vector'): HybridDocumentRow {
   return { id: row.id, sourceId: row.sourceId, sourcePath: row.sourcePath, locator: row.locator, title: row.title, content: row.content, via };
 }
@@ -76,7 +94,8 @@ export async function hybridDocumentRowsPg(
       const ftsRows = (await pool.query(
         `SELECT id, source_id AS "sourceId", source_path AS "sourcePath", locator, title, content
          FROM document_chunks
-         WHERE to_tsvector('simple', search_text) @@ to_tsquery('simple', $1)
+         WHERE ${approvedDocumentScope}
+           AND to_tsvector('simple', search_text) @@ to_tsquery('simple', $1)
          ORDER BY ts_rank(to_tsvector('simple', search_text), to_tsquery('simple', $1)) DESC
          LIMIT 20`, [tsquery],
       )).rows as ChunkRow[];
@@ -96,7 +115,7 @@ export async function hybridDocumentRowsPg(
       const vectorRows = (await pool.query(
         `SELECT id, source_id AS "sourceId", source_path AS "sourcePath", locator, title, content
          FROM document_chunks
-         WHERE embedding IS NOT NULL
+         WHERE ${approvedDocumentScope} AND embedding IS NOT NULL
          ORDER BY embedding <=> $1::vector
          LIMIT 20`, [vectorLiteral],
       )).rows as ChunkRow[];
@@ -125,7 +144,7 @@ export async function hybridDocumentRowsPg(
     const likeClauses = terms.map((_, index) => `(title ILIKE $${index + 1} OR content ILIKE $${index + 1})`).join(' OR ');
     const likeRows = (await pool.query(
       `SELECT id, source_id AS "sourceId", source_path AS "sourcePath", locator, title, content
-       FROM document_chunks WHERE ${likeClauses} LIMIT ${topN}`, terms,
+       FROM document_chunks WHERE ${approvedDocumentScope} AND (${likeClauses}) LIMIT ${topN}`, terms,
     )).rows as ChunkRow[];
     return { rows: likeRows.map((row) => toHybridRow(row, 'fts')), hybrid: { ...info, degraded: true } };
   }

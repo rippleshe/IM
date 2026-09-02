@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { RichText } from "@/components/rich-text";
 import { ContextClearDialog } from "@/components/context-clear-dialog";
 
-type QaMessage = { id: string; role: "user" | "assistant"; content: string; metadata?: { assetId?: string | null }; createdAt: number };
+type QaMessage = { id: string; role: "user" | "assistant"; content: string; metadata?: { assetId?: string | null; scope?: "resource" | "library" }; createdAt: number };
 
 type ResourceQuestionDialogProps = {
   apiBase: string;
@@ -22,6 +22,7 @@ export function ResourceQuestionDialog({ apiBase, selectedAssetId, selectedAsset
   const [clearing, setClearing] = useState(false);
   const [clearDialogOpen, setClearDialogOpen] = useState(false);
   const [notice, setNotice] = useState("");
+  const [scope, setScope] = useState<"resource" | "library">("resource");
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -49,12 +50,37 @@ export function ResourceQuestionDialog({ apiBase, selectedAssetId, selectedAsset
       const response = await fetch(`${apiBase}/api/learning/resource-qa`, {
         method: "POST",
         credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question, assetId: selectedAssetId }),
+        headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+        body: JSON.stringify({ question, assetId: scope === "resource" ? selectedAssetId : null, scope }),
       });
-      const data = await response.json() as { success?: boolean; error?: string; userMessage?: QaMessage; assistantMessage?: QaMessage };
-      if (!response.ok || !data.success || !data.userMessage || !data.assistantMessage) throw new Error(data.error || "提问失败");
-      setMessages((current) => [...current, data.userMessage!, data.assistantMessage!]);
+      if (!response.ok || !response.body) throw new Error("问答服务暂时不可用");
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      const liveId = `live-qa-${Date.now()}`;
+      const finalDataBox: { value: { success?: boolean; error?: string; userMessage?: QaMessage; assistantMessage?: QaMessage } | null } = { value: null };
+      setMessages((current) => [...current, { id: liveId, role: "assistant", content: "", metadata: { scope }, createdAt: Date.now() }]);
+      const consume = (frame: string) => {
+        const event = frame.match(/^event:\s*(.+)$/m)?.[1]?.trim();
+        const line = frame.match(/^data:\s*(.+)$/m)?.[1];
+        if (!line) return;
+        try {
+          const payload = JSON.parse(line) as { text?: string; success?: boolean; error?: string; userMessage?: QaMessage; assistantMessage?: QaMessage };
+          if (event === "token" && typeof payload.text === "string") setMessages((current) => current.map((item) => item.id === liveId ? { ...item, content: `${item.content}${payload.text}` } : item));
+          if (event === "final") finalDataBox.value = payload;
+        } catch { /* 等下一块补齐 */ }
+      };
+      while (true) {
+        const chunk = await reader.read();
+        buffer += decoder.decode(chunk.value ?? new Uint8Array(), { stream: !chunk.done });
+        const frames = buffer.split("\n\n");
+        buffer = frames.pop() ?? "";
+        frames.forEach(consume);
+        if (chunk.done) break;
+      }
+      const finalData = finalDataBox.value;
+      if (!finalData?.success || !finalData.userMessage || !finalData.assistantMessage) throw new Error(finalData?.error || "提问失败");
+      setMessages((current) => [...current.filter((item) => item.id !== liveId), finalData.userMessage!, finalData.assistantMessage!]);
     } catch (error) {
       setDraft(question);
       setNotice(error instanceof Error ? error.message : "提问失败");
@@ -79,18 +105,18 @@ export function ResourceQuestionDialog({ apiBase, selectedAssetId, selectedAsset
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/20 p-4" role="dialog" aria-modal="true" aria-label="资源问答">
     <section className="flex h-[min(720px,calc(100vh-32px))] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border bg-background shadow-2xl">
       <header className="flex shrink-0 items-start justify-between gap-4 border-b px-5 py-4">
-        <div>{selectedAssetTitle ? <h2 className="text-sm font-semibold">资源问答 · 聚焦《{selectedAssetTitle}》</h2> : <h2 className="text-sm font-semibold">资源问答</h2>}</div>
+        <div className="min-w-0"><h2 className="text-sm font-semibold">资源问答</h2><div className="mt-2 inline-flex rounded-lg bg-muted/50 p-0.5" role="tablist" aria-label="问答范围"><button type="button" role="tab" aria-selected={scope === "resource"} onClick={() => setScope("resource")} className={`rounded-md px-2.5 py-1 text-[11px] ${scope === "resource" ? "bg-background font-medium shadow-sm" : "text-muted-foreground"}`}>当前资源{selectedAssetTitle ? ` · ${selectedAssetTitle.slice(0, 12)}${selectedAssetTitle.length > 12 ? "…" : ""}` : ""}</button><button type="button" role="tab" aria-selected={scope === "library"} onClick={() => setScope("library")} className={`rounded-md px-2.5 py-1 text-[11px] ${scope === "library" ? "bg-background font-medium shadow-sm" : "text-muted-foreground"}`}>整个资源库</button></div></div>
         <div className="flex items-center gap-1"><button type="button" disabled={clearing || sending || messages.length === 0} onClick={() => setClearDialogOpen(true)} className="inline-flex h-7 items-center gap-1.5 rounded-md border border-transparent px-2 text-[11px] font-medium text-muted-foreground transition-colors hover:border-rose-100 hover:bg-rose-50 hover:text-rose-700 disabled:opacity-40"><Eraser className="h-3.5 w-3.5" />{clearing ? "清除中" : "清除上下文"}</button><button type="button" onClick={onClose} className="rounded-lg p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground" aria-label="关闭资源问答"><X className="h-4 w-4" /></button></div>
       </header>
       <div ref={scrollRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto px-5 py-4">
-        {loading ? <div className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />正在读取问答记录</div> : messages.length === 0 ? <div className="flex h-full flex-col items-center justify-center px-8 text-center text-sm leading-6 text-muted-foreground"><MessageCircleQuestion className="mb-3 h-7 w-7 text-muted-foreground/45" />还没有提问记录，例如：「这几份资源里对这个概念的解释有什么区别？」</div> : messages.map((message) => message.role === "user"
+        {loading ? <div className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />正在读取问答记录</div> : messages.length === 0 ? <div className="flex h-full flex-col items-center justify-center px-8 text-center text-sm leading-6 text-muted-foreground"><MessageCircleQuestion className="mb-3 h-7 w-7 text-muted-foreground/45" />{scope === "library" ? "向整个资源库提问，回答会综合多份资料。" : "先选定当前资源，再问一个具体问题。"}</div> : messages.map((message) => message.role === "user"
           ? <article key={message.id} className="ml-auto max-w-[88%] border-r border-blue-200 pr-3 text-right text-[13px] leading-6 text-blue-950"><p className="whitespace-pre-wrap">{message.content}</p></article>
           : <article key={message.id} className="max-w-[92%] border-l border-blue-200 pl-3 text-[13px] leading-7 text-slate-700"><RichText text={message.content} /></article>)}
         {sending ? <div className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" />正在根据资源整理回答</div> : null}
       </div>
       <footer className="shrink-0 border-t bg-background p-4">
         {notice ? <div className="mb-2 text-xs text-destructive">{notice}</div> : null}
-        <div className="flex items-end gap-2 rounded-xl border bg-card p-2 focus-within:ring-2 focus-within:ring-foreground/10"><textarea value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void send(); } }} rows={2} placeholder="针对资源提出问题" className="min-h-[38px] flex-1 resize-none bg-transparent px-2 py-1.5 text-sm outline-none placeholder:text-muted-foreground" /><button type="button" disabled={!draft.trim() || sending} onClick={() => void send()} className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-400 text-white shadow-sm shadow-blue-200 disabled:opacity-35" aria-label="发送问题"><Send className="h-4 w-4" /></button></div>
+        <div className="flex items-end gap-2 rounded-xl border bg-card p-2 focus-within:ring-2 focus-within:ring-foreground/10"><textarea value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void send(); } }} rows={2} placeholder={scope === "library" ? "向整个资源库提问" : "针对当前资源提出问题"} className="min-h-[38px] flex-1 resize-none bg-transparent px-2 py-1.5 text-sm outline-none placeholder:text-muted-foreground" /><button type="button" disabled={!draft.trim() || sending} onClick={() => void send()} className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-400 text-white shadow-sm shadow-blue-200 disabled:opacity-35" aria-label="发送问题"><Send className="h-4 w-4" /></button></div>
       </footer>
     </section>
   </div>

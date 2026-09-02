@@ -154,7 +154,7 @@ export interface PrivacyAuditEventView {
   fileName: string | null;
   byteCount: number | null;
   redactedFieldCount: number;
-  retained: false;
+  retained: boolean;
   createdAt: number;
 }
 

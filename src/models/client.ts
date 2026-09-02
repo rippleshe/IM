@@ -56,6 +56,20 @@ export class MultiModelClient {
     });
   }
 
+  /**
+   * 流式文本调用。保留与 chat 相同的路由、超时和模型注册语义，
+   * 只把服务商返回的可见正文增量交给调用方；不暴露隐藏推理字段。
+   */
+  async streamText(options: {
+    messages: OpenAI.ChatCompletionMessageParam[];
+    model?: string;
+    temperature?: number;
+    maxTokens?: number;
+    onChunk: (chunk: string) => void;
+  }): Promise<ModelCallResult> {
+    return this.chat({ ...options, stream: true, onStreamChunk: options.onChunk });
+  }
+
   async chat(options: ModelCallOptions): Promise<ModelCallResult> {
     const selection = this.resolveModel(options);
     const client = this.registry.getClientForModel(selection.model.id);
@@ -70,7 +84,7 @@ export class MultiModelClient {
     const modelId = options.model ?? selection.model.id;
 
     try {
-      const response = await client.chat.completions.create({
+      const request = {
         model: modelId,
         messages: options.messages,
         temperature: options.temperature ?? 0.7,
@@ -80,11 +94,21 @@ export class MultiModelClient {
         top_p: options.topP,
         tools: options.tools,
         tool_choice: options.toolChoice,
-        stream: false,
-      });
-
+      };
+      if (options.stream) {
+        const stream = await client.chat.completions.create({ ...request, stream: true });
+        let text = '';
+        for await (const chunk of stream) {
+          const delta = chunk.choices[0]?.delta?.content;
+          if (typeof delta === 'string' && delta) {
+            text += delta;
+            options.onStreamChunk?.(delta);
+          }
+        }
+        return { text, model: modelId, provider: selection.model.provider };
+      }
+      const response = await client.chat.completions.create({ ...request, stream: false });
       const text = response.choices[0]?.message?.content ?? '';
-
       return {
         text,
         model: modelId,

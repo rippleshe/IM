@@ -155,6 +155,25 @@ export async function getRunById(runId: string): Promise<StudyRunRow | null> {
   return rows[0] ? rowToRun(rows[0]) : null;
 }
 
+/**
+ * 隐私门禁完成后立即从运行请求中抹掉上传正文；来源若获准沉淀，正文只保留在
+ * 版本化知识来源中，否则数据库里仅留下文件名、哈希与用户选择。
+ */
+export async function redactRunTemporaryReference(run: StudyRunRow): Promise<void> {
+  const reference = run.request.temporaryReference;
+  if (!reference) return;
+  await db().db.update(studyRuns).set({
+    requestJson: {
+      ...run.request,
+      temporaryReference: {
+        name: reference.name,
+        content: '',
+        allowKnowledgeRetention: reference.allowKnowledgeRetention === true,
+      },
+    },
+  }).where(eq(studyRuns.id, run.id));
+}
+
 /** 幂等键查询（总规 §3）：同 learner 同 key 返回既有运行 */
 export async function findRunByIdempotencyKey(learnerId: string, key: string): Promise<StudyRunRow | null> {
   const rows = await db().db.select().from(studyRuns)
@@ -214,11 +233,20 @@ export async function markRunRunning(runId: string): Promise<void> {
 }
 
 export async function finishRun(runId: string, status: Extract<RunStatus, 'succeeded' | 'failed' | 'cancelled'>, patch: { finalAssetId?: string } = {}): Promise<void> {
+  const existing = await getRunById(runId);
+  if (!existing || (existing.status !== 'queued' && existing.status !== 'running')) return;
+  const reference = existing?.request.temporaryReference;
   await db().db.update(studyRuns).set({
     status,
     finishedAt: Date.now(),
     ...(patch.finalAssetId ? { finalAssetId: patch.finalAssetId } : {}),
-  }).where(eq(studyRuns.id, runId));
+    ...(reference ? {
+      requestJson: {
+        ...existing!.request,
+        temporaryReference: { name: reference.name, content: '', allowKnowledgeRetention: reference.allowKnowledgeRetention === true },
+      },
+    } : {}),
+  }).where(and(eq(studyRuns.id, runId), sql`${studyRuns.status} IN ('queued', 'running')`));
 }
 
 export async function setRunRevisionRound(runId: string, round: number): Promise<void> {
@@ -253,34 +281,42 @@ export async function requestCancelRun(learnerId: string, runId: string): Promis
   return run;
 }
 
-/** 单条 SQL 原子分配 run 内单调 seq；并发碰撞由唯一约束 + 重试兜底 */
+/** 在同一数据库事务中锁定 run、分配 seq 并写事件，允许根节点并行启动但不发生序号竞争。 */
 export async function appendRunEvent(
   runId: string,
   input: { nodeKey: RunNodeKey | null; type: RunEventType; summary: string; payload?: Record<string, unknown> },
 ): Promise<RunEvent> {
   const now = Date.now();
-  for (let retry = 0; retry < 3; retry += 1) {
-    const result = await db().db.execute(sql`
-      INSERT INTO run_events (run_id, seq, node_key, type, summary, payload, created_at)
-      SELECT ${runId}, coalesce(max(seq), 0) + 1, ${input.nodeKey}, ${input.type}, ${input.summary},
-             ${input.payload ? JSON.stringify(input.payload) : null}::jsonb, ${now}
-      FROM run_events WHERE run_id = ${runId}
-      RETURNING seq
-    `);
-    const seq = Number((result.rows[0] as { seq?: number } | undefined)?.seq ?? 0);
-    if (seq > 0) {
-      const event: RunEvent = {
-        seq,
-        runId,
-        nodeKey: input.nodeKey,
-        type: input.type,
-        summary: input.summary,
-        payload: input.payload,
-        createdAt: new Date(now).toISOString(),
-      };
-      publishRunEvent(runId, event);
-      return event;
-    }
+  const seq = await db().db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${runId}))`);
+    const rows = await tx.select({ seq: sql<number>`coalesce(max(${runEvents.seq}), 0) + 1` })
+      .from(runEvents)
+      .where(eq(runEvents.runId, runId));
+    const nextSeq = Number(rows[0]?.seq ?? 0);
+    if (nextSeq <= 0) throw new Error(`run_events seq 分配失败：${runId}`);
+    await tx.insert(runEvents).values({
+      runId,
+      seq: nextSeq,
+      nodeKey: input.nodeKey,
+      type: input.type,
+      summary: input.summary,
+      payload: input.payload ?? null,
+      createdAt: now,
+    });
+    return nextSeq;
+  });
+  if (seq > 0) {
+    const event: RunEvent = {
+      seq,
+      runId,
+      nodeKey: input.nodeKey,
+      type: input.type,
+      summary: input.summary,
+      payload: input.payload,
+      createdAt: new Date(now).toISOString(),
+    };
+    publishRunEvent(runId, event);
+    return event;
   }
   throw new Error(`run_events seq 分配失败：${runId}`);
 }

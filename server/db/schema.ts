@@ -40,6 +40,8 @@ export const users = pgTable('users', {
   passwordHash: text('password_hash').notNull(),
   passwordSalt: text('password_salt').notNull(),
   onboardingCompleted: boolean('onboarding_completed').notNull().default(false),
+  /** 兼容旧数据库迁移；资料审核已由服务端智能策展流程负责，普通用户不使用此字段。 */
+  knowledgeAdmin: boolean('knowledge_admin').notNull().default(false),
   createdAt: ms('created_at').notNull(),
   updatedAt: ms('updated_at').notNull(),
 });
@@ -329,11 +331,21 @@ export const metroEventWindows = pgTable('metro_event_windows', {
 export const documentChunks = pgTable('document_chunks', {
   id: text('id').primaryKey(),
   sourceId: text('source_id').notNull(),
+  /** 新来源版本；NULL 表示升级前既有知识卡或数据集说明。 */
+  sourceVersionId: text('source_version_id'),
   sourcePath: text('source_path').notNull(),
   title: text('title').notNull(),
   content: text('content').notNull(),
   searchText: text('search_text').notNull(),
   locator: text('locator').notNull(),
+  sectionPath: text('section_path'),
+  pageStart: integer('page_start'),
+  pageEnd: integer('page_end'),
+  chunkType: text('chunk_type').notNull().default('text'),
+  sortOrder: integer('sort_order').notNull().default(0),
+  tokenCount: integer('token_count'),
+  contentHash: text('content_hash'),
+  enabled: boolean('enabled').notNull().default(true),
   trustLevel: text('trust_level').notNull().default('medium'),
   embedding: vector('embedding', { dimensions: 1024 }),
   createdAt: ms('created_at').notNull(),
@@ -347,7 +359,60 @@ export const documentChunks = pgTable('document_chunks', {
     'hnsw',
     t.embedding.op('vector_cosine_ops'),
   ),
+  index('idx_document_source_version').on(t.sourceVersionId, t.enabled),
 ]);
+
+/** 受管资料的稳定身份；候选与正式来源共用一张账本。 */
+export const knowledgeSources = pgTable('knowledge_sources', {
+  id: text('id').primaryKey(),
+  sourceType: text('source_type').notNull(),
+  title: text('title').notNull(),
+  shortTitle: text('short_title'),
+  canonicalUrl: text('canonical_url'),
+  doi: text('doi'),
+  license: text('license').notNull().default('unknown'),
+  trustLevel: text('trust_level').notNull().default('medium'),
+  reviewStatus: text('review_status').notNull().default('candidate'),
+  distributionScope: text('distribution_scope').notNull().default('local_only'),
+  currentVersionId: text('current_version_id'),
+  metadataJson: jsonb('metadata_json').notNull().default({}),
+  createdAt: ms('created_at').notNull(),
+  updatedAt: ms('updated_at').notNull(),
+}, (t) => [
+  index('idx_knowledge_sources_review').on(t.reviewStatus, t.updatedAt),
+  unique('uq_knowledge_sources_url').on(t.canonicalUrl),
+]);
+
+/** 每一次内容变化都新增版本，原件和解析结果均通过本地路径及哈希定位。 */
+export const knowledgeSourceVersions = pgTable('knowledge_source_versions', {
+  id: text('id').primaryKey(),
+  sourceId: text('source_id').notNull(),
+  contentSha256: text('content_sha256').notNull(),
+  originalPath: text('original_path').notNull(),
+  extractedText: text('extracted_text'),
+  extractedPath: text('extracted_path'),
+  parser: text('parser').notNull(),
+  parseStatus: text('parse_status').notNull(),
+  qualityReport: jsonb('quality_report').notNull().default({}),
+  versionStatus: text('version_status').notNull().default('candidate'),
+  createdAt: ms('created_at').notNull(),
+}, (t) => [
+  unique('uq_knowledge_source_version_hash').on(t.sourceId, t.contentSha256),
+  index('idx_knowledge_source_versions_status').on(t.sourceId, t.versionStatus, t.createdAt),
+]);
+
+/** 导入/抓取任务的可重放执行记录，不把失败隐藏在日志中。 */
+export const knowledgeIngestJobs = pgTable('knowledge_ingest_jobs', {
+  id: text('id').primaryKey(),
+  kind: text('kind').notNull(),
+  inputPath: text('input_path').notNull(),
+  inputSha256: text('input_sha256'),
+  status: text('status').notNull(),
+  statsJson: jsonb('stats_json').notNull().default({}),
+  errorSummary: text('error_summary'),
+  createdAt: ms('created_at').notNull(),
+  updatedAt: ms('updated_at').notNull(),
+}, (t) => [index('idx_knowledge_ingest_jobs_status').on(t.status, t.updatedAt)]);
 
 /* ------------------------------------------------------------------ */
 /* 6. EvidencePack 与隐私审计                                            */

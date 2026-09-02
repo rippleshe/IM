@@ -173,6 +173,10 @@ async function requireLearner(req: express.Request, res: express.Response): Prom
   return learner;
 }
 
+function writeSse(res: express.Response, event: string, data: unknown): void {
+  res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+}
+
 type GeneratedPathGraph = import('./initial-path.js').GeneratedPathGraph;
 
 type LearningAssistantOutput = {
@@ -219,7 +223,19 @@ function normalizeLearningAssistantOutput(value: unknown): LearningAssistantOutp
   };
 }
 
-async function respondToLearningConversation(learnerId: string, prompt: string): Promise<{
+type PublicPathAgentMessage = {
+  agentId: LearningAgentId;
+  agentName: string;
+  producer: 'llm' | 'rule' | 'mixed';
+  content: string;
+};
+
+async function respondToLearningConversation(
+  learnerId: string,
+  prompt: string,
+  onToken?: (chunk: string) => void | Promise<void>,
+  onAgentMessage?: (message: PublicPathAgentMessage) => void | Promise<void>,
+): Promise<{
   assistant: LearningAssistantOutput;
   pathChanged: boolean;
   profile: LearnerProfileView;
@@ -233,34 +249,116 @@ async function respondToLearningConversation(learnerId: string, prompt: string):
     { agentId: 'learning_planning', name: '学习规划助手', action: '读取当前学习情况、路径节点和你的请求，定位需要调整的学习目标' },
     { agentId: 'evidence_retrieval', name: '资料检索助手', action: `从数据和资料中找到 ${evidencePack.items.length} 条依据，并保留来源位置` },
   ];
-  let assistant: LearningAssistantOutput;
-  try {
-    const response = await withTimeout(multiModelClient.simple({
-      messages: [
-        {
-          role: 'system',
-          content: LEARNING_ASSISTANT_SYSTEM,
-        },
-        {
-          role: 'user',
-          content: JSON.stringify({
-            request: prompt,
-            learner: onboarding,
-            currentPath: graph,
-            evidence: evidencePack.items.slice(0, 4).map((item) => ({ title: item.sourceTitle, locator: item.locator, content: item.content.slice(0, 700) })),
-          }),
-        },
-      ],
-      model: route.model,
+  const publishAgentMessage = async (message: PublicPathAgentMessage) => {
+    await onAgentMessage?.(message);
+  };
+  await publishAgentMessage({
+    agentId: 'learning_planning',
+    agentName: '学习规划助手',
+    producer: 'mixed',
+    content: `本次调整聚焦于“${prompt.slice(0, 120)}${prompt.length > 120 ? '…' : ''}”。当前路径有 ${graph.nodes.length} 个节点，我会结合学习记录检查目标节点、学习状态和前置关系。`,
+  });
+  const evidenceTitles = evidencePack.items.slice(0, 2).map((item) => item.sourceTitle).filter(Boolean);
+  await publishAgentMessage({
+    agentId: 'evidence_retrieval',
+    agentName: '资料检索助手',
+    producer: 'mixed',
+    content: evidencePack.items.length > 0
+      ? `找到 ${evidencePack.items.length} 条可引用依据${evidenceTitles.length ? `，包括“${evidenceTitles.join('”和“')}”` : ''}；来源位置已保留，只把与本次调整直接相关的证据交给规划助手。`
+      : '暂未找到与本次调整直接相关的可引用依据，后续会按现有路径和学习记录保守处理。',
+  });
+  const pathMessages = [
+    { role: 'system' as const, content: LEARNING_ASSISTANT_SYSTEM },
+    {
+      role: 'user' as const,
+      content: JSON.stringify({
+        request: prompt,
+        learner: onboarding,
+        currentPath: graph,
+        evidence: evidencePack.items.slice(0, 4).map((item) => ({ title: item.sourceTitle, locator: item.locator, content: item.content.slice(0, 700) })),
+      }),
+    },
+  ];
+  // 路径调整只需要一份面向用户的结论和小型 revision JSON；沿用全局“最大”
+  // 推理输出会把简单更新拖到数十秒，且不会增加路径决策质量。
+  const pathMaxTokens = Math.min(route.thinking.maxTokens, 4_500);
+  let streamedReply = '';
+  let tokenChain = Promise.resolve();
+  const emitReplyDelta = (value: string) => {
+    if (!onToken || value.length <= streamedReply.length) return;
+    const delta = value.slice(streamedReply.length);
+    streamedReply = value;
+    // SSE 写入需要保持顺序；模型 SDK 的 onChunk 是同步回调，因此用这一条
+    // promise 链把异步响应写入串行化，而不增加新的事件或状态通道。
+    tokenChain = tokenChain.then(() => Promise.resolve(onToken(delta)));
+  };
+  const invokePathAssistant = async (model: string | undefined): Promise<LearningAssistantOutput> => {
+    let modelText = '';
+    const response = await withTimeout(multiModelClient.streamText({
+      messages: pathMessages,
+      model,
       temperature: route.thinking.temperature,
-      maxTokens: Math.min(route.thinking.maxTokens, 5_000),
-    }), 60_000, '协同回答超时');
-    assistant = normalizeLearningAssistantOutput(parseJson<unknown>(response.text));
+      maxTokens: pathMaxTokens,
+      onChunk: (chunk) => {
+        modelText += chunk;
+        // 路径模型的协议是 { reply, revision }。仅从已收到的 reply 字符串中
+        // 解出可见文本；revision 始终等到完整 JSON 通过解析后才会应用。
+        const match = modelText.match(/"reply"\s*:\s*"((?:\\.|[^"\\])*)/s);
+        if (!match) return;
+        try {
+          emitReplyDelta(JSON.parse(`"${match[1]}"`) as string);
+        } catch {
+          // chunk 可能刚好停在转义符或 Unicode 转义中，等待下一个片段即可。
+        }
+      },
+    }), 90_000, '协同回答超时');
+    const finalText = response.text.trim() || modelText.trim();
+    if (!finalText) throw new Error('模型未返回可见答复');
+    const parsed = parseJson<unknown>(finalText);
+    if (!parsed || typeof parsed !== 'object' || typeof (parsed as Record<string, unknown>)['reply'] !== 'string') {
+      throw new Error('模型返回内容不是有效的路径答复');
+    }
+    const output = normalizeLearningAssistantOutput(parsed);
+    // 兼容不支持服务端流的模型：其最终答复仍会被真实模型调用返回，
+    // 这里只补发一次完整可见结果，不伪造逐字打字效果。
+    emitReplyDelta(output.reply);
+    await tokenChain;
+    return output;
+  };
+  let assistant: LearningAssistantOutput = {
+    reply: '模型服务暂时不可用，当前路径没有被修改。请检查设置中的模型服务后重试。',
+    revision: {},
+  };
+  try {
+    assistant = await invokePathAssistant(route.model);
   } catch (error) {
-    assistant = { reply: '暂时无法连接学习助手；当前路径没有被修改。你可以稍后重试。', revision: {} };
+    const fallbackModel = modelRegistry.listModels().find((candidate) => candidate.id !== route.model && Boolean(modelRegistry.getProvider(candidate.provider)?.apiKey));
+    if (streamedReply) {
+      console.warn(`[learning/chat] 路径答复在输出后中断：${error instanceof Error ? error.message : String(error)}`);
+      assistant = { reply: streamedReply, revision: {} };
+    } else if (fallbackModel) {
+      console.warn(`[learning/chat] 主模型路径答复失败，尝试备用模型 ${fallbackModel.id}：${error instanceof Error ? error.message : String(error)}`);
+    }
+    if (!streamedReply) {
+      try {
+        if (!fallbackModel) throw error;
+        assistant = await invokePathAssistant(fallbackModel.id);
+      } catch (fallbackError) {
+        console.warn(`[learning/chat] 路径答复备用模型也失败：${fallbackError instanceof Error ? fallbackError.message : String(fallbackError)}`);
+        assistant = { reply: '模型服务暂时不可用，当前路径没有被修改。请检查设置中的模型服务后重试。', revision: {} };
+      }
+    }
   }
   const result = await learningStore.applyPathRevision(learnerId, assistant.revision ?? {});
   activities.push({ agentId: 'cross_validation', name: '内容检查助手', action: result.changed ? '检查新增节点是否重复、前置关系是否成立，并写入路径' : '检查节点重复、依赖关系和现有路径后，确认无需改动' });
+  await publishAgentMessage({
+    agentId: 'cross_validation',
+    agentName: '内容检查助手',
+    producer: 'rule',
+    content: result.changed
+      ? `已检查节点重复、前置关系和路径连通性，并写入本次有依据的路径变更（新增 ${assistant.revision?.addNodes?.length ?? 0} 个节点，更新 ${assistant.revision?.updateNodes?.length ?? 0} 个节点）。`
+      : '已检查节点重复、前置关系和路径连通性；本次没有足够依据修改路径，现有学习路径保持不变。',
+  });
   const profile = result.changed
     ? await withTimeout(generateProfileSnapshot(learnerId, route.model, route.thinking), 8_000, '画像更新超时').then((snapshot) => snapshot.profile).catch(() => learningStore.getProfile(learnerId))
     : await learningStore.getProfile(learnerId);
@@ -345,20 +443,54 @@ app.post('/api/learning/chat', async (req, res) => {
     res.status(400).json({ success: false, error: '请输入问题或路径调整请求' });
     return;
   }
+  const wantsStream = String(req.headers.accept ?? '').includes('text/event-stream');
+  if (wantsStream) {
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    });
+  }
+  const heartbeat = wantsStream ? setInterval(() => res.write(': ping\n\n'), 15_000) : null;
   const userMessage = await learningStore.saveChatMessage(learner.id, 'user', content);
-  const outcome = await respondToLearningConversation(learner.id, content);
+  const pathAgentMessages: Array<Awaited<ReturnType<typeof learningStore.saveChatMessage>>> = [];
+  const onToken = wantsStream ? (chunk: string) => {
+    writeSse(res, 'token', { text: chunk });
+  } : undefined;
+  const onAgentMessage = async (message: PublicPathAgentMessage) => {
+    const saved = await learningStore.saveChatMessage(learner.id, 'assistant', message.content, {
+      surface: 'path',
+      kind: 'agent',
+      agentId: message.agentId,
+      agentName: message.agentName,
+      producer: message.producer,
+    });
+    pathAgentMessages.push(saved);
+    if (wantsStream) writeSse(res, 'agent_message', { ...message, id: saved.id, createdAt: saved.createdAt });
+  };
+  const outcome = await respondToLearningConversation(learner.id, content, onToken, onAgentMessage);
   const assistantMessage = await learningStore.saveChatMessage(learner.id, 'assistant', outcome.assistant.reply, {
     activities: outcome.activities,
     pathChanged: outcome.pathChanged,
+    agentMessagesPersisted: true,
   });
-  res.json({
+  const payload = {
     success: true,
     userMessage,
+    agentMessages: pathAgentMessages,
     assistantMessage,
     pathChanged: outcome.pathChanged,
     path: await learningStore.getPathGraph(learner.id),
     profile: outcome.profile,
-  });
+  };
+  if (wantsStream) {
+    writeSse(res, 'final', payload);
+    if (heartbeat) clearInterval(heartbeat);
+    res.end();
+  } else {
+    res.json(payload);
+  }
 });
 
 // ---------- StudyRun：BullMQ 动态 DAG + SSE 事件流（docs/挑战杯技术开发总规.md §4） ----------
@@ -799,7 +931,7 @@ app.get('/api/settings/data-privacy', async (req, res) => {
     learningStore.listChatMessages(learner.id, 200, 'study'),
     learningStore.listChatMessages(learner.id, 200, 'resource_qa'),
     learningStore.listEvidence(learner.id, 50),
-    learningStore.listPrivacyAuditEvents(30),
+    learningStore.listPrivacyAuditEvents(learner.id, 30),
   ]);
   res.json({
     success: true,
@@ -818,7 +950,7 @@ app.get('/api/settings/data-privacy', async (req, res) => {
       profileEvidence: profile.evidenceCount,
     },
     retention: {
-      temporaryReference: '任务结束即丢弃原文',
+      temporaryReference: '默认任务结束即丢弃；明确同意且智能策展通过后才沉淀',
       sharedKnowledge: '系统只读资料',
       audit: '仅保留文件名、大小、哈希与脱敏字段数量',
     },
@@ -976,12 +1108,16 @@ app.post('/api/settings/default-execution', async (req, res) => {
 });
 
 app.get('/api/settings/privacy-audit', async (req, res) => {
+  const learner = await requireLearner(req, res);
+  if (!learner) return;
   const limit = typeof req.query['limit'] === 'string' ? Number(req.query['limit']) : 8;
-  res.json({ success: true, events: await learningStore.listPrivacyAuditEvents(Number.isFinite(limit) ? limit : 8) });
+  res.json({ success: true, events: await learningStore.listPrivacyAuditEvents(learner.id, Number.isFinite(limit) ? limit : 8) });
 });
 
-app.delete('/api/settings/privacy-audit', async (_req, res) => {
-  const deleted = await learningStore.clearPrivacyAuditEvents();
+app.delete('/api/settings/privacy-audit', async (req, res) => {
+  const learner = await requireLearner(req, res);
+  if (!learner) return;
+  const deleted = await learningStore.clearPrivacyAuditEvents(learner.id);
   res.json({ success: true, deleted });
 });
 
@@ -1024,18 +1160,19 @@ app.post('/api/learning/resource-qa', async (req, res) => {
   const learner = await requireLearner(req, res);
   if (!learner) return;
   const question = typeof req.body?.question === 'string' ? req.body.question.trim().slice(0, 3_000) : '';
+  const scope = req.body?.scope === 'library' ? 'library' : 'resource';
   const requestedAssetId = typeof req.body?.assetId === 'string' ? req.body.assetId : '';
   if (!question) {
     res.status(400).json({ success: false, error: '请输入想问的问题' });
     return;
   }
   const assets = await learningStore.listAssets(learner.id);
-  const selectedAsset = requestedAssetId ? assets.find((asset) => asset.id === requestedAssetId) : undefined;
+  const selectedAsset = scope === 'resource' && requestedAssetId ? assets.find((asset) => asset.id === requestedAssetId) : undefined;
   if (requestedAssetId && !selectedAsset) {
     res.status(404).json({ success: false, error: '未找到要提问的资源' });
     return;
   }
-  const userMessage = await learningStore.saveChatMessage(learner.id, 'user', question, { surface: 'resource_qa', assetId: selectedAsset?.id ?? null });
+  const userMessage = await learningStore.saveChatMessage(learner.id, 'user', question, { surface: 'resource_qa', assetId: selectedAsset?.id ?? null, scope });
   const route = getAgentExecutionSettings('domain_expert', undefined, undefined);
   const limits = await refreshModelCapabilities(route.model);
   const history = packConversationContext((await learningStore.listChatMessages(learner.id, 200, 'resource_qa')).map((item) => ({
@@ -1056,9 +1193,20 @@ app.post('/api/learning/resource-qa', async (req, res) => {
       .join('\n')
       .slice(0, asset.id === selectedAsset?.id ? 6_000 : 1_800),
   }));
+  const wantsStream = String(req.headers.accept ?? '').includes('text/event-stream');
+  if (wantsStream) {
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    });
+    writeSse(res, 'status', { text: scope === 'library' ? `正在检索整个资源库（${assets.length} 份资源）…` : `正在聚焦《${selectedAsset?.title ?? '当前资源'}》…` });
+  }
+  const heartbeat = wantsStream ? setInterval(() => res.write(': ping\n\n'), 15_000) : null;
   let answer = '';
   try {
-    const response = await withTimeout(multiModelClient.simple({
+    const response = await withTimeout(multiModelClient.chat({
       messages: [
         { role: 'system', content: RESOURCE_QA_SYSTEM },
         { role: 'user', content: JSON.stringify({ question, selectedResourceId: selectedAsset?.id ?? null, resources: resourceContext, recentConversation: history }) },
@@ -1066,14 +1214,23 @@ app.post('/api/learning/resource-qa', async (req, res) => {
       model: route.model,
       temperature: Math.min(route.thinking.temperature, 0.35),
       maxTokens: Math.min(route.thinking.maxTokens, 4_000),
+      stream: wantsStream,
+      onStreamChunk: wantsStream ? (chunk) => writeSse(res, 'token', { text: chunk }) : undefined,
     }), 90_000, '资源问答超时');
     answer = response.text.trim();
   } catch {
     answer = '暂时无法连接问答服务。你的问题已保留，稍后可以继续提问。';
   }
   if (!answer) answer = '现有资源中暂时没有足够依据回答这个问题。';
-  const assistantMessage = await learningStore.saveChatMessage(learner.id, 'assistant', answer, { surface: 'resource_qa', assetId: selectedAsset?.id ?? null });
-  res.json({ success: true, userMessage, assistantMessage });
+  const assistantMessage = await learningStore.saveChatMessage(learner.id, 'assistant', answer, { surface: 'resource_qa', assetId: selectedAsset?.id ?? null, scope });
+  const payload = { success: true, userMessage, assistantMessage, scope };
+  if (wantsStream) {
+    writeSse(res, 'final', payload);
+    if (heartbeat) clearInterval(heartbeat);
+    res.end();
+  } else {
+    res.json(payload);
+  }
 });
 
 app.get('/api/learning/profile', async (req, res) => {

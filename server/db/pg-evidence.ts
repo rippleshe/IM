@@ -23,6 +23,7 @@ import {
   getWebSearchStatus as getSearxngStatus,
   searchSearxng,
 } from '../search/searxng.js';
+import { persistWebSearchCandidates } from '../knowledge-web.js';
 import type {
   CsvDatasetSource,
   DatasetSummary,
@@ -455,6 +456,15 @@ export class PgEvidenceService {
       };
       if (outcome.reason === 'privacy_filtered') {
         await recordBlockedWebSearch(this.pool, query, options, outcome.redactedFields ?? []);
+      }
+      if (outcome.results.length > 0) {
+        // 候选账本是增强能力：数据库治理表不可用时不影响本次证据检索与回答。
+        try {
+          await persistWebSearchCandidates(this.pool, { query, results: outcome.results });
+        } catch {
+          // 仅记录通用事件，避免把连接串或用户查询写入日志。
+          console.warn('[web-search] 候选登记未完成，本次结果仍保留在 EvidencePack');
+        }
       }
     }
     const items = [...structured, ...documents, ...webSearch];

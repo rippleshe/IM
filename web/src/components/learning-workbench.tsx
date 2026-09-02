@@ -19,19 +19,19 @@ import {
 import type { AuthenticatedUser } from "@/components/auth-entry";
 import { SettingsDialog } from "@/components/settings-dialog";
 import { AvatarBubble, ProfileDialog } from "@/components/profile-dialog";
-import { PathNodeDetails, RecommendationBadge, type PathGraph, type PathNode, TreeCanvas } from "@/components/learning-path-workbench";
+import { RecommendationBadge, type PathGraph, type PathNode, TreeCanvas } from "@/components/learning-path-workbench";
 import { RichText, DescriptionList } from "@/components/rich-text";
 import { ContextClearDialog } from "@/components/context-clear-dialog";
 
 type ResourceType = "lecture" | "tiered_quiz" | "presentation" | "concept_map";
 type AgentId = "learning_planning" | "evidence_retrieval" | "domain_expert" | "resource_generation" | "cross_validation" | "privacy_compliance" | "orchestrator";
-type StudyAsset = { id: string; title: string; type: ResourceType; auditStatus: string; persisted: boolean };
+type StudyAsset = { id: string; title: string; type: ResourceType; auditStatus: string; persisted: boolean; producer?: "llm" | "rule" | "unknown"; generationNote?: string; failureReason?: string };
 type StudyMessage = {
   id: string;
   role: "user" | "assistant";
   content: string;
   createdAt: number;
-  metadata: { surface?: "study"; pathNodeId?: string | null; resourceType?: ResourceType; asset?: StudyAsset; evidence?: { count: number; score: number; crossValidation: string }; kind?: string; runId?: string; agentId?: string; agentName?: string };
+  metadata: { surface?: "study"; pathNodeId?: string | null; resourceType?: ResourceType; asset?: StudyAsset; evidence?: { count: number; score: number; crossValidation: string }; kind?: string; runId?: string; agentId?: string; agentName?: string; producer?: "llm" | "rule" | "mixed"; streaming?: boolean };
 };
 
 const resourceOptions: Array<{ value: ResourceType; label: string }> = [
@@ -97,7 +97,8 @@ function readableProcessText(text: string): string {
     .replace(/检查等级\s+low\b/gi, "检查等级：低")
     .replace(/检查等级\s+medium\b/gi, "检查等级：中等")
     .replace(/检查等级\s+high\b/gi, "检查等级：高")
-    .replace(/manual_review_required/g, "需要人工复核")
+    .replace(/manual_review_required/g, "自动检查未通过")
+    .replace(/进入人工复核/g, "等待智能体补充核验")
     .replace(/revision budget/gi, "修改次数")
     .replace(/revised|revision/gi, "需要修改")
     .replace(/rejected/gi, "未通过")
@@ -128,7 +129,7 @@ export function LearningWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [resourceType, setResourceType] = useState<ResourceType>("lecture");
-  const [attachedFile, setAttachedFile] = useState<{ name: string; content: string } | null>(null);
+  const [attachedFile, setAttachedFile] = useState<{ name: string; content: string; allowKnowledgeRetention: boolean } | null>(null);
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [clearingConversation, setClearingConversation] = useState(false);
@@ -149,6 +150,8 @@ export function LearningWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
   const [resizing, setResizing] = useState<"left" | "right" | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const feedRef = useRef<HTMLDivElement | null>(null);
+  const streamTimersRef = useRef<Map<string, number>>(new Map());
+  const streamMessageCounterRef = useRef(0);
   const progressStorageKey = `im-training-agent:study-progress:${user.id}`;
 
   const load = useCallback(async () => {
@@ -238,11 +241,33 @@ export function LearningWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
     source.onmessage = () => { /* 具名事件为主；默认消息忽略 */ };
     const handle = (event: MessageEvent<string>) => {
       try {
-        const data = JSON.parse(event.data) as { nodeKey?: string | null; summary?: string; createdAt?: string };
+        const data = JSON.parse(event.data) as { nodeKey?: string | null; summary?: string; createdAt?: string; payload?: { kind?: string; agentId?: string; agentName?: string; producer?: "llm" | "rule" | "mixed"; content?: string } | null };
         const summary = typeof data.summary === "string" ? data.summary : "";
         setLiveSummary(summary);
         const key = data.nodeKey ?? null;
         setLiveEvents((current) => [...current, { id: `${event.type}-${data.createdAt ?? Date.now()}-${current.length}`, type: event.type, nodeKey: key, summary }].slice(-16));
+        if (data.payload?.kind === "agent_message" && typeof data.payload.content === "string" && data.payload.content) {
+          const streamId = `live-${runId}-${streamMessageCounterRef.current++}`;
+          const content = data.payload.content;
+          setMessages((current) => [...current, {
+            id: streamId,
+            role: "assistant",
+            content: "",
+            createdAt: Date.now(),
+            metadata: { surface: "study", kind: "agent", runId, agentId: data.payload?.agentId, agentName: data.payload?.agentName, producer: data.payload?.producer ?? "mixed", streaming: true },
+          }]);
+          let cursor = 0;
+          const timer = window.setInterval(() => {
+            cursor = Math.min(content.length, cursor + Math.max(1, Math.ceil(content.length / 90)));
+            const visible = content.slice(0, cursor);
+              setMessages((current) => current.map((message) => message.id === streamId ? { ...message, content: visible, metadata: { ...message.metadata, streaming: cursor < content.length } } : message));
+            if (cursor >= content.length) {
+              window.clearInterval(timer);
+              streamTimersRef.current.delete(streamId);
+            }
+          }, 24);
+          streamTimersRef.current.set(streamId, timer);
+        }
         if (event.type === "node.started" && key) {
           setNodeStates((current) => [...current.filter((item) => item.key !== key), { key, state: "running" }]);
         } else if (event.type === "node.succeeded" && key) {
@@ -259,6 +284,8 @@ export function LearningWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
     }
     const finish = () => {
       source.close();
+      for (const timer of streamTimersRef.current.values()) window.clearInterval(timer);
+      streamTimersRef.current.clear();
       setFinishedRunId(runId);
       void Promise.all([refreshMessages(), refreshLearningContext()]).finally(() => {
         setStudyRunning(false);
@@ -281,6 +308,11 @@ export function LearningWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
       })();
     };
   }, [apiBase, refreshLearningContext, refreshMessages]);
+
+  useEffect(() => () => {
+    for (const timer of streamTimersRef.current.values()) window.clearInterval(timer);
+    streamTimersRef.current.clear();
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -343,6 +375,12 @@ export function LearningWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
 
   const selectedNode = path.nodes.find((node) => node.id === selectedNodeId) ?? null;
 
+  // 手动输入 @节点名称 时也立即同步左右两侧焦点，避免必须从菜单选择。
+  useEffect(() => {
+    const mentioned = path.nodes.find((node) => draft.includes(`@${node.title}`));
+    if (mentioned && mentioned.id !== selectedNodeId) setSelectedNodeId(mentioned.id);
+  }, [draft, path.nodes, selectedNodeId]);
+
   const addMention = (node: PathNode) => {
     const mention = `@${node.title}`;
     setSelectedNodeId(node.id);
@@ -367,14 +405,14 @@ export function LearningWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
     const supported = file.type.startsWith("text/") || /\.(md|txt|csv|json)$/i.test(file.name);
     if (!supported) { setNotice("当前临时参考仅支持 Markdown、文本、表格或数据文件"); return; }
     const content = (await file.text()).slice(0, 120_000);
-    setAttachedFile({ name: file.name, content });
+    setAttachedFile({ name: file.name, content, allowKnowledgeRetention: false });
     setNotice("");
   };
 
   const send = async () => {
     const content = draft.trim();
     if (!content || sending) return;
-    setSending(true); setNotice(""); setDraft("");
+    setSending(true); setNotice(""); setDraft(""); setFinishedRunId(null); setLiveSummary("");
     try {
       const response = await fetch(`${apiBase}/api/learning/runs`, {
         method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
@@ -435,7 +473,7 @@ export function LearningWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
       <aside style={{ width: leftWidth }} className="flex shrink-0 flex-col border-r bg-card" aria-label="任务上下文">
         <div className="workspace-pane-titlebar flex shrink-0 items-center justify-between border-b px-4 py-3.5"><div className="flex items-center gap-2"><ListTree className="h-4 w-4" /><h1 className="text-sm font-semibold">任务进度</h1></div><span className="text-xs text-muted-foreground">{studyRunning ? "进行中" : finishedRunId ? "已完成" : "待发起"}</span></div>
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
-      <section aria-label="当前节点"><div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">当前节点</div>{selectedNode ? <div className="mt-2 rounded-xl border p-3"><div className="text-xs font-semibold leading-5">{selectedNode.title}</div><div className="mt-1"><DescriptionList text={selectedNode.description} compact /></div>{selectedNode.recommendation ? <div className="mt-2.5"><RecommendationBadge recommendation={selectedNode.recommendation} /></div> : null}<button type="button" onClick={() => addMention(selectedNode)} className="mt-3 inline-flex h-7 items-center gap-1 rounded-lg border px-2.5 text-[11px] hover:bg-muted"><MessageSquarePlus className="h-3 w-3" />引用到问题</button></div> : <div className="mt-2 rounded-xl border border-dashed p-3 text-[11px] leading-4 text-muted-foreground">在右侧路径中选择一个节点</div>}</section>
+      <section aria-label="当前节点" aria-live="polite" className="current-node-panel"><div className="current-node-label">当前节点</div>{selectedNode ? <div className="current-node-card mt-2"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><div className="text-sm font-semibold leading-5 text-slate-800">{selectedNode.title}</div></div>{selectedNode.mastered ? <span className="current-node-status">已掌握</span> : null}</div><div className="mt-3"><DescriptionList text={selectedNode.description} compact /></div>{selectedNode.recommendation ? <div className="mt-3"><RecommendationBadge recommendation={selectedNode.recommendation} /></div> : null}<div className="mt-3 flex flex-wrap gap-1.5"><button type="button" onClick={() => addMention(selectedNode)} className="current-node-action"><MessageSquarePlus className="h-3.5 w-3.5" />引用到问题</button><button type="button" disabled={savingNodeId === selectedNode.id} onClick={() => updateNode(selectedNode, { userStatus: selectedNode.userStatus === "completed" ? "learning" : "completed" })} className="current-node-action current-node-action-quiet">{selectedNode.userStatus === "completed" ? "继续学习" : "标记学完"}</button><button type="button" disabled={savingNodeId === selectedNode.id} onClick={() => updateNode(selectedNode, { mastered: !selectedNode.mastered, userStatus: selectedNode.mastered ? selectedNode.userStatus : "completed" })} className="current-node-action current-node-action-quiet">{selectedNode.mastered ? "取消掌握" : "标记掌握"}</button></div><details className="current-node-adjustment mt-3"><summary>调整路径关系</summary><div className="mt-2 flex flex-wrap gap-1.5">{(["前置", "分支", "应用"] as const).map((kind) => <button key={kind} type="button" onClick={() => requestPathAdjustment(kind)} className="current-node-action current-node-action-quiet">+ {kind}</button>)}</div></details></div> : <div className="current-node-empty mt-2">在右侧路径中选择一个节点</div>}</section>
           <section aria-label="任务处理状态">{studyRunning || finishedRunId || nodeStates.length > 0 ? <RunProgressStrip states={nodeStates} summary={liveSummary} events={liveEvents} completed={!studyRunning} /> : <div className="mt-2 rounded-xl border border-dashed p-4 text-[11px] leading-4 text-muted-foreground">开始任务后，这里会显示处理进度和检查结果。</div>}</section>
         </div>
       </aside>
@@ -444,7 +482,7 @@ export function LearningWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
       <section className="flex min-w-[390px] flex-1 flex-col bg-card" aria-label="学习任务对话">
         <div className="workspace-pane-titlebar flex shrink-0 items-center justify-between border-b px-5 py-3.5">
           <div className="flex items-center gap-2"><Sparkles className="h-4 w-4" /><h2 className="text-sm font-semibold">学习助手</h2></div>
-          <div className="flex min-w-0 items-center gap-2"><span className="max-w-[270px] truncate text-xs text-muted-foreground">{selectedNode ? `关联：${selectedNode.title}` : "选择路径节点后开始任务"}</span><button type="button" disabled={studyRunning || clearingConversation || messages.length === 0} onClick={() => setClearDialogOpen(true)} className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-transparent px-2 text-[11px] font-medium text-muted-foreground transition-colors hover:border-rose-100 hover:bg-rose-50 hover:text-rose-700 disabled:cursor-not-allowed disabled:opacity-40" title={studyRunning ? "任务结束后才能清除上下文" : "清除对话上下文"}><Eraser className="h-3.5 w-3.5" />{clearingConversation ? "清除中" : "清除上下文"}</button></div>
+          <div className="flex min-w-0 items-center gap-2"><button type="button" disabled={studyRunning || clearingConversation || messages.length === 0} onClick={() => setClearDialogOpen(true)} className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-transparent px-2 text-[11px] font-medium text-muted-foreground transition-colors hover:border-rose-100 hover:bg-rose-50 hover:text-rose-700 disabled:cursor-not-allowed disabled:opacity-40" title={studyRunning ? "任务结束后才能清除上下文" : "清除对话上下文"}><Eraser className="h-3.5 w-3.5" />{clearingConversation ? "清除中" : "清除上下文"}</button></div>
         </div>
         <div ref={feedRef} className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
           <div className="mx-auto max-w-3xl space-y-4">
@@ -463,7 +501,7 @@ export function LearningWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
         </div>
         <div className="shrink-0 border-t bg-background p-4">
           {notice && <div className="mx-auto mb-2 max-w-3xl rounded-lg border border-destructive/25 bg-destructive/5 px-3 py-2 text-xs text-destructive">{notice}</div>}
-          {attachedFile && <div className="mx-auto mb-2 flex max-w-3xl items-center justify-between rounded-lg border bg-muted/30 px-3 py-2 text-xs"><span className="truncate">临时参考：{attachedFile.name}</span><button type="button" onClick={() => setAttachedFile(null)} aria-label="移除临时参考"><X className="h-3.5 w-3.5" /></button></div>}
+          {attachedFile && <div className="mx-auto mb-2 max-w-3xl rounded-lg border bg-muted/30 px-3 py-2 text-xs"><div className="flex items-center justify-between gap-3"><span className="truncate">临时参考：{attachedFile.name}</span><button type="button" onClick={() => setAttachedFile(null)} aria-label="移除临时参考"><X className="h-3.5 w-3.5" /></button></div><label className="mt-2 flex items-start gap-2 rounded-md bg-background/70 px-2 py-1.5 text-[11px] leading-4 text-muted-foreground"><input type="checkbox" checked={attachedFile.allowKnowledgeRetention} onChange={(event) => setAttachedFile((current) => current ? { ...current, allowKnowledgeRetention: event.target.checked } : current)} className="mt-0.5 accent-[#789ce6]" /><span><span className="font-medium text-foreground">允许智能体评估并沉淀</span><span className="ml-1">仅发送有限摘录；通过相关性、质量、重复风险和隐私检查后，才会成为公共学习资料。</span></span></label></div>}
           <div className="mx-auto max-w-3xl rounded-2xl border border-[#dce6f1] bg-card p-2.5 shadow-[0_5px_16px_rgb(57_86_120_/_5%)] focus-within:ring-2 focus-within:ring-blue-200">
             <textarea value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void send(); } }} rows={2} placeholder="输入任务，或 @ 引用路径节点" className="max-h-32 min-h-[44px] w-full resize-none bg-transparent px-2 py-2 text-sm leading-5 outline-none placeholder:text-muted-foreground" />
             <div className="flex items-center justify-between gap-2 border-t border-[#edf2f7] px-1 pt-2">
@@ -485,7 +523,7 @@ export function LearningWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
       </section>
 
       <div role="separator" aria-orientation="vertical" onMouseDown={() => setResizing("right")} className="w-1.5 shrink-0 cursor-col-resize bg-border/60 transition-colors hover:bg-foreground/30" />
-      <aside style={{ width: rightWidth }} className="flex shrink-0 flex-col bg-muted/15" aria-label="当前学习路径"><div className="workspace-pane-titlebar flex shrink-0 items-center justify-between border-b bg-background px-4 py-3.5"><div className="flex items-center gap-2"><Network className="h-4 w-4" /><h2 className="text-sm font-semibold">学习路径</h2></div><span className="text-xs text-muted-foreground">{path.nodes.length} 个节点</span></div><div className="min-h-0 basis-[59%] p-3">{path.nodes.length ? <TreeCanvas graph={path} selectedNodeId={selectedNodeId} onSelect={(node) => setSelectedNodeId(node.id)} /> : <div className="flex h-full items-center justify-center rounded-xl border border-dashed text-xs text-muted-foreground">尚未建立学习路径</div>}</div><div className="min-h-0 basis-[41%] overflow-y-auto border-t bg-background p-4">{selectedNode ? <PathNodeDetails apiBase={apiBase} node={selectedNode} primaryLabel="引用到问题" onPrimary={() => addMention(selectedNode)} onRequestNodeAddition={requestPathAdjustment} onUpdateNode={updateNode} saving={savingNodeId === selectedNode.id} compact /> : <div className="flex h-full items-center justify-center text-xs text-muted-foreground">选择一个节点</div>}</div></aside>
+      <aside style={{ width: rightWidth }} className="flex shrink-0 flex-col bg-muted/15" aria-label="当前学习路径"><div className="workspace-pane-titlebar flex shrink-0 items-center border-b bg-background px-4 py-3.5"><div className="flex items-center gap-2"><Network className="h-4 w-4" /><h2 className="text-sm font-semibold">学习路径</h2></div></div><div className="min-h-0 flex-1 p-3">{path.nodes.length ? <TreeCanvas graph={path} selectedNodeId={selectedNodeId} onSelect={(node) => setSelectedNodeId(node.id)} /> : <div className="flex h-full items-center justify-center rounded-xl border border-dashed text-xs text-muted-foreground">尚未建立学习路径</div>}</div></aside>
     </div>
 
     {profileOpen && <ProfileDialog apiBase={apiBase} user={user} onUserChange={onUserChange} onClose={() => setProfileOpen(false)} />}
@@ -498,13 +536,12 @@ export function LearningWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
 function RunProgressStrip({ states, summary, events, completed }: { states: Array<{ key: string; state: RunNodeState }>; summary: string; events: Array<{ id: string; type: string; nodeKey: string | null; summary: string }>; completed: boolean }) {
   // 历史任务与本地快照可能都携带同一处理步骤；界面只保留各步骤的最新状态。
   const visibleStates = [...states.reduce((latest, item) => latest.set(item.key, item), new Map<string, { key: string; state: RunNodeState }>()).values()];
-  return <section aria-label="任务处理进度" className="rounded-xl border bg-muted/20 px-3.5 py-3">
+  return <section aria-label="任务处理进度" className="run-progress-strip rounded-xl border bg-muted/20 px-3.5 py-3">
     <div className="flex items-center justify-between text-[10px] font-medium tracking-wide text-muted-foreground"><span>{completed ? "处理完成" : "处理中"}</span><span>完成 {visibleStates.filter((item) => item.state === "succeeded").length} 项</span></div>
     <div className="mt-2 flex flex-wrap gap-1.5">
       {visibleStates.map((item) => <span key={item.key} className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] ${item.state === "succeeded" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : item.state === "failed" ? "border-destructive/30 bg-destructive/10 text-destructive" : item.state === "revising" ? "border-amber-200 bg-amber-50 text-amber-700" : "border-border bg-background text-foreground"}`}><span className={`h-1.5 w-1.5 rounded-full ${item.state === "succeeded" ? "bg-emerald-600" : item.state === "failed" ? "bg-destructive" : item.state === "revising" ? "bg-amber-500" : "animate-pulse bg-foreground"}`} />{nodeLabels[item.key]?.name ?? item.key}</span>)}
     </div>
-    {summary && <p className="mt-2 line-clamp-2 text-[11px] leading-4 text-muted-foreground">{readableProcessText(summary)}</p>}
-    {events.length > 0 && <div className="mt-3 border-t pt-2 text-xs"><p className="mb-1.5 font-medium text-foreground">处理记录</p><div className="space-y-1.5">{events.map((event) => <div key={event.id} className="flex gap-2 leading-5 text-muted-foreground"><span className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${event.type === "node.failed" ? "bg-rose-500" : event.type === "node.succeeded" ? "bg-emerald-500" : "bg-sky-500"}`} /><span>{readableProcessText(event.summary)}</span></div>)}</div></div>}
+    {summary || events.length > 0 ? <details className="run-progress-details" open><summary className="mt-2 flex cursor-pointer list-none items-center justify-between border-t pt-2 text-[11px] font-medium text-slate-700"><span>公开协同记录</span><span className="text-[10px] font-normal text-muted-foreground">{completed ? "已完成" : "实时更新"}</span></summary><div className="run-progress-detail-body"><p className="mb-1 text-[10px] leading-4 text-muted-foreground">这里展示各助手的公开结论与处理状态，不展示模型内部思维链。</p>{summary && <p className="line-clamp-2 text-[11px] leading-4 text-muted-foreground">{readableProcessText(summary)}</p>}{events.length > 0 && <div className="mt-2 space-y-1.5 text-xs">{events.map((event) => <div key={event.id} className="flex gap-2 leading-5 text-muted-foreground"><span className={`run-progress-event-dot ${event.type === "node.failed" ? "run-progress-event-dot-failed" : event.type === "node.succeeded" ? "run-progress-event-dot-succeeded" : "run-progress-event-dot-active"}`} /><span>{readableProcessText(event.summary)}</span></div>)}</div>}</div></details> : null}
   </section>;
 }
 
@@ -520,12 +557,13 @@ function MessageCard({ message, onExport }: { message: StudyMessage; onExport: (
   }
   const agentId = message.metadata.agentId;
   const agentName = readableProcessText(message.metadata.agentName ?? "任务协调员");
+  const producerLabel = message.metadata.producer === "llm" ? "模型生成" : message.metadata.producer === "rule" ? "规则处理" : "规则 + 模型";
   return <article className="max-w-[94%]">
     <div className="flex items-start gap-2.5">
       <span className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-semibold ${agentTone(agentId)}`}>{agentName.slice(0, 1)}</span>
       <div className="min-w-0 flex-1">
-        <div className="text-[11px] font-medium text-muted-foreground">{agentName}</div>
-        <div className="mt-1 text-[13px] leading-7 text-slate-700"><MessageRichText text={readableProcessText(message.content)} /></div>
+        <div className="flex items-center gap-2 text-[11px] font-medium text-muted-foreground"><span>{agentName}</span><span className="rounded-full border border-border/70 px-1.5 py-0.5 text-[9px] font-normal">{producerLabel}</span>{message.metadata.streaming ? <span className="agent-streaming-label">正在输出</span> : null}</div>
+        <div className={`agent-message-bubble mt-1.5 text-[13px] leading-7 text-slate-700 ${message.metadata.streaming ? "is-streaming" : ""}`}><MessageRichText text={readableProcessText(message.content)} />{message.metadata.streaming ? <span aria-label="正在流式输出" className="agent-streaming-caret" /> : null}</div>
       </div>
     </div>
     <div className="mt-1 pl-[42px] text-[10px] text-muted-foreground">{new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit" }).format(message.createdAt)}</div>
@@ -537,5 +575,6 @@ function MessageRichText({ text, invert = false }: { text: string; invert?: bool
 }
 
 function AssetCard({ asset, onExport }: { asset: StudyAsset; onExport: (asset: StudyAsset, format: "md" | "txt" | "json" | "ppt") => void }) {
-  return <div className="rounded-xl border bg-muted/25 p-3"><div className="flex items-start justify-between gap-3"><div><div className="text-[10px] text-muted-foreground">{resourceLabel(asset.type)}</div><div className="mt-1 text-xs font-semibold">{asset.title}</div></div><span className={`rounded-full px-2 py-1 text-[10px] ${asset.persisted ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>{asset.persisted ? "已保存" : "等待检查"}</span></div>{asset.persisted && <div className="mt-3 flex gap-2"><button type="button" onClick={() => onExport(asset, "md")} className="h-7 rounded-lg border px-2.5 text-[11px] hover:bg-background">下载 Markdown</button>{asset.type === "presentation" && <button type="button" onClick={() => onExport(asset, "ppt")} className="h-7 rounded-lg border px-2.5 text-[11px] hover:bg-background">下载 PPT</button>}<button type="button" onClick={() => onExport(asset, "txt")} className="h-7 rounded-lg border px-2.5 text-[11px] hover:bg-background">下载文本</button><button type="button" onClick={() => onExport(asset, "json")} className="h-7 rounded-lg border px-2.5 text-[11px] hover:bg-background">下载数据</button></div>}</div>;
+  const producerLabel = asset.producer === "llm" ? "AI 生成" : asset.producer === "rule" ? "模板兜底" : "来源已记录";
+  return <div className="rounded-xl border bg-muted/25 p-3"><div className="flex items-start justify-between gap-3"><div><div className="text-[10px] text-muted-foreground">{resourceLabel(asset.type)} · {producerLabel}</div><div className="mt-1 text-xs font-semibold">{asset.title}</div></div><span className={`rounded-full px-2 py-1 text-[10px] ${asset.persisted ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>{asset.persisted ? "已保存" : "未发布"}</span></div>{asset.generationNote ? <p className="mt-2 text-[11px] leading-5 text-muted-foreground">{asset.generationNote}</p> : null}{asset.failureReason ? <p className="mt-1 text-[11px] leading-5 text-amber-700">{asset.failureReason}</p> : null}{asset.persisted && <div className="mt-3 flex gap-2"><button type="button" onClick={() => onExport(asset, "md")} className="h-7 rounded-lg border px-2.5 text-[11px] hover:bg-background">下载 Markdown</button>{asset.type === "presentation" && <button type="button" onClick={() => onExport(asset, "ppt")} className="h-7 rounded-lg border px-2.5 text-[11px] hover:bg-background">下载 PPT</button>}<button type="button" onClick={() => onExport(asset, "txt")} className="h-7 rounded-lg border px-2.5 text-[11px] hover:bg-background">下载文本</button><button type="button" onClick={() => onExport(asset, "json")} className="h-7 rounded-lg border px-2.5 text-[11px] hover:bg-background">下载数据</button></div>}</div>;
 }

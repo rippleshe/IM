@@ -3,20 +3,21 @@
  *
  * A1 动态 DAG 对比固定 DAG：同一任务下，三画像的动态计划（风险等级/从严裁决/质询重点）
  *    是否真实分化；固定信号（中性画像）下计划是否退化为完全一致。
- * A2 Claim 辩论裁决对比仅生成/仅一次审核：从真实运行的 claims 历史统计
+ * A2 Claim 辩论裁决对比仅生成/仅一次审核：从固定、带 SHA-256 的真实运行导出统计
  *    "初稿幻觉率（首轮 unsupported）→ 发布资源幻觉率（终轮 unsupported）"的门禁削减。
  * A3 BKT 难度校准对比固定难度：三画像技能状态下，校准难度的预计成功率是否全部落
  *    65%-80% 教学区间，固定 0.42 难度是否越界。
  *
- * 用法：pnpm ablation（需 PG 数据源与既有运行历史；A2 无历史时如实标注）
+ * 用法：pnpm ablation（纯离线；固定队列见 data/evaluation/live-run-cohort.json）
  */
 import 'dotenv/config';
+import { createHash } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
-import { writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import { getLearningDatabase } from '../server/db/client.js';
 import { planStudyRun, type PlannerSignals } from '../server/runs/planner.js';
+import { replayExport, type ExportPayloadLike } from '../server/runs/metrics.js';
 import { calibrateDifficulty, SUCCESS_RATE_BAND } from '../src/learning/difficulty.js';
 
 interface AblationReport {
@@ -53,12 +54,44 @@ const PERSONA_SIGNALS: Record<string, PlannerSignals> = {
 };
 const NEUTRAL: PlannerSignals = { profileUncertainty: 0.5, knowledgeRisk: 0, taskRisk: 0, evidenceCoverageHint: 'normal' };
 
+type CohortManifest = {
+  id: string;
+  runs: Array<{ persona: string; file: string; sha256: string; runId: string }>;
+};
+
+type CohortRun = {
+  persona: string;
+  payload: ExportPayloadLike & {
+    initialLearnerState?: { skillStates?: Array<{ knowledgePointId: string; pMastery: number; confidence: number }> };
+  };
+  replay: ReturnType<typeof replayExport>;
+};
+
 function planFingerprint(plan: { riskLevel: string; strict: boolean; challengeFocus: string[] }): string {
   return `${plan.riskLevel}|${plan.strict}|${[...plan.challengeFocus].sort().join(',')}`;
 }
 
+async function loadFrozenCohort(): Promise<{ id: string; runs: CohortRun[] }> {
+  const manifestPath = path.join(process.cwd(), 'data', 'evaluation', 'live-run-cohort.json');
+  const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as CohortManifest;
+  if (!manifest.id || !Array.isArray(manifest.runs) || manifest.runs.length < 3) {
+    throw new Error('固定真实运行队列无效：至少需要三种学习画像');
+  }
+  const runs = await Promise.all(manifest.runs.map(async (entry): Promise<CohortRun> => {
+    const body = await readFile(path.join(process.cwd(), entry.file), 'utf8');
+    const actualHash = createHash('sha256').update(body).digest('hex');
+    if (actualHash !== entry.sha256.toLowerCase()) throw new Error(`固定队列散列不一致：${entry.file}`);
+    const payload = JSON.parse(body) as CohortRun['payload'];
+    if (payload.run.id !== entry.runId) throw new Error(`固定队列运行标识不一致：${entry.file}`);
+    const replay = replayExport(payload);
+    if (!replay.passed) throw new Error(`固定队列离线回放失败：${entry.file}（${replay.differences.join('；')}）`);
+    return { persona: entry.persona, payload, replay };
+  }));
+  return { id: manifest.id, runs };
+}
+
 async function main(): Promise<void> {
-  const database = getLearningDatabase();
+  const cohort = await loadFrozenCohort();
   const report: AblationReport = {
     generatedAt: new Date().toISOString(),
     A1_dynamic_vs_fixed: { personaPlans: [], fixedPlans: [], dynamicDistinct: 0, fixedDistinct: 0, pass: false },
@@ -101,54 +134,28 @@ async function main(): Promise<void> {
   report.A1_dynamic_vs_fixed.pass =
     report.A1_dynamic_vs_fixed.dynamicDistinct >= 2 && report.A1_dynamic_vs_fixed.fixedDistinct === 1;
 
-  // ---------- A2：门禁消融（基于真实运行历史；升级计划 G10：初稿 vs 终稿按轮次口径） ----------
-  const runRows = (await database.pool.query(
-    `SELECT r.id, r.final_asset_id,
-       (SELECT MAX(a.round) FROM audit_decisions a WHERE a.run_id = r.id) AS max_round
-     FROM study_runs r
-     WHERE r.status = 'succeeded' AND r.final_asset_id IS NOT NULL
-     ORDER BY r.created_at DESC LIMIT 20`,
-  )).rows as Array<{ id: string; final_asset_id: string | null; max_round: number }>;
-  report.A2_gate_ablation.runsAnalyzed = runRows.length;
-  if (runRows.length > 0) {
-    // 按轮次统计：attempt 1 = 初稿，最大 attempt = 终稿；non_factual 不入分母
-    const attemptRows = (await database.pool.query(
-      `SELECT resource_id AS "runId", COALESCE(attempt, 1) AS attempt,
-         COUNT(*) FILTER (WHERE COALESCE(claim_type, 'risk_advice') <> 'non_factual')::int AS auditable,
-         COUNT(*) FILTER (WHERE verdict = 'unsupported' AND COALESCE(claim_type, 'risk_advice') <> 'non_factual')::int AS unsupported
-       FROM claims
-       WHERE resource_id = ANY($1)
-       GROUP BY resource_id, COALESCE(attempt, 1)
-       ORDER BY resource_id, attempt`,
-      [runRows.map((row) => row.id)],
-    )).rows as Array<{ runId: string; attempt: number; auditable: number; unsupported: number }>;
-    const rateAt = (runId: string, attempt: number): number | null => {
-      const row = attemptRows.find((item) => item.runId === runId && Number(item.attempt) === attempt);
-      if (!row || Number(row.auditable) === 0) return null;
-      return Math.round((Number(row.unsupported) / Number(row.auditable)) * 1000) / 1000;
-    };
-    const draftRates = runRows.map((row) => rateAt(row.id, 1)).filter((rate): rate is number => rate !== null);
-    const finalRates = runRows.map((row) => rateAt(row.id, Number(row.max_round) || 1)).filter((rate): rate is number => rate !== null);
-    const mean = (values: number[]): number | null => values.length === 0 ? null : Math.round((values.reduce((sum, value) => sum + value, 0) / values.length) * 1000) / 1000;
-    report.A2_gate_ablation.draftHallucinationRate = mean(draftRates);
-    report.A2_gate_ablation.releasedHallucinationRate = mean(finalRates);
-    report.A2_gate_ablation.revisedRuns = runRows.filter((row) => Number(row.max_round) > 1).length;
-    const gateGain = report.A2_gate_ablation.draftHallucinationRate !== null && report.A2_gate_ablation.releasedHallucinationRate !== null
-      ? report.A2_gate_ablation.draftHallucinationRate - report.A2_gate_ablation.releasedHallucinationRate
-      : null;
-    report.A2_gate_ablation.note = `按轮次口径分析 ${runRows.length} 次已发布运行：初稿幻觉率 ${report.A2_gate_ablation.draftHallucinationRate === null ? 'N/A（空分母）' : `${(report.A2_gate_ablation.draftHallucinationRate * 100).toFixed(1)}%`}、终稿幻觉率 ${report.A2_gate_ablation.releasedHallucinationRate === null ? 'N/A' : `${(report.A2_gate_ablation.releasedHallucinationRate * 100).toFixed(1)}%`}、门禁净增益 ${gateGain === null ? 'N/A' : `${(gateGain * 100).toFixed(1)}%`}；修订触发 ${report.A2_gate_ablation.revisedRuns} 次。历史样本无修订时增益以故障注入 fixture 与 live 分层案例补证。`;
-    report.A2_gate_ablation.pass = (report.A2_gate_ablation.releasedHallucinationRate ?? 1) < 0.05;
-  } else {
-    report.A2_gate_ablation.note = '暂无已发布运行历史，无法统计；请先运行 pnpm evaluate --live 或页面协同生成。';
-    report.A2_gate_ablation.pass = false;
-  }
+  // ---------- A2：门禁消融（固定真实运行队列；按 Claim 数量加权） ----------
+  report.A2_gate_ablation.runsAnalyzed = cohort.runs.length;
+  const stages = cohort.runs.map((run) => ({ first: run.replay.attempts[0]!, last: run.replay.attempts.at(-1)! }));
+  const weightedRate = (key: 'first' | 'last'): number | null => {
+    const auditable = stages.reduce((sum, stage) => sum + stage[key].auditableClaims, 0);
+    if (auditable === 0) return null;
+    const unsupported = stages.reduce((sum, stage) => sum + stage[key].unsupportedClaims, 0);
+    return Math.round((unsupported / auditable) * 1000) / 1000;
+  };
+  report.A2_gate_ablation.draftHallucinationRate = weightedRate('first');
+  report.A2_gate_ablation.releasedHallucinationRate = weightedRate('last');
+  report.A2_gate_ablation.revisedRuns = cohort.runs.filter((run) => run.replay.attempts.length > 1).length;
+  const gateGain = report.A2_gate_ablation.draftHallucinationRate !== null && report.A2_gate_ablation.releasedHallucinationRate !== null
+    ? report.A2_gate_ablation.draftHallucinationRate - report.A2_gate_ablation.releasedHallucinationRate
+    : null;
+  report.A2_gate_ablation.note = `固定队列 ${cohort.id}：${cohort.runs.length} 个三画像真实运行均已通过散列校验和离线回放；按 Claim 数量加权，初稿幻觉率 ${report.A2_gate_ablation.draftHallucinationRate === null ? 'N/A' : `${(report.A2_gate_ablation.draftHallucinationRate * 100).toFixed(1)}%`}、终稿幻觉率 ${report.A2_gate_ablation.releasedHallucinationRate === null ? 'N/A' : `${(report.A2_gate_ablation.releasedHallucinationRate * 100).toFixed(1)}%`}、门禁净增益 ${gateGain === null ? 'N/A' : `${(gateGain * 100).toFixed(1)}%`}；${report.A2_gate_ablation.revisedRuns} 次触发修订。`;
+  report.A2_gate_ablation.pass = (report.A2_gate_ablation.releasedHallucinationRate ?? 1) < 0.05;
 
   // ---------- A3：BKT 难度校准 vs 固定难度 ----------
-  const states = (await database.pool.query(
-    `SELECT u.login_name AS persona, s.knowledge_point_id AS kp, s.p_mastery AS mastery, s.confidence
-     FROM learner_skill_states s JOIN users u ON u.id = s.learner_id
-     WHERE u.login_name LIKE 'learner-%' LIMIT 60`,
-  )).rows as Array<{ persona: string; kp: string; mastery: number; confidence: number }>;
+  const states = cohort.runs.flatMap((run) => (run.payload.initialLearnerState?.skillStates ?? []).map((state) => ({
+    persona: run.persona, kp: state.knowledgePointId, mastery: state.pMastery, confidence: state.confidence,
+  })));
   for (const state of states) {
     const calibrated = calibrateDifficulty({ pMastery: state.mastery, confidence: state.confidence, prereqReadiness: 0.6, scaffold: 'medium' });
     // 固定难度 0.42（历史硬编码）的预计成功率：按同一成功率模型反推

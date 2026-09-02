@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "diagram_type": "dataflow",
+  "meta": {
+    "title": "智辩无幻 · 知识与证据升级数据流",
+    "locale": "zh-CN",
+    "quality_profile": "showcase",
+    "viewBox": [1080, 780]
+  },
+  "stages": [
+    { "label": "来源" },
+    { "label": "接入" },
+    { "label": "理解与质检" },
+    { "label": "可追溯存储" },
+    { "label": "检索与生成" }
+  ],
+  "nodes": [
+    { "id": "archive", "type": "external", "label": "队员采集压缩包", "sublabel": "文档、网页与数据文件", "stage": 0, "row": 0, "tag": "待清点" },
+    { "id": "local-data", "type": "database", "label": "现有结构化数据", "sublabel": "Postgres 数据集与样本", "stage": 0, "row": 2, "tag": "已有证据" },
+    { "id": "web-results", "type": "external", "label": "网络检索候选", "sublabel": "SearXNG 结果与页面", "stage": 0, "row": 4, "tag": "临时来源" },
+    { "id": "intake", "type": "backend", "label": "接入与指纹", "sublabel": "解包、格式识别、去重", "stage": 1, "row": 1, "tag": "可重复" },
+    { "id": "extract", "type": "backend", "label": "内容抽取", "sublabel": "正文、表格、附件与元数据", "stage": 2, "row": 1, "tag": "原文保留" },
+    { "id": "quality", "type": "security", "label": "质量与合规闸门", "sublabel": "许可、敏感性、来源与版本", "stage": 2, "row": 3, "tag": "Agent 自动评估" },
+    { "id": "documents", "type": "database", "label": "文档与版本库", "sublabel": "原始文件、抽取文本、分块", "stage": 3, "row": 0, "tag": "不可覆盖" },
+    { "id": "evidence", "type": "database", "label": "证据图与来源账本", "sublabel": "Claim、片段与检索批次", "stage": 3, "row": 3, "tag": "可追溯" },
+    { "id": "retrieval", "type": "backend", "label": "混合检索与重排", "sublabel": "结构化、文档与网页补全", "stage": 4, "row": 1, "tag": "证据优先" },
+    { "id": "agents", "type": "backend", "label": "学习 Agent", "sublabel": "生成、引用校验与回写候选", "stage": 4, "row": 3, "tag": "闭环" }
+  ],
+  "flows": [
+    { "id": "archive-intake", "from": "archive", "to": "intake", "label": "文件清单", "classification": "本地采集", "variant": "emphasis" },
+    { "id": "local-intake", "from": "local-data", "to": "intake", "label": "既有资料", "classification": "已有数据", "variant": "default" },
+    { "id": "intake-extract", "from": "intake", "to": "extract", "label": "格式识别", "classification": "带指纹", "variant": "emphasis", "labelDy": 24 },
+    { "id": "extract-documents", "from": "extract", "to": "documents", "label": "原件与正文", "classification": "只追加", "variant": "default", "labelDy": -30 },
+    { "id": "extract-quality", "from": "extract", "to": "quality", "label": "待审内容", "classification": "候选来源", "variant": "security", "labelDy": 24 },
+    { "id": "web-quality", "from": "web-results", "to": "quality", "label": "网页候选", "classification": "外部候选", "variant": "dashed" },
+    { "id": "quality-evidence", "from": "quality", "to": "evidence", "label": "通过后分块", "classification": "可定位片段", "variant": "emphasis", "labelDy": 24 },
+    { "id": "documents-retrieval", "from": "documents", "to": "retrieval", "label": "全文", "classification": "内部检索", "variant": "default", "labelDy": -30 },
+    { "id": "evidence-agents", "from": "evidence", "to": "agents", "label": "EvidencePack", "classification": "可核对", "variant": "emphasis", "labelDy": 24 },
+    { "id": "retrieval-agents", "from": "retrieval", "to": "agents", "label": "重排结果", "classification": "引用边界", "variant": "emphasis", "labelDy": 54 }
+  ],
+  "cards": [
+    { "dot": "emerald", "title": "入库原则", "items": ["原始文件和抽取结果同时保留", "每次接入具备哈希、来源与时间", "外部检索先进入候选区，不直接成为证据"] },
+    { "dot": "violet", "title": "检索升级", "items": ["结构化、全文、向量三路协同", "重排在生成前执行", "回答和资源只引用可定位片段"] },
+    { "dot": "orange", "title": "闭环治理", "items": ["Agent 发现缺证时提出候选", "质量闸门决定能否索引与引用", "更新不覆盖旧版本，保留审计链"] }
+  ]
+}

@@ -6,6 +6,9 @@ import {
   Check,
   CheckCircle2,
   ClipboardList,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Clock3,
   Download,
   FileText,
@@ -18,6 +21,7 @@ import {
   Quote,
   Save,
   Target,
+  ListTree,
   Trash2,
   XCircle,
 } from "lucide-react";
@@ -70,14 +74,90 @@ function defaultAssetTags(asset: ResourceAsset): string[] {
   return asset.tags?.length ? asset.tags : ["设备诊断", typeLabel(asset.type)];
 }
 
+function ResourceExportMenu({ assetType, onExport }: { assetType: ResourceType; onExport: (format: "md" | "txt" | "json" | "ppt") => void }) {
+  const [open, setOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const options: Array<{ format: "md" | "txt" | "json" | "ppt"; label: string }> = [
+    { format: "md", label: "Markdown" },
+    { format: "txt", label: "纯文本" },
+    { format: "json", label: "数据 JSON" },
+    ...(assetType === "presentation" ? [{ format: "ppt" as const, label: "PowerPoint" }] : []),
+  ];
+  useEffect(() => {
+    if (!open) return;
+    const close = (event: MouseEvent) => { if (!menuRef.current?.contains(event.target as Node)) setOpen(false); };
+    const keydown = (event: KeyboardEvent) => { if (event.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", close);
+    document.addEventListener("keydown", keydown);
+    return () => { document.removeEventListener("mousedown", close); document.removeEventListener("keydown", keydown); };
+  }, [open]);
+  return <div ref={menuRef} className="relative">
+    <button type="button" onClick={() => setOpen((value) => !value)} aria-expanded={open} aria-haspopup="menu" className="resource-toolbar-button"><Download className="h-3.5 w-3.5" />导出<ChevronDown className={`h-3.5 w-3.5 transition-transform ${open ? "rotate-180" : ""}`} /></button>
+    {open ? <div role="menu" className="resource-export-menu">
+      {options.map((option) => <button key={option.format} type="button" role="menuitem" onClick={() => { onExport(option.format); setOpen(false); }} className="resource-export-option">{option.label}<span aria-hidden="true">↓</span></button>)}
+    </div> : null}
+  </div>;
+}
+
 function notifyEvidenceUpdated() {
   if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent("im-training-agent:learning-evidence-updated"));
+}
+
+type MermaidRelation = { from: string; to: string };
+
+function normalizeMermaidCode(source: string): string {
+  return source
+    .replace(/\r/g, "")
+    .split("\n")
+    .map((line) => line
+      .replace(/\[([^\]\n]*)\]/g, (_, label: string) => `[${cleanMermaidLabel(label)}]`)
+      .replace(/\{([^}\n]*)\}/g, (_, label: string) => `{${cleanMermaidLabel(label)}}`)
+      .replace(/\(([^)\n]*)\)/g, (_, label: string) => `(${cleanMermaidLabel(label)})`)
+      .replace(/\|([^|\n]*)\|/g, (_, label: string) => `|${cleanMermaidLabel(label)}|`)
+      .replace(/["'`]/g, "")
+      .replace(/\s+/g, " ")
+      .trim())
+    .filter(Boolean)
+    .join("\n");
+}
+
+function cleanMermaidLabel(label: string): string {
+  return label
+    .replace(/@/g, "引用")
+    .replace(/[<>:"'`]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 46) || "节点";
+}
+
+function getMermaidRelations(code: string): { nodes: string[]; relations: MermaidRelation[] } {
+  const labels = new Map<string, string>();
+  const nodePattern = /\b([A-Za-z][\w-]*)\s*[\[({]([^\]})\n]*)[\]})]/g;
+  for (const match of code.matchAll(nodePattern)) labels.set(match[1], cleanMermaidLabel(match[2]));
+  const relations: MermaidRelation[] = [];
+  const edgePattern = /\b([A-Za-z][\w-]*)\s*(?:-->|---|-.->|==>)\s*(?:\|[^|\n]*\|\s*)?([A-Za-z][\w-]*)/g;
+  for (const match of code.matchAll(edgePattern)) {
+    const from = labels.get(match[1]) ?? match[1];
+    const to = labels.get(match[2]) ?? match[2];
+    if (!relations.some((relation) => relation.from === from && relation.to === to)) relations.push({ from, to });
+  }
+  return { nodes: Array.from(labels.values()), relations };
+}
+
+function MermaidFallback({ code }: { code: string }) {
+  const { nodes, relations } = getMermaidRelations(code);
+  return <div className="resource-diagram-fallback">
+    <div className="resource-diagram-fallback-heading"><span className="resource-diagram-fallback-icon"><MapIcon className="h-3.5 w-3.5" /></span><div><div className="text-xs font-semibold text-slate-700">知识关系</div><p className="mt-0.5 text-[11px] text-slate-500">关系图已整理为可读路径，内容不受影响。</p></div></div>
+    {relations.length > 0 ? <div className="resource-diagram-relations">{relations.map((relation, index) => <div key={`${relation.from}-${relation.to}-${index}`} className="resource-diagram-relation"><span>{relation.from}</span><span className="resource-diagram-arrow" aria-hidden="true">→</span><span>{relation.to}</span></div>)}</div> : nodes.length > 0 ? <div className="resource-diagram-nodes">{nodes.map((node) => <span key={node}>{node}</span>)}</div> : <p className="text-xs text-slate-500">这份资源暂时没有可识别的节点关系。</p>}
+    <details className="resource-diagram-source"><summary>查看关系图源码</summary><pre>{code}</pre></details>
+  </div>;
 }
 
 // Mermaid 知识图谱渲染：概念图资源以 flowchart 文本存储，客户端动态加载 mermaid 绘制。
 function MermaidDiagram({ code }: { code: string }) {
   const [svg, setSvg] = useState("");
   const [failed, setFailed] = useState(false);
+  const safeCode = useMemo(() => normalizeMermaidCode(code), [code]);
   useEffect(() => {
     let active = true;
     const renderId = `mermaid-${Math.random().toString(36).slice(2)}`;
@@ -98,12 +178,12 @@ function MermaidDiagram({ code }: { code: string }) {
           },
         });
         // 先静默校验语法，再渲染，避免 Mermaid 把错误 SVG 注入页面顶部。
-        const parsed = await mermaid.parse(code, { suppressErrors: true });
+        const parsed = await mermaid.parse(safeCode, { suppressErrors: true });
         if (!parsed) {
           if (active) setFailed(true);
           return;
         }
-        const { svg: rendered } = await mermaid.render(renderId, code);
+        const { svg: rendered } = await mermaid.render(renderId, safeCode);
         // mermaid 解析失败时不总是抛错，有时直接返回错误图——按内容识别并降级为源码展示
         if (active) {
           if (rendered.includes("Syntax error") || rendered.includes("mermaid-error")) setFailed(true);
@@ -117,8 +197,8 @@ function MermaidDiagram({ code }: { code: string }) {
       }
     })();
     return () => { active = false; };
-  }, [code]);
-  if (failed) return <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-4"><div className="text-xs font-medium text-amber-700">这张知识关系图暂时无法渲染，下面是它的结构定义：</div><pre className="mt-2 overflow-x-auto rounded-lg bg-background px-3 py-2.5 font-mono text-xs leading-5 text-muted-foreground">{code}</pre></div>;
+  }, [safeCode]);
+  if (failed) return <MermaidFallback code={code} />;
   if (!svg) return <div className="flex h-24 items-center justify-center rounded-xl border bg-muted/20 text-xs text-muted-foreground">正在渲染知识图谱…</div>;
   return <div className="flex justify-center overflow-x-auto rounded-xl border bg-gradient-to-b from-background to-muted/20 p-5 [&_svg]:h-auto [&_svg]:max-w-full" dangerouslySetInnerHTML={{ __html: svg }} />;
 }
@@ -216,6 +296,7 @@ export function ResourceWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
   const [resizing, setResizing] = useState(false);
   const [qaOpen, setQaOpen] = useState(false);
   const [selectedQuote, setSelectedQuote] = useState("");
+  const readerRequestRef = useRef(0);
 
   const activeAssets = useMemo(() => assets.filter((asset) => asset.type === activeType), [assets, activeType]);
   const selectedAsset = assets.find((asset) => asset.id === selectedId) ?? null;
@@ -233,11 +314,20 @@ export function ResourceWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
     const response = await fetch(`${apiBase}/api/learning/assets/${encodeURIComponent(assetId)}/reader`, { credentials: "include" });
     const data = await response.json() as { success?: boolean; error?: string } & Partial<ReaderData>;
     if (!response.ok || !data.success || !data.asset) throw new Error(data.error || "资源内容读取失败");
-    setReader({ asset: data.asset, pageNotes: data.pageNotes ?? [], feedback: data.feedback ?? null, quizAttempts: data.quizAttempts ?? [] });
+    return { asset: data.asset, pageNotes: data.pageNotes ?? [], feedback: data.feedback ?? null, quizAttempts: data.quizAttempts ?? [] } satisfies ReaderData;
   }, [apiBase]);
 
   useEffect(() => { void loadAssets().catch((error) => setNotice(error instanceof Error ? error.message : "学习资产读取失败")).finally(() => setLoading(false)); }, [loadAssets]);
-  useEffect(() => { if (selectedId) void loadReader(selectedId).catch((error) => setNotice(error instanceof Error ? error.message : "资源内容读取失败")); else setReader(null); }, [loadReader, selectedId]);
+  useEffect(() => {
+    const requestId = ++readerRequestRef.current;
+    if (!selectedId) { setReader(null); return; }
+    setReader(null);
+    void loadReader(selectedId).then((nextReader) => {
+      if (requestId === readerRequestRef.current) setReader(nextReader);
+    }).catch((error) => {
+      if (requestId === readerRequestRef.current) setNotice(error instanceof Error ? error.message : "资源内容读取失败");
+    });
+  }, [loadReader, selectedId]);
   useEffect(() => { setSelectedQuote(""); }, [selectedId]);
   useEffect(() => {
     if (!resizing) return;
@@ -305,7 +395,7 @@ export function ResourceWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
     </header>
 
     <div className="resource-layout flex min-h-0 min-w-[1180px] flex-1 overflow-hidden">
-      <aside aria-label="资源目录" className="flex w-[224px] shrink-0 flex-col border-r bg-slate-50/80">
+      <aside aria-label="资源目录" className="flex w-[208px] shrink-0 flex-col border-r bg-slate-50/80">
         <nav aria-label="资源类型" className="resource-folder-nav shrink-0 border-b px-3 py-3">
           <div className="resource-folder-heading"><span>资源库</span><span>{assets.length} 份</span></div>
           {typeItems.map((item) => { const Icon = item.icon; const active = activeType === item.type; const count = assets.filter((asset) => asset.type === item.type).length; return <button key={item.type} type="button" onClick={() => selectType(item.type)} className={`resource-folder-row ${active ? "resource-folder-row-active" : ""}`}><Icon className="h-4 w-4 shrink-0" /><span className="flex-1">{item.label}</span>{count > 0 ? <span className="resource-folder-count">{count}</span> : null}</button>; })}
@@ -363,15 +453,13 @@ function LectureReader({ reader, onExport, onQuote }: { reader: ReaderData; onEx
     if (text.length >= 2 && anchor && scrollRef.current?.contains(anchor)) onQuote(text.slice(0, 1_200));
   };
   return <div className="flex min-h-0 flex-1 flex-col">
-    <div className="flex shrink-0 items-center justify-between gap-3 border-b px-5 py-3">
-      <div className="min-w-0"><div className="text-[10px] font-medium tracking-wide text-[#74837b]">阅读正文</div></div>
+    <div className="resource-reading-toolbar flex shrink-0 items-center justify-end gap-3 border-b px-5 py-3">
       <div className="flex shrink-0 items-center gap-2.5">
-        <span className="hidden text-[10px] text-muted-foreground xl:inline">选中文字可引用</span>
         {headings.length > 0 && <div className="relative">
-          <button type="button" onClick={() => setTocOpen((open) => !open)} className="h-8 rounded-lg border px-3 text-xs hover:bg-muted">章节</button>
-          {tocOpen && <div className="absolute right-0 top-10 z-20 max-h-64 w-60 overflow-y-auto rounded-xl border bg-card p-1.5 shadow-lg">{headings.map((block, index) => <button key={block.id} type="button" onClick={() => { document.getElementById(`sec-${block.id}`)?.scrollIntoView({ behavior: "smooth", block: "start" }); setTocOpen(false); }} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs hover:bg-muted"><span className="w-4 shrink-0 text-right font-mono text-[10px] text-muted-foreground">{index + 1}</span><span className="line-clamp-2">{String(block.content)}</span></button>)}</div>}
+          <button type="button" onClick={() => setTocOpen((open) => !open)} aria-expanded={tocOpen} className="resource-toolbar-button"><ListTree className="h-3.5 w-3.5" />章节目录<span className="resource-toolbar-count">{headings.length}</span></button>
+          {tocOpen && <div className="resource-toc-menu">{headings.map((block, index) => <button key={block.id} type="button" onClick={() => { document.getElementById(`sec-${block.id}`)?.scrollIntoView({ behavior: "smooth", block: "start" }); setTocOpen(false); }} className="resource-toc-option"><span className="resource-toc-index">{index + 1}</span><span className="line-clamp-2">{String(block.content)}</span></button>)}</div>}
         </div>}
-        <button type="button" onClick={() => onExport("md")} className="flex h-8 items-center gap-1 rounded-lg border px-2.5 text-xs hover:bg-muted"><Download className="h-3.5 w-3.5" />Markdown</button>
+        <ResourceExportMenu assetType={reader.asset.type} onExport={onExport} />
       </div>
     </div>
     <div ref={scrollRef} onScroll={handleScroll} onMouseUp={captureSelection} className="min-h-0 flex-1 overflow-y-auto bg-background/40">
@@ -398,14 +486,22 @@ function PresentationReader({ reader, onExport }: { reader: ReaderData; onExport
     return result.length ? result : [blocks];
   }, [blocks]);
   const [index, setIndex] = useState(0);
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "ArrowLeft") setIndex((value) => Math.max(0, value - 1));
+      if (event.key === "ArrowRight") setIndex((value) => Math.min(slides.length - 1, value + 1));
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [slides.length]);
   const slide = slides[index] ?? [];
   const headingBlock = slide.find((block) => block.type === "heading");
   const isCover = !headingBlock;
   const title = String(headingBlock?.content ?? reader.asset.title);
   const bulletBlocks = slide.filter((block) => block.type === "list" && Array.isArray(block.content));
   const noteBlocks = slide.filter((block) => block.type === "paragraph" && typeof block.content === "string");
-  return <div className="flex min-h-0 flex-1 flex-col bg-slate-100/80">
-    <div className="flex shrink-0 items-center justify-between border-b bg-background px-5 py-3.5"><div className="text-[10px] font-medium tracking-wide text-[#74837b]">演示稿</div><div className="flex items-center gap-2"><span className="text-xs text-muted-foreground">第 {index + 1} / {slides.length} 页</span><button type="button" onClick={() => onExport("ppt")} className="flex h-8 items-center gap-1 rounded-lg border px-2.5 text-xs hover:bg-muted"><Download className="h-3.5 w-3.5" />下载 PPT</button></div></div>
+  return <div className="resource-presentation-reader flex min-h-0 flex-1 flex-col bg-slate-100/80">
+    <div className="resource-reading-toolbar flex shrink-0 items-center justify-end border-b bg-background px-5 py-3.5"><ResourceExportMenu assetType={reader.asset.type} onExport={onExport} /></div>
     <div className="min-h-0 flex-1 overflow-y-auto px-6 py-8">
       <div className="mx-auto aspect-video w-full max-w-4xl overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-lg shadow-slate-200/60">
         <div className="flex h-full flex-col">
@@ -440,7 +536,7 @@ function PresentationReader({ reader, onExport }: { reader: ReaderData; onExport
         </div>
       </div>
     </div>
-    <div className="flex shrink-0 items-center justify-center gap-2 border-t bg-background px-5 py-3"><button type="button" disabled={index === 0} onClick={() => setIndex((value) => Math.max(0, value - 1))} className="h-8 rounded-lg border px-3 text-xs disabled:opacity-35">上一页</button><div className="flex max-w-[60%] gap-1.5 overflow-x-auto">{slides.map((_, itemIndex) => <button key={itemIndex} type="button" onClick={() => setIndex(itemIndex)} aria-label={`第 ${itemIndex + 1} 页`} className={`h-2 w-6 rounded-full transition-colors ${itemIndex === index ? "bg-blue-600" : "bg-slate-300 hover:bg-slate-400"}`} />)}</div><button type="button" disabled={index === slides.length - 1} onClick={() => setIndex((value) => Math.min(slides.length - 1, value + 1))} className="h-8 rounded-lg border px-3 text-xs disabled:opacity-35">下一页</button></div>
+    <div className="presentation-pagination border-t bg-background px-5 py-3"><div className="presentation-pager"><button type="button" disabled={index === 0} onClick={() => setIndex((value) => Math.max(0, value - 1))} aria-label="上一页" className="presentation-pager-button"><ChevronLeft className="h-4 w-4" /></button><span className="presentation-page-number">{String(index + 1).padStart(2, "0")} <span>/</span> {String(slides.length).padStart(2, "0")}</span><button type="button" disabled={index === slides.length - 1} onClick={() => setIndex((value) => Math.min(slides.length - 1, value + 1))} aria-label="下一页" className="presentation-pager-button"><ChevronRight className="h-4 w-4" /></button></div></div>
   </div>;
 }
 
@@ -490,7 +586,7 @@ function LectureNotes({ apiBase, reader, selectedQuote, onClearQuote, onReaderCh
       <div className="resource-note-editor"><div className="resource-note-editor-label">{editingKey ? "编辑笔记" : "新笔记"}</div><textarea value={draft} onChange={(event) => { setDraft(event.target.value); setSaved(false); }} placeholder="写下你的笔记" aria-label="笔记内容" />{noteError ? <div className="mb-2 text-[10px] text-rose-600">{noteError}</div> : null}<div className="flex items-center justify-between gap-2"><span className="text-[10px] text-muted-foreground">{draft.length} 字</span><button type="button" disabled={saving || !draft.trim()} onClick={() => void save()} className="resource-note-save">{saved ? <Check className="h-3.5 w-3.5" /> : <Save className="h-3.5 w-3.5" />}{saved ? "已保存" : saving ? "保存中" : "保存笔记"}</button></div></div>
       {notes.length > 0 ? <div className="mt-4 space-y-2"><div className="resource-note-list-label">已保存</div>{notes.map((note) => <button key={note.pageKey} type="button" onClick={() => editNote(note)} className={`resource-note-card ${editingKey === note.pageKey ? "resource-note-card-active" : ""}`}><span className="line-clamp-3">{note.content.replace(/^> /gm, "")}</span><time>{new Intl.DateTimeFormat("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(note.updatedAt)}</time></button>)}</div> : null}
     </div>
-    <div className="resource-notes-feedback border-t bg-background p-4"><div className="text-xs font-semibold">阅读反馈</div><div className="mt-3 grid grid-cols-3 gap-2"><button type="button" onClick={() => void feedback("high")} className={`h-8 rounded-md border px-1 text-[11px] font-medium ${level === "high" ? "border-emerald-600 bg-emerald-600 text-white" : "hover:bg-emerald-50"}`}>完全掌握</button><button type="button" onClick={() => void feedback("medium")} className={`h-8 rounded-md border px-1 text-[11px] font-medium ${level === "medium" ? "border-amber-500 bg-amber-500 text-white" : "hover:bg-amber-50"}`}>掌握一般</button><button type="button" onClick={() => void feedback("low")} className={`h-8 rounded-md border px-1 text-[11px] font-medium ${level === "low" ? "border-rose-600 bg-rose-600 text-white" : "hover:bg-rose-50"}`}>掌握不好</button></div><button type="button" onClick={onReinforce} className="mt-2.5 flex h-9 w-full items-center justify-center gap-1.5 rounded-lg border border-foreground/25 bg-muted/40 text-xs font-medium hover:bg-muted"><Target className="h-3.5 w-3.5" />基于反馈生成针对性练习</button></div>
+    <div className="resource-notes-feedback border-t bg-background p-4"><div className="flex items-baseline justify-between gap-3"><div className="text-xs font-semibold">学习反馈</div><span className="text-[10px] text-muted-foreground">选择最贴近当前状态的一项</span></div><div className="resource-feedback-options mt-3" role="group" aria-label="掌握程度">{([['high', '完全掌握'], ['medium', '掌握一般'], ['low', '还需巩固']] as const).map(([value, label]) => <button key={value} type="button" onClick={() => void feedback(value)} aria-pressed={level === value} data-level={value} className={`resource-feedback-choice ${level === value ? "resource-feedback-choice-active" : ""}`}><span className="resource-feedback-dot" />{label}</button>)}</div><button type="button" onClick={onReinforce} className="resource-feedback-reinforce mt-3"><Target className="h-3.5 w-3.5" />生成针对性练习</button></div>
   </div>;
 }
 
@@ -582,7 +678,7 @@ function QuizAnswerPanel({ reader }: { reader: ReaderData }) {
 }
 
 function GenericReader({ reader, onExport }: { apiBase: string; reader: ReaderData; onReaderChange: (data: ReaderData) => void; onExport: (format: "md" | "txt" | "json" | "ppt") => void }) {
-  return <div className="flex min-h-0 flex-1 flex-col"><div className="flex shrink-0 items-center justify-between border-b px-5 py-3.5"><div className="text-[10px] font-medium tracking-wide text-[#74837b]">阅读正文</div><button type="button" onClick={() => onExport("md")} className="flex h-8 items-center gap-1 rounded-lg border px-2.5 text-xs hover:bg-muted"><Download className="h-3.5 w-3.5" />Markdown</button></div><div className="min-h-0 flex-1 overflow-y-auto"><article className="mx-auto max-w-3xl space-y-7 px-8 py-9"><div><div className="text-[11px] text-muted-foreground">学习目标</div><ul className="mt-3 space-y-2 text-sm leading-6 text-muted-foreground">{reader.asset.learningObjectives.map((objective) => <li key={objective} className="flex gap-2"><span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-foreground/45" />{objective}</li>)}</ul></div>{reader.asset.blocks.sort((a, b) => a.position - b.position).map((block) => <section key={block.id}>{renderBlockContent(block)}</section>)}</article></div></div>;
+  return <div className="resource-generic-reader flex min-h-0 flex-1 flex-col"><div className="resource-reading-toolbar flex shrink-0 items-center justify-between border-b px-5 py-3.5"><div className="resource-reading-title"><MapIcon className="h-4 w-4" /><span>知识脉络</span></div><ResourceExportMenu assetType={reader.asset.type} onExport={onExport} /></div><div className="min-h-0 flex-1 overflow-y-auto"><article className="mx-auto max-w-3xl space-y-7 px-8 py-9"><div className="resource-learning-objectives"><div className="text-[11px] font-semibold text-slate-700">学习目标</div><ul className="mt-3 space-y-2 text-sm leading-6 text-muted-foreground">{reader.asset.learningObjectives.map((objective) => <li key={objective} className="flex gap-2"><span className="resource-objective-dot" />{objective}</li>)}</ul></div>{reader.asset.blocks.sort((a, b) => a.position - b.position).map((block) => <section key={block.id}>{renderBlockContent(block)}</section>)}</article></div></div>;
 }
 
 function GenericFeedback({ apiBase, reader, onReaderChange, onReinforce }: { apiBase: string; reader: ReaderData; onReaderChange: (data: ReaderData) => void; onReinforce: () => void }) {

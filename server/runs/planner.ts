@@ -121,6 +121,7 @@ export function parseStudyRunRequest(body: unknown): StudyRunRequest {
         content: typeof (temporaryReferenceRaw as Record<string, unknown>)['content'] === 'string'
           ? String((temporaryReferenceRaw as Record<string, unknown>)['content']).slice(0, 120_000)
           : '',
+        allowKnowledgeRetention: (temporaryReferenceRaw as Record<string, unknown>)['allowKnowledgeRetention'] === true,
       }
     : null;
 

@@ -25,6 +25,7 @@ import {
   resourceGenerationUserHint,
 } from '../prompts.js';
 import { evidenceService, learningStore } from '../study-context.js';
+import { curateUserReference, type UserReferenceCuration } from '../knowledge-curator.js';
 import { getAgentExecutionSettings, multiModelClient, parseJson, refreshModelCapabilities, withTimeout } from '../study-runtime.js';
 import { getLearningDatabase } from '../db/client.js';
 import {
@@ -61,6 +62,7 @@ import {
   listRunNodes,
   markRunRunning,
   mergeRunContext,
+  redactRunTemporaryReference,
   setNodeStatus,
   setRunExecutionManifestHash,
   setRunRevisionRound,
@@ -86,6 +88,18 @@ interface RunContext {
 
 function contextOf(run: StudyRunRow): RunContext {
   return run.context as RunContext;
+}
+
+/**
+ * 旧运行可能已冻结过长的完整协同日志。模型只需要最近几条学习者意图，
+ * 不需要把自己此前的草稿、审核和复议重新当作输入；这样既避免语义串台，也
+ * 让已入队任务在升级后立即享受较小、稳定的提示词体积。
+ */
+function conciseConversationContext(run: StudyRunRow): Array<{ role: 'user' | 'assistant'; content: string }> {
+  const turns = run.request.conversationContext ?? [];
+  const userTurns = turns.filter((turn) => turn.role === 'user');
+  const selected = (userTurns.length > 0 ? userTurns : turns).slice(-8);
+  return selected.map((turn) => ({ role: turn.role, content: turn.content.slice(0, 1_200) }));
 }
 
 function runDb() {
@@ -139,7 +153,15 @@ async function emitEvent(
 /** 群聊冒泡（与旧 study 流气泡契约一致，供历史回放） */
 async function bubble(run: StudyRunRow, role: LearningAgentId, text: string, extra: Record<string, unknown> = {}): Promise<void> {
   await learningStore.saveChatMessage(run.learnerId, 'assistant', text, {
-    surface: 'study', kind: 'agent', runId: run.id, agentId: role, agentName: ROLE_LABELS[role], ...extra,
+    surface: 'study', kind: 'agent', runId: run.id, agentId: role, agentName: ROLE_LABELS[role], producer: extra['producer'] ?? 'mixed', ...extra,
+  });
+  // 群聊落库后同步发出“公开结论”事件。前端可边收边展示并渐进渲染，
+  // 只传角色、结论与证据摘要，不传模型隐藏推理或内部提示词。
+  await appendRunEvent(run.id, {
+    nodeKey: null,
+    type: 'node.progress',
+    summary: `${ROLE_LABELS[role]}：${text.slice(0, 180)}`,
+    payload: { kind: 'agent_message', agentId: role, agentName: ROLE_LABELS[role], producer: extra['producer'] ?? 'mixed', content: text.slice(0, 8_000) },
   });
 }
 
@@ -301,7 +323,7 @@ async function runAssessLearner(run: StudyRunRow, node: RunNodeSpec, attempt: nu
         node: pathNode ? { title: pathNode.title, description: pathNode.description, recommendation: pathNode.recommendation } : null,
         profile: { accuracy: profile.accuracy, studyMinutes: profile.studyMinutes, assetsCount: profile.assetsCount, skills: profile.skills.slice(0, 6) },
         task: { resourceType: run.request.resourceType, content: taskLabel },
-        conversation: run.request.conversationContext ?? [],
+        conversation: conciseConversationContext(run),
       }));
     const parsed = parseJson<{ analysis?: unknown; requirements?: unknown }>(raw) ?? {};
     analysis = typeof parsed.analysis === 'string' ? parsed.analysis.slice(0, 300) : '';
@@ -332,7 +354,7 @@ async function runAssessLearner(run: StudyRunRow, node: RunNodeSpec, attempt: nu
   }, [], usedAgent
     ? agentProducer(systemPrompt, getAgentExecutionSettings('learning_planning', undefined, undefined))
     : RULE_PRODUCER);
-  await bubble(run, node.role, `${analysis}\n设计要求：\n${requirements.map((item) => `- ${item}`).join('\n')}`);
+  await bubble(run, node.role, `${analysis}\n设计要求：\n${requirements.map((item) => `- ${item}`).join('\n')}`, { producer: usedAgent ? 'llm' : 'rule' });
   return analysis.slice(0, 120);
 }
 
@@ -426,7 +448,7 @@ async function runAnalyzeDomain(run: StudyRunRow, node: RunNodeSpec, attempt: nu
     systemPrompt = DOMAIN_ANALYST_SYSTEM;
     const raw = await callAgent('domain_expert',
       systemPrompt,
-      JSON.stringify({ task: run.request.task, conversation: run.request.conversationContext ?? [], evidence: evidenceDigest(merged) }));
+      JSON.stringify({ task: run.request.task, conversation: conciseConversationContext(run), evidence: evidenceDigest(merged) }));
     const parsed = parseJson<{ points?: unknown; boundaries?: unknown }>(raw) ?? {};
     points = Array.isArray(parsed.points) ? parsed.points.map((item) => String(item).slice(0, 100)).filter(Boolean).slice(0, 5) : [];
     boundaries = Array.isArray(parsed.boundaries) ? parsed.boundaries.map((item) => String(item).slice(0, 100)).filter(Boolean).slice(0, 3) : [];
@@ -486,7 +508,7 @@ async function runAnalyzeDomain(run: StudyRunRow, node: RunNodeSpec, attempt: nu
   }, ['retrieve.structured', 'retrieve.document'], usedAgent
     ? agentProducer(systemPrompt, getAgentExecutionSettings('domain_expert', undefined, undefined))
     : RULE_PRODUCER);
-  await bubble(run, node.role, `讲解要点：\n${points.map((item) => `- ${item}`).join('\n')}\n专业边界：\n${boundaries.map((item) => `- ${item}`).join('\n')}`);
+  await bubble(run, node.role, `讲解要点：\n${points.map((item) => `- ${item}`).join('\n')}\n专业边界：\n${boundaries.map((item) => `- ${item}`).join('\n')}`, { producer: usedAgent ? 'llm' : 'rule' });
   return `${points.length} 个要点、${boundaries.length} 条边界`;
 }
 
@@ -616,7 +638,8 @@ async function runGenerateResource(run: StudyRunRow, node: RunNodeSpec, attempt:
     return `${headings.length} 节正文（约 ${charCount} 字），含代码示例与数据摘录`;
   };
   await bubble(run, node.role,
-    `${isRevision ? `第 ${attempt} 轮修订完成` : '初稿完成'}：《${resource.title}》——${describeStructure(resource)}。${note || '所有内容已绑定证据引用，交由审核智能体逐条核对。'}`);
+    `${isRevision ? `第 ${attempt} 轮修订完成` : '初稿完成'}：《${resource.title}》——${describeStructure(resource)}。${note || '所有内容已绑定证据引用，交由审核智能体逐条核对。'}`,
+    { producer: usedLlm ? 'llm' : 'rule' });
   return `草稿《${resource.title}》共 ${resource.blocks.length} 块`;
 }
 
@@ -773,10 +796,15 @@ async function runDebateChallenge(run: StudyRunRow, node: RunNodeSpec, attempt: 
   if (focus.includes('difficulty_mismatch') && ctx.assess) {
     issues.push({ issueType: 'difficulty_mismatch', targetClaimId: null, argument: `学情侧提示：${ctx.assess.analysis.slice(0, 120)}——请核对资源难度是否匹配当前掌握度`, source: 'rule' });
   }
-  // 独立批评 Agent：LLM 从反方立场补充议题（失败静默回退规则兜底）
+  // 规则已经找到缺少证据的硬性问题时，批评 Agent 无法改变“必须修订”的
+  // 结论；跳过这次昂贵调用，把时间留给真正能修复内容的生成轮。只有规则
+  // 没有拦截项时，才让独立批评端补充遗漏风险。
   const ruleKeys = new Set(issues.map((issue) => `${issue.issueType}:${issue.targetClaimId ?? ''}`));
-  const criticIssues = (await criticAgentIssues(run, audit))
-    .filter((issue) => !ruleKeys.has(`${issue.issueType}:${issue.targetClaimId ?? ''}`));
+  const hasHardEvidenceFailure = issues.some((issue) => issue.issueType === 'no_evidence');
+  const criticIssues = hasHardEvidenceFailure
+    ? []
+    : (await criticAgentIssues(run, audit))
+      .filter((issue) => !ruleKeys.has(`${issue.issueType}:${issue.targetClaimId ?? ''}`));
   issues.push(...criticIssues);
   // Claim 审核提出反证请求时：先查本地知识库，再由已启用的 SearXNG 补充可回溯线索。
   const counterevidence: Array<{ request: string; packId: string | null; found: number; note: string }> = [];
@@ -910,8 +938,10 @@ async function runAdjudicate(run: StudyRunRow, node: RunNodeSpec, attempt: numbe
     : summaryStatus === 'conflict'
       ? 'conflict'
       : (review > 0 || summaryStatus !== 'corroborated') ? 'partial' : 'supported';
-  // 裁决 Agent 独立判决；与规则结论取更严者——门禁只能收紧不能放松（总规 §5.2）
-  const agent = await adjudicatorAgentVerdict(run, audit);
+  // 裁决 Agent 只能把门禁收紧，不能推翻已经明确的“缺少依据”。
+  // 这种情况下再等待一次模型调用既无决策价值，也会把每轮修订拖慢近一分钟；
+  // 直接进入针对性修订，仍保留完整的规则审计轨迹。
+  const agent = ruleVerdict === 'unsupported' ? null : await adjudicatorAgentVerdict(run, audit);
   const verdict = agent && (VERDICT_SEVERITY[agent.verdict] ?? 0) > (VERDICT_SEVERITY[ruleVerdict] ?? 0)
     ? agent.verdict
     : ruleVerdict;
@@ -956,7 +986,7 @@ async function runAdjudicate(run: StudyRunRow, node: RunNodeSpec, attempt: numbe
     basisRefs: [artifactIdOf(run.id, 'audit.claims', attempt, 'claim_audit'), artifactIdOf(run.id, 'debate.challenge', attempt, 'challenge_set')],
     decision: `第 ${attempt} 轮裁决 ${verdict}，${released ? '通过发布门禁' : '不通过发布门禁'}`,
     uncertainty: agent ? [] : ['裁决 Agent 不可用，仅按确定性规则裁决'],
-    nextAction: released ? '移交隐私合规与发布收尾' : attempt <= REVISION_BUDGET ? '退回生成端修订' : '标记人工复核，不发布',
+    nextAction: released ? '移交隐私合规与发布收尾' : attempt <= REVISION_BUDGET ? '退回生成端修订' : '自动检查未通过，不发布',
   }, [], agent
     ? agentProducer(JUDGE_SYSTEM_PROMPT, getAgentExecutionSettings('cross_validation', undefined, undefined))
     : RULE_PRODUCER);
@@ -978,8 +1008,8 @@ async function runAdjudicate(run: StudyRunRow, node: RunNodeSpec, attempt: numbe
       await enqueueRunNode(run.id, 'generate.resource', nextAttempt);
       return 'revised';
     }
-    await emitEvent(run, node, 'run.revision', `修订预算（${REVISION_BUDGET} 轮）已用尽，资源标记为人工复核，不发布。`, { verdict });
-    await bubble(run, node.role, '修订预算已用尽，资源不发布，进入人工复核。');
+    await emitEvent(run, node, 'run.revision', `修订预算（${REVISION_BUDGET} 轮）已用尽，自动检查未通过，资源不发布。`, { verdict });
+    await bubble(run, node.role, '修订预算已用尽，资源不发布，等待智能体在下一次任务中补充核验。');
     return 'rejected';
   }
   return 'released';
@@ -1013,6 +1043,10 @@ async function createRevisionNodes(run: StudyRunRow, nextAttempt: number): Promi
 
 async function runPrivacyCompliance(run: StudyRunRow, node: RunNodeSpec, attempt: number): Promise<string> {
   const reference = run.request.temporaryReference;
+  let curation: UserReferenceCuration | null = null;
+  if (reference?.allowKnowledgeRetention) {
+    curation = await curateUserReference(getLearningDatabase().pool, reference, run.learnerId);
+  }
   if (reference) {
     const { createHash } = await import('node:crypto');
     await runDb().insert(privacyAuditEvents).values({
@@ -1024,29 +1058,34 @@ async function runPrivacyCompliance(run: StudyRunRow, node: RunNodeSpec, attempt
       byteCount: Buffer.byteLength(reference.content, 'utf8'),
       contentHash: createHash('sha256').update(reference.content).digest('hex'),
       redactedFieldsJson: [],
-      retained: false,
+      retained: curation?.decision === 'approved',
       createdAt: Date.now(),
     });
   }
-  // VACP：临时上传正文不得进入 artifact，只保存文件名、字节数、散列与审计结论
+  // VACP：默认只保存文件名、字节数、散列与审计结论；用户明确同意且策展智能体通过后才保留正文。
   await persistNodeArtifact(run, node, attempt, 'privacy_decision', {
     temporaryReferenceUsed: Boolean(reference),
     fileName: reference ? reference.name.slice(0, 160) : null,
     byteCount: reference ? Buffer.byteLength(reference.content, 'utf8') : 0,
     contentHash: reference ? sha256(reference.content) : null,
-    retained: false,
-    bodyStored: false,
+    retained: curation?.decision === 'approved',
+    bodyStored: curation?.decision === 'approved',
+    knowledgeCuration: curation ? { decision: curation.decision, reason: curation.reason, sourceId: curation.sourceId, chunksCreated: curation.chunksCreated, scores: curation.scores ?? null } : null,
   }, {
     observations: [reference ? `使用了上传的临时参考《${reference.name.slice(0, 60)}》` : '未检测到上传资料'],
     basisRefs: [],
-    decision: reference ? '临时参考仅用于当前任务，原文不保存、不入知识库' : '无隐私边界问题',
+    decision: !reference ? '无隐私边界问题' : curation?.decision === 'approved' ? '用户已同意，资料通过智能策展后沉淀为公共学习资料' : '临时参考仅用于当前任务，原文不保存、不入知识库',
     uncertainty: [],
     nextAction: '移交发布收尾',
   }, ['adjudicate.verdict'], RULE_PRODUCER);
+  // 隐私门禁结束后立即清除运行请求中的上传正文；已通过的内容只留在受管版本表中。
+  await redactRunTemporaryReference(run);
   await bubble(run, node.role, reference
-    ? `本次使用了上传的临时参考《${reference.name}》：仅用于当前任务，不写入知识库、不进入画像，原文不保存。`
+    ? curation?.decision === 'approved'
+      ? `《${reference.name}》已通过智能策展，生成 ${curation.chunksCreated} 个可追溯学习资料切片；不会写入你的个人画像。`
+      : `本次使用了上传的临时参考《${reference.name}》：仅用于当前任务，不写入知识库、不进入画像，原文不保存。${curation?.reason ? `（${curation.reason}）` : ''}`
     : '未检测到上传资料，无隐私边界问题。');
-  return reference ? '临时参考已审计，正文未保存' : '无隐私边界问题';
+  return reference ? curation?.decision === 'approved' ? '资料已通过智能策展并沉淀' : '临时参考已审计，正文未保存' : '无隐私边界问题';
 }
 
 async function runFinalizePublish(run: StudyRunRow, node: RunNodeSpec, attempt: number): Promise<string> {
@@ -1056,6 +1095,9 @@ async function runFinalizePublish(run: StudyRunRow, node: RunNodeSpec, attempt: 
   const adjudication = ctx.adjudication;
   const released = adjudication?.released === true && Boolean(draft) && Boolean(merged);
   let finalAssetId: string | null = null;
+  const generationArtifact = (await listRunArtifacts(run.id)).find((artifact) => artifact.nodeKey === 'generate.resource' && artifact.attempt === attempt);
+  const producerKind = generationArtifact?.producer?.kind === 'agent' ? 'llm' : generationArtifact?.producer?.kind === 'rule' ? 'rule' : 'unknown';
+  const generationNote = producerKind === 'llm' ? '由配置的模型生成并经过门禁检查' : producerKind === 'rule' ? '模型不可用时使用内置结构模板兜底' : '生成来源已记录在运行追溯中';
   if (released && draft && merged) {
     const audited: ResourceDocument = { ...draft, evidencePackId: merged.id, auditSummary: ctx.audit?.summary, auditStatus: 'passed' };
     await learningStore.saveAsset(run.learnerId, undefined, audited);
@@ -1078,7 +1120,7 @@ async function runFinalizePublish(run: StudyRunRow, node: RunNodeSpec, attempt: 
       artifactIdOf(run.id, 'privacy.compliance', attempt, 'privacy_decision'),
     ],
     decision: finalAssetId ? `《${draft!.title}》已通过全部门禁并入库` : '资源未通过发布门禁，不入库',
-    uncertainty: finalAssetId ? [] : ['门禁未通过：资源标记 manual_review_required'],
+    uncertainty: finalAssetId ? [] : ['发布门禁未通过：自动检查未通过，资源未入库'],
     nextAction: finalAssetId ? '等待学习者阅读与作答反馈' : '建议补充更具体的任务关键词后重试',
   }, ['adjudicate.verdict', 'privacy.compliance', 'generate.resource'], RULE_PRODUCER);
   // VACP：运行收尾固化全部产物散列清单与 generation_end 学情快照
@@ -1089,12 +1131,12 @@ async function runFinalizePublish(run: StudyRunRow, node: RunNodeSpec, attempt: 
     snapshotType: 'generation_end',
     pathNodeId: run.request.pathNodeId,
   });
-  await learningStore.saveChatMessage(run.learnerId, 'assistant', finalAssetId ? `已生成《${draft!.title}》` : `《${draft?.title ?? '资源'}》待复核，未入库`, {
+  await learningStore.saveChatMessage(run.learnerId, 'assistant', finalAssetId ? `已生成《${draft!.title}》` : `《${draft?.title ?? '资源'}》自动检查未通过，未入库`, {
     surface: 'study', kind: 'asset', runId: run.id,
     pathNodeId: run.request.pathNodeId, resourceType: run.request.resourceType,
     asset: finalAssetId
-      ? { id: draft!.id, title: draft!.title, type: draft!.type, auditStatus: 'passed', persisted: true }
-      : { id: draft?.id ?? '', title: draft?.title ?? '资源', type: run.request.resourceType, auditStatus: 'manual_review_required', persisted: false },
+      ? { id: draft!.id, title: draft!.title, type: draft!.type, auditStatus: 'passed', persisted: true, producer: producerKind, generationNote }
+      : { id: draft?.id ?? '', title: draft?.title ?? '资源', type: run.request.resourceType, auditStatus: 'manual_review_required', persisted: false, producer: producerKind, generationNote, failureReason: '自动检查未通过，已保留追溯记录但未写入资源库。' },
     evidence: { count: merged?.items.length ?? 0, score: merged?.coverageScore ?? 0, crossValidation: ctx.audit?.summary.status ?? 'unsupported' },
   });
   await learningStore.recordLearningEvent(run.learnerId, 'study_run_completed', {
@@ -1188,9 +1230,13 @@ export async function processStudyRunNode(job: Job<{ runId: string; nodeKey: str
   const node = planNodeOf(run.plan, nodeKey);
   const nodeRow = await getNodeRow(runId, nodeKey, attempt);
   if (!nodeRow) throw new Error(`节点行不存在：${nodeKey}@${attempt}`);
-  if (nodeRow.status === 'succeeded') return; // 幂等：已完成不重复执行
+  if (nodeRow.status === 'succeeded' || nodeRow.status === 'failed' || nodeRow.status === 'skipped') return; // 幂等：终态节点不重复执行
 
-  if (run.status === 'cancelled' || run.cancelRequested) {
+  // BullMQ 的重试任务有可能在此前一轮已使运行收尾后才被取到；绝不能让旧任务
+  // 改写已经收尾的运行，或把已失败/取消的链路重新推进。
+  if (run.status !== 'queued' && run.status !== 'running') return;
+
+  if (run.cancelRequested) {
     await skipRemaining(run, '运行已取消');
     await finishRun(runId, 'cancelled');
     await emitEvent(run, null, 'run.cancelled', '运行已被学习者取消，全部未完成节点停止执行。');
@@ -1203,7 +1249,10 @@ export async function processStudyRunNode(job: Job<{ runId: string; nodeKey: str
 
   let summary: string;
   try {
-    summary = await withTimeout(executeNode(run, node, attempt), node.timeoutMs, `${NODE_TITLES[nodeKey]} 执行超时`);
+    // 节点内的模型调用本身已有严格超时与规则回退。外层多给一个收尾缓冲，
+    // 否则两个同为 90 秒的计时器会竞态：内层正在降级，外层已把同一节点重试，
+    // 进而造成重复修订、状态交叠和无谓等待。
+    summary = await withTimeout(executeNode(run, node, attempt), node.timeoutMs + 15_000, `${NODE_TITLES[nodeKey]} 执行超时`);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     const attempts = job.opts.attempts ?? 1;
@@ -1263,7 +1312,7 @@ export async function processStudyRunNode(job: Job<{ runId: string; nodeKey: str
         publicRationale: {
           observations: [`修订预算（${REVISION_BUDGET} 轮）已用尽`],
           basisRefs: [artifactIdOf(runId, 'adjudicate.verdict', attempt, 'adjudication')],
-          decision: '资源不发布，进入人工复核',
+          decision: '资源不发布，等待智能体补充核验',
           uncertainty: [],
           nextAction: '建议补充更具体的任务关键词后重试',
         },

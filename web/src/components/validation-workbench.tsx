@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import {
+  ArrowRight,
   BadgeCheck,
   ChevronDown,
   Download,
@@ -32,6 +33,15 @@ type RunSummary = {
   finishedAt: number | null;
 };
 
+function runDisplayState(run: RunSummary): { status: string; publication: string; tone: string } {
+  if (run.status === "queued") return { status: "等待执行", publication: "尚未开始生成", tone: "bg-amber-100 text-amber-700" };
+  if (run.status === "running") return { status: "生成中", publication: "正在处理，尚未发布", tone: "bg-blue-100 text-blue-700" };
+  if (run.status === "cancelled") return { status: "已取消", publication: "本次未生成资源", tone: "bg-muted text-muted-foreground" };
+  if (run.status === "failed") return { status: "处理失败", publication: "未生成资源", tone: "bg-destructive/10 text-destructive" };
+  if (run.finalAssetId) return { status: "已发布", publication: "资源已入库", tone: "bg-emerald-100 text-emerald-700" };
+  return { status: "未发布", publication: "未通过自动发布检查", tone: "bg-amber-100 text-amber-700" };
+}
+
 type TraceArtifact = {
   id: string;
   nodeKey: string;
@@ -49,10 +59,10 @@ type TraceArtifact = {
 type ClaimStage = { attempt: number; claimId: string; text: string; verdict: string; critique: string; claimType: string | null; evidence: Array<{ evidenceId: string; supportLevel: string }>; supersedesClaimId: string | null };
 
 type TraceData = {
-  run: { id: string; status: string; revisionRound: number; riskLevel: string; finalAssetId: string | null; executionManifestHash?: string | null };
+  run: { id: string; status: string; revisionRound: number; riskLevel: string; finalAssetId: string | null; createdAt: number; startedAt: number | null; finishedAt: number | null; executionManifestHash?: string | null };
   plan: { nodes: Array<{ key: string; dependsOn: string[]; mandatory: boolean }>; gates: string[] };
   verificationPolicy: { coverageStatus?: string; strength?: string; reasons?: string[] } | null;
-  nodes: Array<{ nodeKey: string; role: string; attempt: number; status: string; mandatory: boolean; resultSummary: string | null }>;
+  nodes: Array<{ nodeKey: string; role: string; attempt: number; status: string; mandatory: boolean; startedAt: number | null; finishedAt: number | null; resultSummary: string | null }>;
   artifacts: TraceArtifact[];
   claimGraph: Array<{ id: string; attempt: number | null; text: string; verdict: string; claimType: string | null; evidence: Array<{ evidenceId: string }> }>;
   debateIssues: Array<{ id: string; issueType: string; argument: string; source: string; status: string }>;
@@ -124,7 +134,7 @@ function rateText(rate: number | null): string {
 
 function readableAuditText(text: string): string {
   return text
-    .replace(/manual_review_required/g, "需要人工复核")
+    .replace(/manual_review_required/g, "自动检查未通过")
     .replace(/revision budget/gi, "修改次数")
     .replace(/revised|revision/gi, "需要修改")
     .replace(/rejected/gi, "未通过")
@@ -169,6 +179,14 @@ function producerLabel(value: string): string {
 function timeText(value: number | null | undefined): string {
   if (!value) return "—";
   return new Intl.DateTimeFormat("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).format(value);
+}
+
+function elapsedText(start: number | null | undefined, end: number | null | undefined): string {
+  if (!start) return "尚未开始";
+  const seconds = Math.max(0, Math.round(((end ?? Date.now()) - start) / 1000));
+  if (seconds < 60) return `${seconds} 秒`;
+  const minutes = Math.floor(seconds / 60);
+  return seconds % 60 ? `${minutes} 分 ${seconds % 60} 秒` : `${minutes} 分`;
 }
 
 type ValidationWorkbenchProps = {
@@ -276,17 +294,18 @@ export function ValidationWorkbench({ apiBase, user, onLogout, onNavigate, onUse
           {loading ? <p className="mt-3 text-xs text-muted-foreground">正在读取运行历史…</p> : runs.length === 0
             ? <p className="mt-3 text-xs leading-5 text-muted-foreground">还没有任务记录，到「学习」页开始一次任务后可在这里查看检查结果。</p>
             : <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                {runs.map((run) => (
-                  <button key={run.id} type="button" onClick={() => setSelectedRunId(run.id)}
+                {runs.map((run) => {
+                  const display = runDisplayState(run);
+                  return <button key={run.id} type="button" onClick={() => setSelectedRunId(run.id)}
                     className={`validation-task rounded-lg border p-3 text-left transition-colors ${selectedRunId === run.id ? "border-blue-300 bg-blue-50/70" : ""}`}>
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-[11px] font-medium">{RESOURCE_LABELS[run.resourceType] ?? run.resourceType}</span>
-                      <span className={`rounded-full px-2 py-0.5 text-[10px] ${run.status === "succeeded" ? "bg-emerald-100 text-emerald-700" : run.status === "failed" ? "bg-destructive/10 text-destructive" : "bg-amber-100 text-amber-700"}`}>{run.status === "succeeded" ? "已完成" : run.status === "failed" ? "失败" : run.status === "cancelled" ? "已取消" : "进行中"}</span>
+                      <span className={`rounded-full px-2 py-0.5 text-[10px] ${display.tone}`}>{display.status}</span>
                     </div>
                     <p className="mt-1.5 line-clamp-2 text-xs leading-4">{run.task || "（无任务描述）"}</p>
-                    <p className="mt-1.5 text-[10px] text-muted-foreground">{timeText(run.createdAt)}{run.finalAssetId ? " · 资源已入库" : " · 未入库"}</p>
-                  </button>
-                ))}
+                    <p className="mt-1.5 text-[10px] text-muted-foreground">{timeText(run.createdAt)} · {display.publication}</p>
+                  </button>;
+                })}
               </div>}
         </section>
 
@@ -309,6 +328,10 @@ export function ValidationWorkbench({ apiBase, user, onLogout, onNavigate, onUse
                <span className="rounded-full border bg-background px-2.5 py-1">校验强度：{strengthLabel(trace.verificationPolicy.strength)}</span>
                {trace.verificationPolicy.reasons?.length ? <span className="rounded-full border bg-background px-2.5 py-1">附加约束 {trace.verificationPolicy.reasons.length} 项</span> : null}
              </div> : null}
+             <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-muted-foreground">
+               <span className="rounded-full border bg-background px-2.5 py-1">等待执行：{trace.run.startedAt ? elapsedText(trace.run.createdAt, trace.run.startedAt) : "尚未开始"}</span>
+               <span className="rounded-full border bg-background px-2.5 py-1">实际处理：{elapsedText(trace.run.startedAt, trace.run.finishedAt)}</span>
+             </div>
           </section>
 
           {/* 3. 处理过程 */}
@@ -341,6 +364,7 @@ export function ValidationWorkbench({ apiBase, user, onLogout, onNavigate, onUse
                       <p><span className="text-muted-foreground">处理方式：</span>{producerLabel(artifact.producer.kind)}{artifact.producer.kind === "agent" && artifact.producer.model ? `（${artifact.producer.model}）` : ""}</p>
                       {artifact.publicRationale.uncertainty.length > 0 ? <p className="text-amber-700"><span className="text-muted-foreground">需要留意：</span>{artifact.publicRationale.uncertainty.map(readableAuditText).join("；")}</p> : null}
                     </> : <p className="text-muted-foreground">{node.resultSummary ?? "暂无主产物"}</p>}
+                    <p><span className="text-muted-foreground">步骤耗时：</span>{elapsedText(node.startedAt, node.finishedAt)}</p>
                   </div>
                 </details>;
               })}
@@ -408,7 +432,7 @@ export function ValidationWorkbench({ apiBase, user, onLogout, onNavigate, onUse
           <section aria-label="记录完整性检查" className="validation-panel rounded-xl border bg-card p-4">
             <div className="flex items-center justify-between">
               <div className="flex items-start gap-2"><ScrollText className="mt-0.5 h-4 w-4" /><h2 className="text-sm font-semibold">记录完整性检查</h2></div>
-              <button type="button" onClick={() => void runVerify()} disabled={verifying} className="validation-action inline-flex h-8 items-center gap-1 px-3 text-xs font-medium disabled:opacity-50">{verifying ? "检查中…" : "重新检查记录"}</button>
+              <button type="button" onClick={() => void runVerify()} disabled={verifying} className="validation-record-action validation-record-action-quiet inline-flex h-8 items-center gap-1.5 px-2.5 text-[11px] font-medium disabled:opacity-50"><RefreshCw className={`h-3.5 w-3.5 ${verifying ? "animate-spin" : ""}`} />{verifying ? "检查中" : "重新检查"}</button>
             </div>
             {verify ? <div className="mt-3 space-y-1.5 text-[11px]">
               {verify.integrity.checks.map((check) => <div key={check.id} className="flex items-start gap-2"><span className={check.passed ? "text-emerald-600" : "text-destructive"}>{check.passed ? "✔" : "✘"}</span><span><span className="font-medium">{readableAuditText(check.label)}</span><span className="text-muted-foreground">：{readableAuditText(check.detail)}</span></span></div>)}
@@ -417,12 +441,12 @@ export function ValidationWorkbench({ apiBase, user, onLogout, onNavigate, onUse
             </div> : <p className="mt-3 text-xs text-muted-foreground">检查本次任务的内容、引用、修改记录和发布结论是否一致。</p>}
           </section>
 
-          {/* 7. 导出入口 */}
-          <section aria-label="导出" className="validation-panel flex flex-wrap items-center justify-between rounded-xl border bg-card p-4">
-             <div className="flex items-start gap-2"><FileJson className="mt-0.5 h-4 w-4" /><h2 className="text-sm font-semibold">完整记录</h2></div>
-            <div className="flex gap-2">
-              <button type="button" onClick={() => window.open(`${apiBase}/api/learning/runs/${encodeURIComponent(trace.run.id)}/export`, "_blank", "noopener,noreferrer")} className="validation-action inline-flex h-8 items-center gap-1 px-3 text-xs font-medium"><Download className="h-3.5 w-3.5" />下载记录</button>
-              <button type="button" onClick={() => onNavigate("resources")} className="validation-action inline-flex h-8 items-center px-3 text-xs">前往资源页</button>
+          {/* 7. 记录操作 */}
+          <section aria-label="记录操作" className="validation-record-actions">
+             <div className="flex min-w-0 items-center gap-2"><FileJson className="h-4 w-4 shrink-0" /><div className="min-w-0"><h2 className="text-sm font-semibold">记录操作</h2><p className="mt-0.5 text-[11px] text-muted-foreground">保留本次任务的可追溯结果</p></div></div>
+            <div className="flex shrink-0 items-center gap-1.5">
+              <button type="button" onClick={() => window.open(`${apiBase}/api/learning/runs/${encodeURIComponent(trace.run.id)}/export`, "_blank", "noopener,noreferrer")} className="validation-record-action inline-flex h-8 items-center gap-1.5 px-2.5 text-[11px] font-medium"><Download className="h-3.5 w-3.5" />下载</button>
+              <button type="button" onClick={() => onNavigate("resources")} className="validation-record-action validation-record-action-quiet inline-flex h-8 items-center gap-1 px-2 text-[11px]"><span>查看资源</span><ArrowRight className="h-3.5 w-3.5" /></button>
             </div>
           </section>
         </>}

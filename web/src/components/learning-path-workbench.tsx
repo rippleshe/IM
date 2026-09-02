@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import {
+  ArrowDownUp,
   Bot,
   Check,
   ChevronRight,
@@ -97,7 +98,7 @@ type ChatMessage = {
   id: string;
   role: "user" | "assistant";
   content: string;
-  metadata: { activities?: Activity[]; pathChanged?: boolean };
+  metadata: { activities?: Activity[]; pathChanged?: boolean; agentMessagesPersisted?: boolean; kind?: "agent"; agentId?: string; agentName?: string; producer?: "llm" | "rule" | "mixed"; streaming?: boolean };
   createdAt: number;
 };
 
@@ -139,6 +140,18 @@ function readablePathActivityText(text: string): string {
     .replace(/知识检索智能体/g, "资料检索助手")
     .replace(/交叉验证智能体/g, "内容检查助手")
     .replace(/协同/g, "任务处理");
+}
+
+function pathAgentTone(agentId: string | undefined): string {
+  if (agentId === "evidence_retrieval") return "bg-sky-100 text-sky-700";
+  if (agentId === "cross_validation") return "bg-emerald-100 text-emerald-700";
+  return "bg-slate-100 text-slate-700";
+}
+
+function pathProducerLabel(producer: ChatMessage["metadata"]["producer"]): string {
+  if (producer === "llm") return "模型生成";
+  if (producer === "rule") return "规则检查";
+  return "规则 + 模型";
 }
 
 /** 里程碑 G（路径页小改）：节点建议的“依据”——最近一次持久化学习决策与 BKT 前后值 */
@@ -276,7 +289,9 @@ type TreeLayout = {
   positions: Map<string, { x: number; y: number; width: number; height: number }>;
 };
 
-function getTreeLayout(graph: PathGraph): TreeLayout {
+type TreeDirection = "horizontal" | "vertical";
+
+function getTreeLayout(graph: PathGraph, direction: TreeDirection): TreeLayout {
   const levelById = new Map(graph.nodes.map((node) => [node.id, 0]));
   const validEdges = graph.edges.filter((edge) => levelById.has(edge.fromNodeId) && levelById.has(edge.toNodeId));
   for (let pass = 0; pass < graph.nodes.length; pass += 1) {
@@ -297,21 +312,33 @@ function getTreeLayout(graph: PathGraph): TreeLayout {
   });
   const nodeWidth = 148;
   const nodeHeight = 56;
-  const columnGap = 52;
-  const rowGap = 20;
+  const laneGap = 52;
+  const itemGap = 20;
   const maxRows = Math.max(1, ...[...columns.values()].map((items) => items.length));
-  const height = Math.max(290, maxRows * (nodeHeight + rowGap) + 34);
   const positions = new Map<string, { x: number; y: number; width: number; height: number }>();
-  [...columns.entries()].sort(([a], [b]) => a - b).forEach(([level, items]) => {
-    const columnHeight = items.length * nodeHeight + Math.max(0, items.length - 1) * rowGap;
-    const startY = Math.max(17, (height - columnHeight) / 2);
-    items.forEach((node, index) => positions.set(node.id, { x: 20 + level * (nodeWidth + columnGap), y: startY + index * (nodeHeight + rowGap), width: nodeWidth, height: nodeHeight }));
+  const levels = [...columns.entries()].sort(([a], [b]) => a - b);
+  if (direction === "horizontal") {
+    const height = Math.max(290, maxRows * (nodeHeight + itemGap) + 34);
+    levels.forEach(([level, items]) => {
+      const columnHeight = items.length * nodeHeight + Math.max(0, items.length - 1) * itemGap;
+      const startY = Math.max(17, (height - columnHeight) / 2);
+      items.forEach((node, index) => positions.set(node.id, { x: 20 + level * (nodeWidth + laneGap), y: startY + index * (nodeHeight + itemGap), width: nodeWidth, height: nodeHeight }));
+    });
+    return { width: Math.max(650, levels.length * (nodeWidth + laneGap) + 20), height, positions };
+  }
+
+  const width = Math.max(430, maxRows * (nodeWidth + itemGap) + 34);
+  levels.forEach(([level, items]) => {
+    const rowWidth = items.length * nodeWidth + Math.max(0, items.length - 1) * itemGap;
+    const startX = Math.max(17, (width - rowWidth) / 2);
+    items.forEach((node, index) => positions.set(node.id, { x: startX + index * (nodeWidth + itemGap), y: 20 + level * (nodeHeight + laneGap), width: nodeWidth, height: nodeHeight }));
   });
-  return { width: Math.max(650, (Math.max(0, ...columns.keys()) + 1) * (nodeWidth + columnGap) + 20), height, positions };
+  return { width, height: Math.max(340, levels.length * (nodeHeight + laneGap) + 20), positions };
 }
 
 export function TreeCanvas({ graph, selectedNodeId, onSelect }: { graph: PathGraph; selectedNodeId: string | null; onSelect: (node: PathNode) => void }) {
-  const layout = useMemo(() => getTreeLayout(graph), [graph]);
+  const [direction, setDirection] = useState<TreeDirection>("horizontal");
+  const layout = useMemo(() => getTreeLayout(graph, direction), [direction, graph]);
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const pointersRef = useRef(new Map<number, { x: number; y: number }>());
   const pinchRef = useRef<{ distance: number; zoom: number } | null>(null);
@@ -319,19 +346,26 @@ export function TreeCanvas({ graph, selectedNodeId, onSelect }: { graph: PathGra
   const [fitZoom, setFitZoom] = useState(1);
   const [zoom, setZoom] = useState(1);
   const canvasPadding = 180;
+  useEffect(() => {
+    try {
+      const saved = window.localStorage.getItem("im-training-agent:path-direction");
+      if (saved === "horizontal" || saved === "vertical") setDirection(saved);
+    } catch { /* 本地存储不可用时使用横向布局 */ }
+  }, []);
   const clampZoom = (value: number) => Math.max(0.45, Math.min(1.8, Number(value.toFixed(2))));
   useEffect(() => {
     const viewport = viewportRef.current;
     if (!viewport) return;
     const updateFitZoom = () => {
       const availableWidth = Math.max(320, viewport.clientWidth - 16);
-      setFitZoom(Math.max(0.5, Math.min(1, Number((availableWidth / layout.width).toFixed(2)))));
+      const availableHeight = Math.max(220, viewport.clientHeight - 16);
+      setFitZoom(Math.max(0.45, Math.min(1, Number((Math.min(availableWidth / layout.width, availableHeight / layout.height)).toFixed(2)))));
     };
     updateFitZoom();
     const observer = new ResizeObserver(updateFitZoom);
     observer.observe(viewport);
     return () => observer.disconnect();
-  }, [layout.width]);
+  }, [layout.height, layout.width]);
   useEffect(() => setZoom(fitZoom), [fitZoom]);
   useEffect(() => {
     const viewport = viewportRef.current;
@@ -373,9 +407,19 @@ export function TreeCanvas({ graph, selectedNodeId, onSelect }: { graph: PathGra
     if (pointersRef.current.size < 2) pinchRef.current = null;
     if (pointersRef.current.size === 0) panRef.current = null;
   };
+  const toggleDirection = () => setDirection((current) => {
+    const next = current === "horizontal" ? "vertical" : "horizontal";
+    try { window.localStorage.setItem("im-training-agent:path-direction", next); } catch { /* 忽略本地存储异常 */ }
+    return next;
+  });
+  const resetViewport = () => {
+    setZoom(fitZoom);
+    const viewport = viewportRef.current;
+    if (viewport) viewport.scrollTo({ left: Math.max(0, (layout.width * fitZoom + canvasPadding * 2 - viewport.clientWidth) / 2), top: Math.max(0, (layout.height * fitZoom + canvasPadding * 2 - viewport.clientHeight) / 2) });
+  };
   return <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border bg-card">
-    <div className="flex shrink-0 items-center justify-between border-b bg-background px-3 py-2 text-[10px] text-muted-foreground"><span className="inline-flex items-center gap-1.5"><Move className="h-3.5 w-3.5 text-blue-500" />拖动浏览 · 滚轮缩放</span><button type="button" onClick={() => { setZoom(fitZoom); const viewport = viewportRef.current; if (viewport) viewport.scrollTo({ left: Math.max(0, (layout.width * fitZoom + canvasPadding * 2 - viewport.clientWidth) / 2), top: Math.max(0, (layout.height * fitZoom + canvasPadding * 2 - viewport.clientHeight) / 2) }); }} className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 hover:bg-muted hover:text-foreground"><RefreshCw className="h-3 w-3" />适应窗口</button></div>
-    <div ref={viewportRef} aria-label="可拖动学习路径画布" onWheel={(event) => { event.preventDefault(); setZoom((value) => clampZoom(value * (event.deltaY > 0 ? 0.9 : 1.1))); }} onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={releasePointer} onPointerCancel={releasePointer} className="min-h-0 flex-1 cursor-grab select-none overflow-auto active:cursor-grabbing" style={{ touchAction: "none", overscrollBehavior: "contain" }}>
+    <div className="flex shrink-0 items-center justify-between border-b bg-background px-3 py-2 text-[10px] text-muted-foreground"><span className="inline-flex items-center gap-1.5"><Move className="h-3.5 w-3.5 text-blue-500" />拖动查看，点击节点</span><div className="flex items-center gap-1"><button type="button" onClick={toggleDirection} aria-label={direction === "horizontal" ? "切换为纵向路径" : "切换为横向路径"} title={direction === "horizontal" ? "切换为纵向路径" : "切换为横向路径"} className="tree-canvas-tool"><ArrowDownUp className={`h-3.5 w-3.5 ${direction === "horizontal" ? "rotate-90" : ""}`} />{direction === "horizontal" ? "横向" : "纵向"}</button><button type="button" onClick={resetViewport} className="tree-canvas-tool" title="适应窗口"><RefreshCw className="h-3.5 w-3.5" /><span className="sr-only">适应窗口</span></button></div></div>
+    <div ref={viewportRef} aria-label="可拖动学习路径画布" onWheel={(event) => { event.preventDefault(); setZoom((value) => clampZoom(value * (event.deltaY > 0 ? 0.9 : 1.1))); }} onPointerDown={(event) => { if ((event.target as HTMLElement).closest("button")) return; handlePointerDown(event); }} onPointerMove={handlePointerMove} onPointerUp={releasePointer} onPointerCancel={releasePointer} className="min-h-0 flex-1 cursor-grab select-none overflow-auto active:cursor-grabbing" style={{ touchAction: "none", overscrollBehavior: "contain" }}>
       <div className="relative shrink-0" style={{ width: layout.width * zoom + canvasPadding * 2, height: layout.height * zoom + canvasPadding * 2 }}>
         <div className="absolute origin-top-left" style={{ left: canvasPadding, top: canvasPadding, width: layout.width, height: layout.height, transform: `scale(${zoom})` }}>
           <svg className="pointer-events-none absolute inset-0" width={layout.width} height={layout.height} aria-hidden="true">
@@ -383,13 +427,16 @@ export function TreeCanvas({ graph, selectedNodeId, onSelect }: { graph: PathGra
               const from = layout.positions.get(edge.fromNodeId);
               const to = layout.positions.get(edge.toNodeId);
               if (!from || !to) return null;
-              return <path key={edge.id} d={`M ${from.x + from.width} ${from.y + from.height / 2} C ${from.x + from.width + 30} ${from.y + from.height / 2}, ${to.x - 30} ${to.y + to.height / 2}, ${to.x} ${to.y + to.height / 2}`} fill="none" stroke="currentColor" strokeWidth="1.5" className="text-border" />;
+              const path = direction === "horizontal"
+                ? `M ${from.x + from.width} ${from.y + from.height / 2} C ${from.x + from.width + 30} ${from.y + from.height / 2}, ${to.x - 30} ${to.y + to.height / 2}, ${to.x} ${to.y + to.height / 2}`
+                : `M ${from.x + from.width / 2} ${from.y + from.height} C ${from.x + from.width / 2} ${from.y + from.height + 30}, ${to.x + to.width / 2} ${to.y - 30}, ${to.x + to.width / 2} ${to.y}`;
+              return <path key={edge.id} d={path} fill="none" stroke="currentColor" strokeWidth="1.5" className="text-border" />;
             })}
           </svg>
           {[...graph.nodes].sort((a, b) => a.sortOrder - b.sortOrder).map((node) => {
             const position = layout.positions.get(node.id);
             if (!position) return null;
-            return <button key={node.id} type="button" onClick={() => onSelect(node)} className={`absolute rounded-lg border p-2.5 text-left transition-all ${nodeClassName(node, node.id === selectedNodeId)}`} style={{ left: position.x, top: position.y, width: position.width, height: position.height }}>
+             return <button key={node.id} type="button" title={node.title} aria-pressed={node.id === selectedNodeId} onClick={() => onSelect(node)} className={`absolute rounded-lg border p-2.5 text-left transition-all ${nodeClassName(node, node.id === selectedNodeId)}`} style={{ left: position.x, top: position.y, width: position.width, height: position.height }}>
               <div className="flex items-center gap-1.5"><span className={`h-2 w-2 shrink-0 rounded-full ${statusDot(node)}`} /><span className="min-w-0 flex-1 truncate text-xs font-semibold">{node.title}</span>{node.recommendation && recommendationView(node.recommendation.level).dotClass ? <span aria-label={recommendationView(node.recommendation.level).label} title={recommendationView(node.recommendation.level).label} className={`h-1.5 w-1.5 shrink-0 rounded-full ${recommendationView(node.recommendation.level).dotClass}`} /> : null}<ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" /></div>
             </button>;
           })}
@@ -416,6 +463,14 @@ export function LearningPathWorkbench({ apiBase, user, onLogout, onNavigate, onU
   const [notice, setNotice] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const feedRef = useRef<HTMLDivElement | null>(null);
+  const detailsRef = useRef<HTMLDivElement | null>(null);
+  const streamMessageRef = useRef<string | null>(null);
+  const agentTimersRef = useRef(new Map<string, number>());
+
+  useEffect(() => () => {
+    agentTimersRef.current.forEach((timer) => window.clearInterval(timer));
+    agentTimersRef.current.clear();
+  }, []);
 
   const consumePathPrefill = useCallback((graph: PathGraph) => {
     try {
@@ -529,8 +584,8 @@ export function LearningPathWorkbench({ apiBase, user, onLogout, onNavigate, onU
     }
   };
 
-  const sendMessage = async () => {
-    const content = draft.trim();
+  const sendMessage = async (requestedContent?: string) => {
+    const content = (requestedContent ?? draft).trim();
     if (!content || sending) return;
     setSending(true);
     setDraft("");
@@ -538,23 +593,97 @@ export function LearningPathWorkbench({ apiBase, user, onLogout, onNavigate, onU
     const temporaryUser: ChatMessage = { id: `local-${Date.now()}`, role: "user", content, metadata: {}, createdAt: Date.now() };
     setMessages((current) => [...current, temporaryUser]);
     try {
-      const response = await fetch(`${apiBase}/api/learning/chat`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content }) });
-      const data = await response.json() as { success?: boolean; error?: string; userMessage?: ChatMessage; assistantMessage?: ChatMessage; path?: PathGraph; profile?: ProfileMetric | null };
-      if (!response.ok || !data.success || !data.userMessage || !data.assistantMessage) throw new Error(data.error || "路径调整失败");
-      setMessages((current) => [...current.filter((item) => item.id !== temporaryUser.id), data.userMessage as ChatMessage, data.assistantMessage as ChatMessage]);
-      if (data.path) setPath(data.path);
-      if (data.profile) setProfile(data.profile);
+      const response = await fetch(`${apiBase}/api/learning/chat`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json", Accept: "text/event-stream" }, body: JSON.stringify({ content }) });
+      if (!response.ok || !response.body) throw new Error("路径调整失败，请稍后重试");
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      const finalDataBox: { value: { success?: boolean; error?: string; userMessage?: ChatMessage; agentMessages?: ChatMessage[]; assistantMessage?: ChatMessage; path?: PathGraph; profile?: ProfileMetric | null } | null } = { value: null };
+      const liveId = `live-path-${Date.now()}`;
+      streamMessageRef.current = liveId;
+      setMessages((current) => [...current, { id: liveId, role: "assistant", content: "", metadata: {}, createdAt: Date.now() }]);
+      const consumeFrame = (frame: string) => {
+        const eventName = frame.match(/^event:\s*(.+)$/m)?.[1]?.trim() ?? "message";
+        const dataLine = frame.match(/^data:\s*(.+)$/m)?.[1];
+        if (!dataLine) return;
+        try {
+          const payload = JSON.parse(dataLine) as { text?: string; content?: string; id?: string; createdAt?: number; agentId?: string; agentName?: string; producer?: ChatMessage["metadata"]["producer"]; assistantMessage?: ChatMessage; path?: PathGraph; profile?: ProfileMetric | null; success?: boolean; error?: string };
+          if (eventName === "token" && typeof payload.text === "string") setMessages((current) => current.map((item) => item.id === liveId ? { ...item, content: `${item.content}${payload.text}` } : item));
+          if (eventName === "agent_message" && typeof payload.content === "string") {
+            const agentMessageId = payload.id || `live-agent-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+            const agentContent = payload.content;
+            setMessages((current) => [...current, {
+              id: agentMessageId,
+              role: "assistant",
+              content: "",
+              metadata: { kind: "agent", agentId: payload.agentId, agentName: payload.agentName, producer: payload.producer, streaming: true },
+              createdAt: payload.createdAt ?? Date.now(),
+            }]);
+            let cursor = 0;
+            const timer = window.setInterval(() => {
+              cursor = Math.min(agentContent.length, cursor + Math.max(2, Math.ceil(agentContent.length / 36)));
+              setMessages((current) => current.map((item) => item.id === agentMessageId ? { ...item, content: agentContent.slice(0, cursor), metadata: { ...item.metadata, streaming: cursor < agentContent.length } } : item));
+              if (cursor >= agentContent.length) {
+                window.clearInterval(timer);
+                agentTimersRef.current.delete(agentMessageId);
+              }
+            }, 28);
+            agentTimersRef.current.set(agentMessageId, timer);
+          }
+          if (eventName === "final") finalDataBox.value = payload;
+          // Status frames are intentionally not rendered as a banner. The
+          // conversation and the sending indicator already provide the useful
+          // feedback without interrupting the chat flow with low-value noise.
+        } catch { /* 忽略不完整帧 */ }
+      };
+      while (true) {
+        const chunk = await reader.read();
+        buffer += decoder.decode(chunk.value ?? new Uint8Array(), { stream: !chunk.done });
+        const frames = buffer.split("\n\n");
+        buffer = frames.pop() ?? "";
+        frames.forEach(consumeFrame);
+        if (chunk.done) break;
+      }
+      const finalData = finalDataBox.value;
+      if (!finalData?.success || !finalData.userMessage || !finalData.assistantMessage) throw new Error(finalData?.error || "路径调整失败");
+      const persistedAgents = finalData.agentMessages ?? [];
+      const persistedAgentIds = new Set(persistedAgents.map((message) => message.id));
+      for (const [id, timer] of agentTimersRef.current) {
+        if (persistedAgentIds.has(id)) {
+          window.clearInterval(timer);
+          agentTimersRef.current.delete(id);
+        }
+      }
+      setMessages((current) => {
+        const rebuilt = current.filter((item) => item.id !== temporaryUser.id && item.id !== liveId && !persistedAgentIds.has(item.id));
+        const seen = new Set(rebuilt.map((item) => item.id));
+        if (!seen.has(finalData.userMessage!.id)) rebuilt.push(finalData.userMessage as ChatMessage);
+        for (const agentMessage of persistedAgents) {
+          if (!seen.has(agentMessage.id)) rebuilt.push({ ...agentMessage, metadata: { ...agentMessage.metadata, streaming: false } });
+        }
+        if (!seen.has(finalData.assistantMessage!.id)) rebuilt.push(finalData.assistantMessage as ChatMessage);
+        return rebuilt;
+      });
+      if (finalData.path) setPath(finalData.path);
+      if (finalData.profile) setProfile(finalData.profile);
+      setNotice("");
     } catch (error) {
-      setMessages((current) => current.filter((item) => item.id !== temporaryUser.id));
+      const liveId = streamMessageRef.current;
+      setMessages((current) => current.filter((item) => item.id !== temporaryUser.id && item.id !== liveId));
       setDraft(content);
       setNotice(error instanceof Error ? error.message : "路径调整失败");
     } finally {
+      streamMessageRef.current = null;
       setSending(false);
     }
   };
 
   const logout = async () => { await fetch(`${apiBase}/api/auth/logout`, { method: "POST", credentials: "include" }).catch(() => undefined); onLogout(); };
   const selectNode = (node: PathNode) => setSelectedNodeId(node.id);
+
+  useEffect(() => {
+    detailsRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+  }, [selectedNodeId]);
 
   return <main className="app-shell flex h-screen min-h-0 flex-col overflow-hidden bg-background text-foreground">
     <header className="flex h-16 shrink-0 items-center justify-between border-b px-5 sm:px-7">
@@ -570,17 +699,28 @@ export function LearningPathWorkbench({ apiBase, user, onLogout, onNavigate, onU
           <div className="mx-auto max-w-2xl space-y-5">
             {loading ? <div className="flex min-h-[250px] items-center justify-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4" />正在加载路径对话</div> : messages.length === 0 ? null : messages.map((chat) => chat.role === "user"
               ? <article key={chat.id} className="ml-auto max-w-[84%] border-r border-blue-200 pr-3 text-right text-[13px] leading-6 text-blue-950"><RichText text={chat.content} /><div className="mt-1 text-[10px] text-muted-foreground">{new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit" }).format(chat.createdAt)}</div></article>
-              : <article key={chat.id} className="max-w-[94%]">
-                <div className="flex items-start gap-2.5">
-                  <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-blue-200 bg-blue-50 text-blue-600"><Bot className="h-4 w-4" /></span>
-                  <div className="min-w-0 flex-1">
-                    <div className="text-[11px] font-medium text-muted-foreground">路径助手</div>
-                    <div className="mt-1 text-[13px] leading-7 text-slate-700"><RichText text={chat.content} /></div>
-                    {chat.metadata.activities?.length || chat.metadata.pathChanged ? <div className="mt-3 border-l border-teal-200 bg-teal-50/45 py-2 pl-3 text-xs text-teal-900"><div className="mb-1 font-medium text-teal-950">处理过程{chat.metadata.pathChanged ? " · 路径已更新" : ""}</div>{chat.metadata.activities?.map((activity) => <div className="flex gap-2 py-1" key={`${chat.id}-${activity.agentId}`}><span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-teal-400" /><span><b className="font-medium text-teal-950">{readablePathActivityText(activity.name)}</b>：{readablePathActivityText(activity.action)}</span></div>)}</div> : null}
+              : chat.metadata.kind === "agent"
+                ? <article key={chat.id} className="max-w-[94%]">
+                  <div className="flex items-start gap-2.5">
+                    <span className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-semibold ${pathAgentTone(chat.metadata.agentId)}`}>{(chat.metadata.agentName ?? "任务协调员").slice(0, 1)}</span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 text-[11px] font-medium text-muted-foreground"><span>{chat.metadata.agentName ?? "任务协调员"}</span><span className="rounded-full border border-border/70 px-1.5 py-0.5 text-[9px] font-normal">{pathProducerLabel(chat.metadata.producer)}</span>{chat.metadata.streaming ? <span className="agent-streaming-label">正在输出</span> : null}</div>
+                      <div className={`agent-message-bubble mt-1.5 text-[13px] leading-7 text-slate-700 ${chat.metadata.streaming ? "is-streaming" : ""}`}><RichText text={chat.content} />{chat.metadata.streaming ? <span aria-label="正在流式输出" className="agent-streaming-caret" /> : null}</div>
+                    </div>
                   </div>
-                </div>
-                <div className="mt-1 pl-[42px] text-[10px] text-muted-foreground">{new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit" }).format(chat.createdAt)}</div>
-              </article>)}
+                  <div className="mt-1 pl-[42px] text-[10px] text-muted-foreground">{new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit" }).format(chat.createdAt)}</div>
+                </article>
+                : <article key={chat.id} className="max-w-[94%]">
+                  <div className="flex items-start gap-2.5">
+                    <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-blue-200 bg-blue-50 text-blue-600"><Bot className="h-4 w-4" /></span>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-[11px] font-medium text-muted-foreground">路径助手</div>
+                      <div className="mt-1 text-[13px] leading-7 text-slate-700"><RichText text={chat.content} /></div>
+                      {!chat.metadata.agentMessagesPersisted && (chat.metadata.activities?.length || chat.metadata.pathChanged) ? <div className="mt-3 border-l border-teal-200 bg-teal-50/45 py-2 pl-3 text-xs text-teal-900"><div className="mb-1 font-medium text-teal-950">处理过程{chat.metadata.pathChanged ? " · 路径已更新" : ""}</div>{chat.metadata.activities?.map((activity) => <div className="flex gap-2 py-1" key={`${chat.id}-${activity.agentId}`}><span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-teal-400" /><span><b className="font-medium text-teal-950">{readablePathActivityText(activity.name)}</b>：{readablePathActivityText(activity.action)}</span></div>)}</div> : null}
+                    </div>
+                  </div>
+                  <div className="mt-1 pl-[42px] text-[10px] text-muted-foreground">{new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit" }).format(chat.createdAt)}</div>
+                </article>)}
             {sending && <div className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" />正在为你调整路径</div>}
           </div>
         </div>
@@ -588,9 +728,9 @@ export function LearningPathWorkbench({ apiBase, user, onLogout, onNavigate, onU
       </section>
 
       <aside className="flex min-w-0 flex-col overflow-hidden border-l bg-muted/15" aria-label="知识树学习路径">
-        <div className="workspace-pane-titlebar flex shrink-0 items-center justify-between border-b bg-background px-5 py-3.5"><div className="flex items-center gap-2"><Network className="h-4 w-4" /><h2 className="text-sm font-semibold">我的学习路径</h2></div><span className="text-xs text-muted-foreground">{completedNodes}/{path.nodes.length}</span></div>
-        <div className="flex min-h-0 basis-[62%] flex-col p-4 pb-2"><div className="mb-3 flex shrink-0 items-center justify-between"><div className="flex items-center gap-3 text-[11px] text-muted-foreground"><span className="flex items-center gap-1"><i className="h-2 w-2 rounded-full bg-zinc-300" />未开始</span><span className="flex items-center gap-1"><i className="h-2 w-2 rounded-full bg-blue-600" />学完</span><span className="flex items-center gap-1"><i className="h-2 w-2 rounded-full bg-emerald-600" />掌握</span><span className="flex items-center gap-1"><i className="h-1.5 w-1.5 rounded-full bg-amber-500" />建议补强</span><span className="flex items-center gap-1"><i className="h-1.5 w-1.5 rounded-full bg-emerald-500" />可进阶</span></div></div>{loading ? <div className="flex min-h-0 flex-1 items-center justify-center"><Loader2 className="h-4 w-4 animate-spin text-muted-foreground" /></div> : path.nodes.length === 0 ? <div className="flex min-h-0 flex-1 items-center justify-center rounded-xl border border-dashed text-sm text-muted-foreground">尚未建立学习路径</div> : <TreeCanvas graph={path} selectedNodeId={selectedNodeId} onSelect={selectNode} />}</div>
-        <div className="min-h-0 basis-[38%] overflow-y-auto border-t bg-background p-4">
+        <div className="workspace-pane-titlebar flex shrink-0 items-center justify-between border-b bg-background px-5 py-3.5"><div className="flex items-center gap-2"><Network className="h-4 w-4" /><h2 className="text-sm font-semibold">我的学习路径</h2></div><div className="flex items-center gap-2"><button type="button" aria-label="一键更新路径" title="根据最新画像、学习记录与资源更新路径" disabled={sending || loading || path.nodes.length === 0} onClick={() => void sendMessage("请根据当前学习画像、最近学习记录、已生成资源与证据，重新评估并更新我的学习路径；只有在有充分依据时才修改节点或关系，并说明本次变更原因。") } className="path-update-action"><RefreshCw className={`h-3.5 w-3.5 ${sending ? "animate-spin" : ""}`} />更新路径</button></div></div>
+         <div className="flex min-h-0 basis-[56%] flex-col p-4 pb-2"><div className="mb-3 flex shrink-0 items-center justify-between"><div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground"><span className="flex items-center gap-1"><i className="h-2 w-2 rounded-full bg-zinc-300" />未开始</span><span className="flex items-center gap-1"><i className="h-2 w-2 rounded-full bg-blue-600" />学完</span><span className="flex items-center gap-1"><i className="h-2 w-2 rounded-full bg-emerald-600" />掌握</span><span className="flex items-center gap-1"><i className="h-1.5 w-1.5 rounded-full bg-amber-500" />建议补强</span><span className="flex items-center gap-1"><i className="h-1.5 w-1.5 rounded-full bg-emerald-500" />可进阶</span></div></div>{loading ? <div className="flex min-h-0 flex-1 items-center justify-center"><Loader2 className="h-4 w-4" /></div> : path.nodes.length === 0 ? <div className="flex min-h-0 flex-1 items-center justify-center rounded-xl border border-dashed text-sm text-muted-foreground">尚未建立学习路径</div> : <TreeCanvas graph={path} selectedNodeId={selectedNodeId} onSelect={selectNode} />}</div>
+         <div ref={detailsRef} className="min-h-0 basis-[44%] overflow-y-auto border-t bg-background p-4">
           {selectedNode ? <PathNodeDetails apiBase={apiBase} node={selectedNode} primaryLabel="带入对话" onPrimary={() => carryIntoChat(selectedNode)} onRequestNodeAddition={requestNodeAddition} onUpdateNode={updateNode} saving={savingNodeId === selectedNode.id} /> : <div className="flex h-full items-center justify-center text-sm text-muted-foreground">选择一个节点查看详情</div>}
         </div>
       </aside>

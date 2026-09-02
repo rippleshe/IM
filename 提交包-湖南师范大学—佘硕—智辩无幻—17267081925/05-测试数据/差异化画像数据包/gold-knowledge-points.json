@@ -1,0 +1,61 @@
+{
+  "description": "黄金知识点 → 知识库检索关键词（离线覆盖口径；live 覆盖率以 Claim evidence edge 为准）",
+  "mapping": {
+    "pandas-reading": [
+      "read_csv",
+      "DataFrame",
+      "pandas",
+      "CSV"
+    ],
+    "ai4i-overview": [
+      "AI4I",
+      "Machine failure",
+      "预测性维护"
+    ],
+    "ai4i-failure-modes": [
+      "TWF",
+      "HDF",
+      "PWF",
+      "OSF",
+      "刀具磨损",
+      "散热"
+    ],
+    "statistics-basics": [
+      "均值",
+      "中位数",
+      "分布",
+      "分位"
+    ],
+    "evidence-boundary": [
+      "风险判断",
+      "现场复核",
+      "不确定性",
+      "证据"
+    ],
+    "time-series-basics": [
+      "滑动",
+      "窗口",
+      "趋势",
+      "时序",
+      "采样"
+    ],
+    "anomaly-threshold": [
+      "阈值",
+      "异常",
+      "告警",
+      "分位数"
+    ],
+    "data-cleaning": [
+      "缺失",
+      "清洗",
+      "插值",
+      "NaN"
+    ],
+    "python-basics": [
+      "Python",
+      "type(",
+      "循环",
+      "变量"
+    ]
+  }
+}

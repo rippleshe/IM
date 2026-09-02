@@ -1,0 +1,1836 @@
+{
+  "description": "60 案例黄金标注（升级计划 里程碑 F）；由 scripts/export-gold-labels.ts 从 src/learning/evaluation.ts 确定性生成，修改案例定义后需重新导出并评审",
+  "generatedAt": "2026-08-29T15:57:17.458Z",
+  "cases": [
+    {
+      "id": "eval-learner-foundation-01",
+      "code": "learner-foundation:lecture:ai4i:basic#1",
+      "persona": "learner-foundation",
+      "domain": "ai4i",
+      "taskLevel": "basic",
+      "resourceType": "lecture",
+      "task": "解释 AI4I 数据集里 Machine failure 标签的含义，输出一份能看懂字段的学习讲义",
+      "requiredKnowledgePoints": [
+        "pandas-reading",
+        "ai4i-overview",
+        "ai4i-failure-modes",
+        "statistics-basics",
+        "evidence-boundary",
+        "python-basics"
+      ],
+      "targetDifficultyRange": [
+        0,
+        0.3
+      ],
+      "allowedEvidenceScope": [
+        "dataset:ai4i-2020",
+        "document:knowledge-cards"
+      ],
+      "expectedStructure": {
+        "requiresEvidenceBlocks": true,
+        "requiresKnowledgePointBinding": true,
+        "quizTier": null
+      }
+    },
+    {
+      "id": "eval-learner-foundation-02",
+      "code": "learner-foundation:lecture:metropt3:advanced#2",
+      "persona": "learner-foundation",
+      "domain": "metropt3",
+      "taskLevel": "advanced",
+      "resourceType": "lecture",
+      "task": "在 MetroPT-3 故障窗口里观察 DV_pressure 变化，输出诊断复核卡片",
+      "requiredKnowledgePoints": [
+        "pandas-reading",
+        "time-series-basics",
+        "anomaly-threshold",
+        "data-cleaning",
+        "evidence-boundary",
+        "statistics-basics"
+      ],
+      "targetDifficultyRange": [
+        0,
+        0.3
+      ],
+      "allowedEvidenceScope": [
+        "dataset:metropt-3",
+        "document:knowledge-cards"
+      ],
+      "expectedStructure": {
+        "requiresEvidenceBlocks": true,
+        "requiresKnowledgePointBinding": true,
+        "quizTier": null
+      }
+    },
+    {
+      "id": "eval-learner-foundation-03",
+      "code": "learner-foundation:lecture:metropt3:transfer#3",
+      "persona": "learner-foundation",
+      "domain": "metropt3",
+      "taskLevel": "transfer",
+      "resourceType": "lecture",
+      "task": "用 MetroPT-3 的观察思路分析一段未见过的空压机数据，输出挑战任务",
+      "requiredKnowledgePoints": [
+        "pandas-reading",
+        "time-series-basics",
+        "anomaly-threshold",
+        "data-cleaning",
+        "evidence-boundary"
+      ],
+      "targetDifficultyRange": [
+        0,
+        0.3
+      ],
+      "allowedEvidenceScope": [
+        "dataset:metropt-3",
+        "document:knowledge-cards"
+      ],
+      "expectedStructure": {
+        "requiresEvidenceBlocks": true,
+        "requiresKnowledgePointBinding": true,
+        "quizTier": null
+      }
+    },
+    {
+      "id": "eval-learner-foundation-04",
+      "code": "learner-foundation:lecture:ai4i:transfer#4",
+      "persona": "learner-foundation",
+      "domain": "ai4i",
+      "taskLevel": "transfer",
+      "resourceType": "lecture",
+      "task": "把 AI4I 的字段观察方法迁移到新的传感器 CSV，输出可复用的实操指南",
+      "requiredKnowledgePoints": [
+        "pandas-reading",
+        "ai4i-overview",
+        "ai4i-failure-modes",
+        "statistics-basics",
+        "evidence-boundary",
+        "data-cleaning"
+      ],
+      "targetDifficultyRange": [
+        0,
+        0.3
+      ],
+      "allowedEvidenceScope": [
+        "dataset:ai4i-2020",
+        "document:knowledge-cards"
+      ],
+      "expectedStructure": {
+        "requiresEvidenceBlocks": true,
+        "requiresKnowledgePointBinding": true,
+        "quizTier": null
+      }
+    },
+    {
+      "id": "eval-learner-foundation-05",
+      "code": "learner-foundation:tiered_quiz:ai4i:basic#5",
+      "persona": "learner-foundation",
+      "domain": "ai4i",
+      "taskLevel": "basic",
+      "resourceType": "tiered_quiz",
+      "task": "解释 AI4I 数据集里 Machine failure 标签的含义，输出一份能看懂字段的学习讲义",
+      "requiredKnowledgePoints": [
+        "pandas-reading",
+        "ai4i-overview",
+        "ai4i-failure-modes",
+        "statistics-basics",
+        "evidence-boundary",
+        "python-basics"
+      ],
+      "targetDifficultyRange": [
+        0,
+        0.2
+      ],
+      "allowedEvidenceScope": [
+        "dataset:ai4i-2020",
+        "document:knowledge-cards"
+      ],
+      "expectedStructure": {
+        "requiresEvidenceBlocks": true,
+        "requiresKnowledgePointBinding": true,
+        "quizTier": [
+          "L1",
+          "L2",
+          "L3"
+        ]
+      }
+    },
+    {
+      "id": "eval-learner-foundation-06",
+      "code": "learner-foundation:tiered_quiz:metropt3:advanced#6",
+      "persona": "learner-foundation",
+      "domain": "metropt3",
+      "taskLevel": "advanced",
+      "resourceType": "tiered_quiz",
+      "task": "在 MetroPT-3 故障窗口里观察 DV_pressure 变化，输出诊断复核卡片",
+      "requiredKnowledgePoints": [
+        "pandas-reading",
+        "time-series-basics",
+        "anomaly-threshold",
+        "data-cleaning",
+        "evidence-boundary",
+        "statistics-basics"
+      ],
+      "targetDifficultyRange": [
+        0,
+        0.2
+      ],
+      "allowedEvidenceScope": [
+        "dataset:metropt-3",
+        "document:knowledge-cards"
+      ],
+      "expectedStructure": {
+        "requiresEvidenceBlocks": true,
+        "requiresKnowledgePointBinding": true,
+        "quizTier": [
+          "L1",
+          "L2",
+          "L3"
+        ]
+      }
+    },
+    {
+      "id": "eval-learner-foundation-07",
+      "code": "learner-foundation:tiered_quiz:metropt3:transfer#7",
+      "persona": "learner-foundation",
+      "domain": "metropt3",
+      "taskLevel": "transfer",
+      "resourceType": "tiered_quiz",
+      "task": "用 MetroPT-3 的观察思路分析一段未见过的空压机数据，输出挑战任务",
+      "requiredKnowledgePoints": [
+        "pandas-reading",
+        "time-series-basics",
+        "anomaly-threshold",
+        "data-cleaning",
+        "evidence-boundary"
+      ],
+      "targetDifficultyRange": [
+        0,
+        0.2
+      ],
+      "allowedEvidenceScope": [
+        "dataset:metropt-3",
+        "document:knowledge-cards"
+      ],
+      "expectedStructure": {
+        "requiresEvidenceBlocks": true,
+        "requiresKnowledgePointBinding": true,
+        "quizTier": [
+          "L1",
+          "L2",
+          "L3"
+        ]
+      }
+    },
+    {
+      "id": "eval-learner-foundation-08",
+      "code": "learner-foundation:tiered_quiz:metropt3:basic#8",
+      "persona": "learner-foundation",
+      "domain": "metropt3",
+      "taskLevel": "basic",
+      "resourceType": "tiered_quiz",
+      "task": "看懂 MetroPT-3 压力传感器字段含义与采样频率，输出入门讲义",
+      "requiredKnowledgePoints": [
+        "pandas-reading",
+        "time-series-basics",
+        "anomaly-threshold",
+        "data-cleaning",
+        "evidence-boundary",
+        "python-basics"
+      ],
+      "targetDifficultyRange": [
+        0,
+        0.2
+      ],
+      "allowedEvidenceScope": [
+        "dataset:metropt-3",
+        "document:knowledge-cards"
+      ],
+      "expectedStructure": {
+        "requiresEvidenceBlocks": true,
+        "requiresKnowledgePointBinding": true,
+        "quizTier": [
+          "L1",
+          "L2",
+          "L3"
+        ]
+      }
+    },
+    {
+      "id": "eval-learner-foundation-09",
+      "code": "learner-foundation:practice_guide:ai4i:basic#9",
+      "persona": "learner-foundation",
+      "domain": "ai4i",
+      "taskLevel": "basic",
+      "resourceType": "practice_guide",
+      "task": "解释 AI4I 数据集里 Machine failure 标签的含义，输出一份能看懂字段的学习讲义",
+      "requiredKnowledgePoints": [
+        "pandas-reading",
+        "ai4i-overview",
+        "ai4i-failure-modes",
+        "statistics-basics",
+        "evidence-boundary",
+        "python-basics"
+      ],
+      "targetDifficultyRange": [
+        0,
+        0.3
+      ],
+      "allowedEvidenceScope": [
+        "dataset:ai4i-2020",
+        "document:knowledge-cards"
+      ],
+      "expectedStructure": {
+        "requiresEvidenceBlocks": true,
+        "requiresKnowledgePointBinding": true,
+        "quizTier": null
+      }
+    },
+    {
+      "id": "eval-learner-foundation-10",
+      "code": "learner-foundation:practice_guide:metropt3:advanced#10",
+      "persona": "learner-foundation",
+      "domain": "metropt3",
+      "taskLevel": "advanced",
+      "resourceType": "practice_guide",
+      "task": "在 MetroPT-3 故障窗口里观察 DV_pressure 变化，输出诊断复核卡片",
+      "requiredKnowledgePoints": [
+        "pandas-reading",
+        "time-series-basics",
+        "anomaly-threshold",
+        "data-cleaning",
+        "evidence-boundary",
+        "statistics-basics"
+      ],
+      "targetDifficultyRange": [
+        0,
+        0.3
+      ],
+      "allowedEvidenceScope": [
+        "dataset:metropt-3",
+        "document:knowledge-cards"
+      ],
+      "expectedStructure": {
+        "requiresEvidenceBlocks": true,
+        "requiresKnowledgePointBinding": true,
+        "quizTier": null
+      }
+    },
+    {
+      "id": "eval-learner-foundation-11",
+      "code": "learner-foundation:practice_guide:metropt3:transfer#11",
+      "persona": "learner-foundation",
+      "domain": "metropt3",
+      "taskLevel": "transfer",
+      "resourceType": "practice_guide",
+      "task": "用 MetroPT-3 的观察思路分析一段未见过的空压机数据，输出挑战任务",
+      "requiredKnowledgePoints": [
+        "pandas-reading",
+        "time-series-basics",
+        "anomaly-threshold",
+        "data-cleaning",
+        "evidence-boundary"
+      ],
+      "targetDifficultyRange": [
+        0,
+        0.3
+      ],
+      "allowedEvidenceScope": [
+        "dataset:metropt-3",
+        "document:knowledge-cards"
+      ],
+      "expectedStructure": {
+        "requiresEvidenceBlocks": true,
+        "requiresKnowledgePointBinding": true,
+        "quizTier": null
+      }
+    },
+    {
+      "id": "eval-learner-foundation-12",
+      "code": "learner-foundation:concept_map:ai4i:basic#12",
+      "persona": "learner-foundation",
+      "domain": "ai4i",
+      "taskLevel": "basic",
+      "resourceType": "concept_map",
+      "task": "解释 AI4I 数据集里 Machine failure 标签的含义，输出一份能看懂字段的学习讲义",
+      "requiredKnowledgePoints": [
+        "pandas-reading",
+        "ai4i-overview",
+        "ai4i-failure-modes",
+        "statistics-basics",
+        "evidence-boundary",
+        "python-basics"
+      ],
+      "targetDifficultyRange": [
+        0,
+        0.3
+      ],
+      "allowedEvidenceScope": [
+        "dataset:ai4i-2020",
+        "document:knowledge-cards"
+      ],
+      "expectedStructure": {
+        "requiresEvidenceBlocks": true,
+        "requiresKnowledgePointBinding": true,
+        "quizTier": null
+      }
+    },
+    {
+      "id": "eval-learner-foundation-13",
+      "code": "learner-foundation:concept_map:metropt3:advanced#13",
+      "persona": "learner-foundation",
+      "domain": "metropt3",
+      "taskLevel": "advanced",
+      "resourceType": "concept_map",
+      "task": "在 MetroPT-3 故障窗口里观察 DV_pressure 变化，输出诊断复核卡片",
+      "requiredKnowledgePoints": [
+        "pandas-reading",
+        "time-series-basics",
+        "anomaly-threshold",
+        "data-cleaning",
+        "evidence-boundary",
+        "statistics-basics"
+      ],
+      "targetDifficultyRange": [
+        0,
+        0.3
+      ],
+      "allowedEvidenceScope": [
+        "dataset:metropt-3",
+        "document:knowledge-cards"
+      ],
+      "expectedStructure": {
+        "requiresEvidenceBlocks": true,
+        "requiresKnowledgePointBinding": true,
+        "quizTier": null
+      }
+    },
+    {
+      "id": "eval-learner-foundation-14",
+      "code": "learner-foundation:concept_map:metropt3:transfer#14",
+      "persona": "learner-foundation",
+      "domain": "metropt3",
+      "taskLevel": "transfer",
+      "resourceType": "concept_map",
+      "task": "用 MetroPT-3 的观察思路分析一段未见过的空压机数据，输出挑战任务",
+      "requiredKnowledgePoints": [
+        "pandas-reading",
+        "time-series-basics",
+        "anomaly-threshold",
+        "data-cleaning",
+        "evidence-boundary"
+      ],
+      "targetDifficultyRange": [
+        0,
+        0.3
+      ],
+      "allowedEvidenceScope": [
+        "dataset:metropt-3",
+        "document:knowledge-cards"
+      ],
+      "expectedStructure": {
+        "requiresEvidenceBlocks": true,
+        "requiresKnowledgePointBinding": true,
+        "quizTier": null
+      }
+    },
+    {
+      "id": "eval-learner-foundation-15",
+      "code": "learner-foundation:review_cards:ai4i:basic#15",
+      "persona": "learner-foundation",
+      "domain": "ai4i",
+      "taskLevel": "basic",
+      "resourceType": "review_cards",
+      "task": "解释 AI4I 数据集里 Machine failure 标签的含义，输出一份能看懂字段的学习讲义",
+      "requiredKnowledgePoints": [
+        "pandas-reading",
+        "ai4i-overview",
+        "ai4i-failure-modes",
+        "statistics-basics",
+        "evidence-boundary",
+        "python-basics"
+      ],
+      "targetDifficultyRange": [
+        0,
+        0.3
+      ],
+      "allowedEvidenceScope": [
+        "dataset:ai4i-2020",
+        "document:knowledge-cards"
+      ],
+      "expectedStructure": {
+        "requiresEvidenceBlocks": true,
+        "requiresKnowledgePointBinding": true,
+        "quizTier": null
+      }
+    },
+    {
+      "id": "eval-learner-foundation-16",
+      "code": "learner-foundation:review_cards:metropt3:advanced#16",
+      "persona": "learner-foundation",
+      "domain": "metropt3",
+      "taskLevel": "advanced",
+      "resourceType": "review_cards",
+      "task": "在 MetroPT-3 故障窗口里观察 DV_pressure 变化，输出诊断复核卡片",
+      "requiredKnowledgePoints": [
+        "pandas-reading",
+        "time-series-basics",
+        "anomaly-threshold",
+        "data-cleaning",
+        "evidence-boundary",
+        "statistics-basics"
+      ],
+      "targetDifficultyRange": [
+        0,
+        0.3
+      ],
+      "allowedEvidenceScope": [
+        "dataset:metropt-3",
+        "document:knowledge-cards"
+      ],
+      "expectedStructure": {
+        "requiresEvidenceBlocks": true,
+        "requiresKnowledgePointBinding": true,
+        "quizTier": null
+      }
+    },
+    {
+      "id": "eval-learner-foundation-17",
+      "code": "learner-foundation:review_cards:metropt3:transfer#17",
+      "persona": "learner-foundation",
+      "domain": "metropt3",
+      "taskLevel": "transfer",
+      "resourceType": "review_cards",
+      "task": "用 MetroPT-3 的观察思路分析一段未见过的空压机数据，输出挑战任务",
+      "requiredKnowledgePoints": [
+        "pandas-reading",
+        "time-series-basics",
+        "anomaly-threshold",
+        "data-cleaning",
+        "evidence-boundary"
+      ],
+      "targetDifficultyRange": [
+        0,
+        0.3
+      ],
+      "allowedEvidenceScope": [
+        "dataset:metropt-3",
+        "document:knowledge-cards"
+      ],
+      "expectedStructure": {
+        "requiresEvidenceBlocks": true,
+        "requiresKnowledgePointBinding": true,
+        "quizTier": null
+      }
+    },
+    {
+      "id": "eval-learner-foundation-18",
+      "code": "learner-foundation:challenge_task:ai4i:basic#18",
+      "persona": "learner-foundation",
+      "domain": "ai4i",
+      "taskLevel": "basic",
+      "resourceType": "challenge_task",
+      "task": "解释 AI4I 数据集里 Machine failure 标签的含义，输出一份能看懂字段的学习讲义",
+      "requiredKnowledgePoints": [
+        "pandas-reading",
+        "ai4i-overview",
+        "ai4i-failure-modes",
+        "statistics-basics",
+        "evidence-boundary",
+        "python-basics"
+      ],
+      "targetDifficultyRange": [
+        0,
+        0.2
+      ],
+      "allowedEvidenceScope": [
+        "dataset:ai4i-2020",
+        "document:knowledge-cards"
+      ],
+      "expectedStructure": {
+        "requiresEvidenceBlocks": true,
+        "requiresKnowledgePointBinding": true,
+        "quizTier": null
+      }
+    },
+    {
+      "id": "eval-learner-foundation-19",
+      "code": "learner-foundation:challenge_task:metropt3:advanced#19",
+      "persona": "learner-foundation",
+      "domain": "metropt3",
+      "taskLevel": "advanced",
+      "resourceType": "challenge_task",
+      "task": "在 MetroPT-3 故障窗口里观察 DV_pressure 变化，输出诊断复核卡片",
+      "requiredKnowledgePoints": [
+        "pandas-reading",
+        "time-series-basics",
+        "anomaly-threshold",
+        "data-cleaning",
+        "evidence-boundary",
+        "statistics-basics"
+      ],
+      "targetDifficultyRange": [
+        0,
+        0.2
+      ],
+      "allowedEvidenceScope": [
+        "dataset:metropt-3",
+        "document:knowledge-cards"
+      ],
+      "expectedStructure": {
+        "requiresEvidenceBlocks": true,
+        "requiresKnowledgePointBinding": true,
+        "quizTier": null
+      }
+    },
+    {
+      "id": "eval-learner-foundation-20",
+      "code": "learner-foundation:challenge_task:metropt3:transfer#20",
+      "persona": "learner-foundation",
+      "domain": "metropt3",
+      "taskLevel": "transfer",
+      "resourceType": "challenge_task",
+      "task": "用 MetroPT-3 的观察思路分析一段未见过的空压机数据，输出挑战任务",
+      "requiredKnowledgePoints": [
+        "pandas-reading",
+        "time-series-basics",
+        "anomaly-threshold",
+        "data-cleaning",
+        "evidence-boundary"
+      ],
+      "targetDifficultyRange": [
+        0,
+        0.2
+      ],
+      "allowedEvidenceScope": [
+        "dataset:metropt-3",
+        "document:knowledge-cards"
+      ],
+      "expectedStructure": {
+        "requiresEvidenceBlocks": true,
+        "requiresKnowledgePointBinding": true,
+        "quizTier": null
+      }
+    },
+    {
+      "id": "eval-learner-advanced-01",
+      "code": "learner-advanced:lecture:ai4i:basic#1",
+      "persona": "learner-advanced",
+      "domain": "ai4i",
+      "taskLevel": "basic",
+      "resourceType": "lecture",
+      "task": "用 pandas 统计 AI4I 各故障标签的正样本率，输出含代码示例的讲义",
+      "requiredKnowledgePoints": [
+        "pandas-reading",
+        "ai4i-overview",
+        "ai4i-failure-modes",
+        "statistics-basics",
+        "evidence-boundary",
+        "python-basics"
+      ],
+      "targetDifficultyRange": [
+        0.4,
+        0.85
+      ],
+      "allowedEvidenceScope": [
+        "dataset:ai4i-2020",
+        "document:knowledge-cards"
+      ],
+      "expectedStructure": {
+        "requiresEvidenceBlocks": true,
+        "requiresKnowledgePointBinding": true,
+        "quizTier": null
+      }
+    },
+    {
+      "id": "eval-learner-advanced-02",
+      "code": "learner-advanced:lecture:metropt3:advanced#2",
+      "persona": "learner-advanced",
+      "domain": "metropt3",
+      "taskLevel": "advanced",
+      "resourceType": "lecture",
+      "task": "在故障窗口上实现滑动窗口统计与阈值告警对比，输出实操指南",
+      "requiredKnowledgePoints": [
+        "pandas-reading",
+        "time-series-basics",
+        "anomaly-threshold",
+        "data-cleaning",
+        "evidence-boundary",
+        "statistics-basics"
+      ],
+      "targetDifficultyRange": [
+        0.4,
+        0.85
+      ],
+      "allowedEvidenceScope": [
+        "dataset:metropt-3",
+        "document:knowledge-cards"
+      ],
+      "expectedStructure": {
+        "requiresEvidenceBlocks": true,
+        "requiresKnowledgePointBinding": true,
+        "quizTier": null
+      }
+    },
+    {
+      "id": "eval-learner-advanced-03",
+      "code": "learner-advanced:lecture:metropt3:transfer#3",
+      "persona": "learner-advanced",
+      "domain": "metropt3",
+      "taskLevel": "transfer",
+      "resourceType": "lecture",
+      "task": "设计一个可迁移到其他设备的时序异常检测实验方案，输出挑战任务",
+      "requiredKnowledgePoints": [
+        "pandas-reading",
+        "time-series-basics",
+        "anomaly-threshold",
+        "data-cleaning",
+        "evidence-boundary"
+      ],
+      "targetDifficultyRange": [
+        0.4,
+        0.85
+      ],
+      "allowedEvidenceScope": [
+        "dataset:metropt-3",
+        "document:knowledge-cards"
+      ],
+      "expectedStructure": {
+        "requiresEvidenceBlocks": true,
+        "requiresKnowledgePointBinding": true,
+        "quizTier": null
+      }
+    },
+    {
+      "id": "eval-learner-advanced-04",
+      "code": "learner-advanced:lecture:ai4i:transfer#4",
+      "persona": "learner-advanced",
+      "domain": "ai4i",
+      "taskLevel": "transfer",
+      "resourceType": "lecture",
+      "task": "把 AI4I 上的阈值判别方法迁移到 MetroPT-3，输出可比较算法优劣的挑战任务",
+      "requiredKnowledgePoints": [
+        "pandas-reading",
+        "ai4i-overview",
+        "ai4i-failure-modes",
+        "statistics-basics",
+        "evidence-boundary",
+        "data-cleaning"
+      ],
+      "targetDifficultyRange": [
+        0.4,
+        0.85
+      ],
+      "allowedEvidenceScope": [
+        "dataset:ai4i-2020",
+        "document:knowledge-cards"
+      ],
+      "expectedStructure": {
+        "requiresEvidenceBlocks": true,
+        "requiresKnowledgePointBinding": true,
+        "quizTier": null
+      }
+    },
+    {
+      "id": "eval-learner-advanced-05",
+      "code": "learner-advanced:tiered_quiz:ai4i:basic#5",
+      "persona": "learner-advanced",
+      "domain": "ai4i",
+      "taskLevel": "basic",
+      "resourceType": "tiered_quiz",
+      "task": "用 pandas 统计 AI4I 各故障标签的正样本率，输出含代码示例的讲义",
+      "requiredKnowledgePoints": [
+        "pandas-reading",
+        "ai4i-overview",
+        "ai4i-failure-modes",
+        "statistics-basics",
+        "evidence-boundary",
+        "python-basics"
+      ],
+      "targetDifficultyRange": [
+        0.35,
+        0.8
+      ],
+      "allowedEvidenceScope": [
+        "dataset:ai4i-2020",
+        "document:knowledge-cards"
+      ],
+      "expectedStructure": {
+        "requiresEvidenceBlocks": true,
+        "requiresKnowledgePointBinding": true,
+        "quizTier": [
+          "L1",
+          "L2",
+          "L3"
+        ]
+      }
+    },
+    {
+      "id": "eval-learner-advanced-06",
+      "code": "learner-advanced:tiered_quiz:metropt3:advanced#6",
+      "persona": "learner-advanced",
+      "domain": "metropt3",
+      "taskLevel": "advanced",
+      "resourceType": "tiered_quiz",
+      "task": "在故障窗口上实现滑动窗口统计与阈值告警对比，输出实操指南",
+      "requiredKnowledgePoints": [
+        "pandas-reading",
+        "time-series-basics",
+        "anomaly-threshold",
+        "data-cleaning",
+        "evidence-boundary",
+        "statistics-basics"
+      ],
+      "targetDifficultyRange": [
+        0.35,
+        0.8
+      ],
+      "allowedEvidenceScope": [
+        "dataset:metropt-3",
+        "document:knowledge-cards"
+      ],
+      "expectedStructure": {
+        "requiresEvidenceBlocks": true,
+        "requiresKnowledgePointBinding": true,
+        "quizTier": [
+          "L1",
+          "L2",
+          "L3"
+        ]
+      }
+    },
+    {
+      "id": "eval-learner-advanced-07",
+      "code": "learner-advanced:tiered_quiz:metropt3:transfer#7",
+      "persona": "learner-advanced",
+      "domain": "metropt3",
+      "taskLevel": "transfer",
+      "resourceType": "tiered_quiz",
+      "task": "设计一个可迁移到其他设备的时序异常检测实验方案，输出挑战任务",
+      "requiredKnowledgePoints": [
+        "pandas-reading",
+        "time-series-basics",
+        "anomaly-threshold",
+        "data-cleaning",
+        "evidence-boundary"
+      ],
+      "targetDifficultyRange": [
+        0.35,
+        0.8
+      ],
+      "allowedEvidenceScope": [
+        "dataset:metropt-3",
+        "document:knowledge-cards"
+      ],
+      "expectedStructure": {
+        "requiresEvidenceBlocks": true,
+        "requiresKnowledgePointBinding": true,
+        "quizTier": [
+          "L1",
+          "L2",
+          "L3"
+        ]
+      }
+    },
+    {
+      "id": "eval-learner-advanced-08",
+      "code": "learner-advanced:tiered_quiz:metropt3:basic#8",
+      "persona": "learner-advanced",
+      "domain": "metropt3",
+      "taskLevel": "basic",
+      "resourceType": "tiered_quiz",
+      "task": "梳理 MetroPT-3 的 15 个信号语义与量纲，输出知识图谱",
+      "requiredKnowledgePoints": [
+        "pandas-reading",
+        "time-series-basics",
+        "anomaly-threshold",
+        "data-cleaning",
+        "evidence-boundary",
+        "python-basics"
+      ],
+      "targetDifficultyRange": [
+        0.35,
+        0.8
+      ],
+      "allowedEvidenceScope": [
+        "dataset:metropt-3",
+        "document:knowledge-cards"
+      ],
+      "expectedStructure": {
+        "requiresEvidenceBlocks": true,
+        "requiresKnowledgePointBinding": true,
+        "quizTier": [
+          "L1",
+          "L2",
+          "L3"
+        ]
+      }
+    },
+    {
+      "id": "eval-learner-advanced-09",
+      "code": "learner-advanced:practice_guide:ai4i:basic#9",
+      "persona": "learner-advanced",
+      "domain": "ai4i",
+      "taskLevel": "basic",
+      "resourceType": "practice_guide",
+      "task": "用 pandas 统计 AI4I 各故障标签的正样本率，输出含代码示例的讲义",
+      "requiredKnowledgePoints": [
+        "pandas-reading",
+        "ai4i-overview",
+        "ai4i-failure-modes",
+        "statistics-basics",
+        "evidence-boundary",
+        "python-basics"
+      ],
+      "targetDifficultyRange": [
+        0.4,
+        0.85
+      ],
+      "allowedEvidenceScope": [
+        "dataset:ai4i-2020",
+        "document:knowledge-cards"
+      ],
+      "expectedStructure": {
+        "requiresEvidenceBlocks": true,
+        "requiresKnowledgePointBinding": true,
+        "quizTier": null
+      }
+    },
+    {
+      "id": "eval-learner-advanced-10",
+      "code": "learner-advanced:practice_guide:metropt3:advanced#10",
+      "persona": "learner-advanced",
+      "domain": "metropt3",
+      "taskLevel": "advanced",
+      "resourceType": "practice_guide",
+      "task": "在故障窗口上实现滑动窗口统计与阈值告警对比，输出实操指南",
+      "requiredKnowledgePoints": [
+        "pandas-reading",
+        "time-series-basics",
+        "anomaly-threshold",
+        "data-cleaning",
+        "evidence-boundary",
+        "statistics-basics"
+      ],
+      "targetDifficultyRange": [
+        0.4,
+        0.85
+      ],
+      "allowedEvidenceScope": [
+        "dataset:metropt-3",
+        "document:knowledge-cards"
+      ],
+      "expectedStructure": {
+        "requiresEvidenceBlocks": true,
+        "requiresKnowledgePointBinding": true,
+        "quizTier": null
+      }
+    },
+    {
+      "id": "eval-learner-advanced-11",
+      "code": "learner-advanced:practice_guide:metropt3:transfer#11",
+      "persona": "learner-advanced",
+      "domain": "metropt3",
+      "taskLevel": "transfer",
+      "resourceType": "practice_guide",
+      "task": "设计一个可迁移到其他设备的时序异常检测实验方案，输出挑战任务",
+      "requiredKnowledgePoints": [
+        "pandas-reading",
+        "time-series-basics",
+        "anomaly-threshold",
+        "data-cleaning",
+        "evidence-boundary"
+      ],
+      "targetDifficultyRange": [
+        0.4,
+        0.85
+      ],
+      "allowedEvidenceScope": [
+        "dataset:metropt-3",
+        "document:knowledge-cards"
+      ],
+      "expectedStructure": {
+        "requiresEvidenceBlocks": true,
+        "requiresKnowledgePointBinding": true,
+        "quizTier": null
+      }
+    },
+    {
+      "id": "eval-learner-advanced-12",
+      "code": "learner-advanced:concept_map:ai4i:basic#12",
+      "persona": "learner-advanced",
+      "domain": "ai4i",
+      "taskLevel": "basic",
+      "resourceType": "concept_map",
+      "task": "用 pandas 统计 AI4I 各故障标签的正样本率，输出含代码示例的讲义",
+      "requiredKnowledgePoints": [
+        "pandas-reading",
+        "ai4i-overview",
+        "ai4i-failure-modes",
+        "statistics-basics",
+        "evidence-boundary",
+        "python-basics"
+      ],
+      "targetDifficultyRange": [
+        0.4,
+        0.85
+      ],
+      "allowedEvidenceScope": [
+        "dataset:ai4i-2020",
+        "document:knowledge-cards"
+      ],
+      "expectedStructure": {
+        "requiresEvidenceBlocks": true,
+        "requiresKnowledgePointBinding": true,
+        "quizTier": null
+      }
+    },
+    {
+      "id": "eval-learner-advanced-13",
+      "code": "learner-advanced:concept_map:metropt3:advanced#13",
+      "persona": "learner-advanced",
+      "domain": "metropt3",
+      "taskLevel": "advanced",
+      "resourceType": "concept_map",
+      "task": "在故障窗口上实现滑动窗口统计与阈值告警对比，输出实操指南",
+      "requiredKnowledgePoints": [
+        "pandas-reading",
+        "time-series-basics",
+        "anomaly-threshold",
+        "data-cleaning",
+        "evidence-boundary",
+        "statistics-basics"
+      ],
+      "targetDifficultyRange": [
+        0.4,
+        0.85
+      ],
+      "allowedEvidenceScope": [
+        "dataset:metropt-3",
+        "document:knowledge-cards"
+      ],
+      "expectedStructure": {
+        "requiresEvidenceBlocks": true,
+        "requiresKnowledgePointBinding": true,
+        "quizTier": null
+      }
+    },
+    {
+      "id": "eval-learner-advanced-14",
+      "code": "learner-advanced:concept_map:metropt3:transfer#14",
+      "persona": "learner-advanced",
+      "domain": "metropt3",
+      "taskLevel": "transfer",
+      "resourceType": "concept_map",
+      "task": "设计一个可迁移到其他设备的时序异常检测实验方案，输出挑战任务",
+      "requiredKnowledgePoints": [
+        "pandas-reading",
+        "time-series-basics",
+        "anomaly-threshold",
+        "data-cleaning",
+        "evidence-boundary"
+      ],
+      "targetDifficultyRange": [
+        0.4,
+        0.85
+      ],
+      "allowedEvidenceScope": [
+        "dataset:metropt-3",
+        "document:knowledge-cards"
+      ],
+      "expectedStructure": {
+        "requiresEvidenceBlocks": true,
+        "requiresKnowledgePointBinding": true,
+        "quizTier": null
+      }
+    },
+    {
+      "id": "eval-learner-advanced-15",
+      "code": "learner-advanced:review_cards:ai4i:basic#15",
+      "persona": "learner-advanced",
+      "domain": "ai4i",
+      "taskLevel": "basic",
+      "resourceType": "review_cards",
+      "task": "用 pandas 统计 AI4I 各故障标签的正样本率，输出含代码示例的讲义",
+      "requiredKnowledgePoints": [
+        "pandas-reading",
+        "ai4i-overview",
+        "ai4i-failure-modes",
+        "statistics-basics",
+        "evidence-boundary",
+        "python-basics"
+      ],
+      "targetDifficultyRange": [
+        0.4,
+        0.85
+      ],
+      "allowedEvidenceScope": [
+        "dataset:ai4i-2020",
+        "document:knowledge-cards"
+      ],
+      "expectedStructure": {
+        "requiresEvidenceBlocks": true,
+        "requiresKnowledgePointBinding": true,
+        "quizTier": null
+      }
+    },
+    {
+      "id": "eval-learner-advanced-16",
+      "code": "learner-advanced:review_cards:metropt3:advanced#16",
+      "persona": "learner-advanced",
+      "domain": "metropt3",
+      "taskLevel": "advanced",
+      "resourceType": "review_cards",
+      "task": "在故障窗口上实现滑动窗口统计与阈值告警对比，输出实操指南",
+      "requiredKnowledgePoints": [
+        "pandas-reading",
+        "time-series-basics",
+        "anomaly-threshold",
+        "data-cleaning",
+        "evidence-boundary",
+        "statistics-basics"
+      ],
+      "targetDifficultyRange": [
+        0.4,
+        0.85
+      ],
+      "allowedEvidenceScope": [
+        "dataset:metropt-3",
+        "document:knowledge-cards"
+      ],
+      "expectedStructure": {
+        "requiresEvidenceBlocks": true,
+        "requiresKnowledgePointBinding": true,
+        "quizTier": null
+      }
+    },
+    {
+      "id": "eval-learner-advanced-17",
+      "code": "learner-advanced:review_cards:metropt3:transfer#17",
+      "persona": "learner-advanced",
+      "domain": "metropt3",
+      "taskLevel": "transfer",
+      "resourceType": "review_cards",
+      "task": "设计一个可迁移到其他设备的时序异常检测实验方案，输出挑战任务",
+      "requiredKnowledgePoints": [
+        "pandas-reading",
+        "time-series-basics",
+        "anomaly-threshold",
+        "data-cleaning",
+        "evidence-boundary"
+      ],
+      "targetDifficultyRange": [
+        0.4,
+        0.85
+      ],
+      "allowedEvidenceScope": [
+        "dataset:metropt-3",
+        "document:knowledge-cards"
+      ],
+      "expectedStructure": {
+        "requiresEvidenceBlocks": true,
+        "requiresKnowledgePointBinding": true,
+        "quizTier": null
+      }
+    },
+    {
+      "id": "eval-learner-advanced-18",
+      "code": "learner-advanced:challenge_task:ai4i:basic#18",
+      "persona": "learner-advanced",
+      "domain": "ai4i",
+      "taskLevel": "basic",
+      "resourceType": "challenge_task",
+      "task": "用 pandas 统计 AI4I 各故障标签的正样本率，输出含代码示例的讲义",
+      "requiredKnowledgePoints": [
+        "pandas-reading",
+        "ai4i-overview",
+        "ai4i-failure-modes",
+        "statistics-basics",
+        "evidence-boundary",
+        "python-basics"
+      ],
+      "targetDifficultyRange": [
+        0.35,
+        0.75
+      ],
+      "allowedEvidenceScope": [
+        "dataset:ai4i-2020",
+        "document:knowledge-cards"
+      ],
+      "expectedStructure": {
+        "requiresEvidenceBlocks": true,
+        "requiresKnowledgePointBinding": true,
+        "quizTier": null
+      }
+    },
+    {
+      "id": "eval-learner-advanced-19",
+      "code": "learner-advanced:challenge_task:metropt3:advanced#19",
+      "persona": "learner-advanced",
+      "domain": "metropt3",
+      "taskLevel": "advanced",
+      "resourceType": "challenge_task",
+      "task": "在故障窗口上实现滑动窗口统计与阈值告警对比，输出实操指南",
+      "requiredKnowledgePoints": [
+        "pandas-reading",
+        "time-series-basics",
+        "anomaly-threshold",
+        "data-cleaning",
+        "evidence-boundary",
+        "statistics-basics"
+      ],
+      "targetDifficultyRange": [
+        0.35,
+        0.75
+      ],
+      "allowedEvidenceScope": [
+        "dataset:metropt-3",
+        "document:knowledge-cards"
+      ],
+      "expectedStructure": {
+        "requiresEvidenceBlocks": true,
+        "requiresKnowledgePointBinding": true,
+        "quizTier": null
+      }
+    },
+    {
+      "id": "eval-learner-advanced-20",
+      "code": "learner-advanced:challenge_task:metropt3:transfer#20",
+      "persona": "learner-advanced",
+      "domain": "metropt3",
+      "taskLevel": "transfer",
+      "resourceType": "challenge_task",
+      "task": "设计一个可迁移到其他设备的时序异常检测实验方案，输出挑战任务",
+      "requiredKnowledgePoints": [
+        "pandas-reading",
+        "time-series-basics",
+        "anomaly-threshold",
+        "data-cleaning",
+        "evidence-boundary"
+      ],
+      "targetDifficultyRange": [
+        0.35,
+        0.75
+      ],
+      "allowedEvidenceScope": [
+        "dataset:metropt-3",
+        "document:knowledge-cards"
+      ],
+      "expectedStructure": {
+        "requiresEvidenceBlocks": true,
+        "requiresKnowledgePointBinding": true,
+        "quizTier": null
+      }
+    },
+    {
+      "id": "eval-learner-maintenance-01",
+      "code": "learner-maintenance:lecture:ai4i:basic#1",
+      "persona": "learner-maintenance",
+      "domain": "ai4i",
+      "taskLevel": "basic",
+      "resourceType": "lecture",
+      "task": "从运维视角解释 AI4I 五类故障对应的现场检查动作，输出复习卡片",
+      "requiredKnowledgePoints": [
+        "pandas-reading",
+        "ai4i-overview",
+        "ai4i-failure-modes",
+        "statistics-basics",
+        "evidence-boundary",
+        "python-basics"
+      ],
+      "targetDifficultyRange": [
+        0.1,
+        0.5
+      ],
+      "allowedEvidenceScope": [
+        "dataset:ai4i-2020",
+        "document:knowledge-cards"
+      ],
+      "expectedStructure": {
+        "requiresEvidenceBlocks": true,
+        "requiresKnowledgePointBinding": true,
+        "quizTier": null
+      }
+    },
+    {
+      "id": "eval-learner-maintenance-02",
+      "code": "learner-maintenance:lecture:metropt3:advanced#2",
+      "persona": "learner-maintenance",
+      "domain": "metropt3",
+      "taskLevel": "advanced",
+      "resourceType": "lecture",
+      "task": "结合故障窗口生成一份可执行的现场诊断报告讲义",
+      "requiredKnowledgePoints": [
+        "pandas-reading",
+        "time-series-basics",
+        "anomaly-threshold",
+        "data-cleaning",
+        "evidence-boundary",
+        "statistics-basics"
+      ],
+      "targetDifficultyRange": [
+        0.1,
+        0.5
+      ],
+      "allowedEvidenceScope": [
+        "dataset:metropt-3",
+        "document:knowledge-cards"
+      ],
+      "expectedStructure": {
+        "requiresEvidenceBlocks": true,
+        "requiresKnowledgePointBinding": true,
+        "quizTier": null
+      }
+    },
+    {
+      "id": "eval-learner-maintenance-03",
+      "code": "learner-maintenance:lecture:metropt3:transfer#3",
+      "persona": "learner-maintenance",
+      "domain": "metropt3",
+      "taskLevel": "transfer",
+      "resourceType": "lecture",
+      "task": "为同类空压机输出一份可复用的诊断报告模板挑战任务",
+      "requiredKnowledgePoints": [
+        "pandas-reading",
+        "time-series-basics",
+        "anomaly-threshold",
+        "data-cleaning",
+        "evidence-boundary"
+      ],
+      "targetDifficultyRange": [
+        0.1,
+        0.5
+      ],
+      "allowedEvidenceScope": [
+        "dataset:metropt-3",
+        "document:knowledge-cards"
+      ],
+      "expectedStructure": {
+        "requiresEvidenceBlocks": true,
+        "requiresKnowledgePointBinding": true,
+        "quizTier": null
+      }
+    },
+    {
+      "id": "eval-learner-maintenance-04",
+      "code": "learner-maintenance:lecture:ai4i:transfer#4",
+      "persona": "learner-maintenance",
+      "domain": "ai4i",
+      "taskLevel": "transfer",
+      "resourceType": "lecture",
+      "task": "把 AI4I 的故障-动作映射整理成新设备的点检表模板，输出实操指南",
+      "requiredKnowledgePoints": [
+        "pandas-reading",
+        "ai4i-overview",
+        "ai4i-failure-modes",
+        "statistics-basics",
+        "evidence-boundary",
+        "data-cleaning"
+      ],
+      "targetDifficultyRange": [
+        0.1,
+        0.5
+      ],
+      "allowedEvidenceScope": [
+        "dataset:ai4i-2020",
+        "document:knowledge-cards"
+      ],
+      "expectedStructure": {
+        "requiresEvidenceBlocks": true,
+        "requiresKnowledgePointBinding": true,
+        "quizTier": null
+      }
+    },
+    {
+      "id": "eval-learner-maintenance-05",
+      "code": "learner-maintenance:tiered_quiz:ai4i:basic#5",
+      "persona": "learner-maintenance",
+      "domain": "ai4i",
+      "taskLevel": "basic",
+      "resourceType": "tiered_quiz",
+      "task": "从运维视角解释 AI4I 五类故障对应的现场检查动作，输出复习卡片",
+      "requiredKnowledgePoints": [
+        "pandas-reading",
+        "ai4i-overview",
+        "ai4i-failure-modes",
+        "statistics-basics",
+        "evidence-boundary",
+        "python-basics"
+      ],
+      "targetDifficultyRange": [
+        0.05,
+        0.4
+      ],
+      "allowedEvidenceScope": [
+        "dataset:ai4i-2020",
+        "document:knowledge-cards"
+      ],
+      "expectedStructure": {
+        "requiresEvidenceBlocks": true,
+        "requiresKnowledgePointBinding": true,
+        "quizTier": [
+          "L1",
+          "L2",
+          "L3"
+        ]
+      }
+    },
+    {
+      "id": "eval-learner-maintenance-06",
+      "code": "learner-maintenance:tiered_quiz:metropt3:advanced#6",
+      "persona": "learner-maintenance",
+      "domain": "metropt3",
+      "taskLevel": "advanced",
+      "resourceType": "tiered_quiz",
+      "task": "结合故障窗口生成一份可执行的现场诊断报告讲义",
+      "requiredKnowledgePoints": [
+        "pandas-reading",
+        "time-series-basics",
+        "anomaly-threshold",
+        "data-cleaning",
+        "evidence-boundary",
+        "statistics-basics"
+      ],
+      "targetDifficultyRange": [
+        0.05,
+        0.4
+      ],
+      "allowedEvidenceScope": [
+        "dataset:metropt-3",
+        "document:knowledge-cards"
+      ],
+      "expectedStructure": {
+        "requiresEvidenceBlocks": true,
+        "requiresKnowledgePointBinding": true,
+        "quizTier": [
+          "L1",
+          "L2",
+          "L3"
+        ]
+      }
+    },
+    {
+      "id": "eval-learner-maintenance-07",
+      "code": "learner-maintenance:tiered_quiz:metropt3:transfer#7",
+      "persona": "learner-maintenance",
+      "domain": "metropt3",
+      "taskLevel": "transfer",
+      "resourceType": "tiered_quiz",
+      "task": "为同类空压机输出一份可复用的诊断报告模板挑战任务",
+      "requiredKnowledgePoints": [
+        "pandas-reading",
+        "time-series-basics",
+        "anomaly-threshold",
+        "data-cleaning",
+        "evidence-boundary"
+      ],
+      "targetDifficultyRange": [
+        0.05,
+        0.4
+      ],
+      "allowedEvidenceScope": [
+        "dataset:metropt-3",
+        "document:knowledge-cards"
+      ],
+      "expectedStructure": {
+        "requiresEvidenceBlocks": true,
+        "requiresKnowledgePointBinding": true,
+        "quizTier": [
+          "L1",
+          "L2",
+          "L3"
+        ]
+      }
+    },
+    {
+      "id": "eval-learner-maintenance-08",
+      "code": "learner-maintenance:tiered_quiz:metropt3:basic#8",
+      "persona": "learner-maintenance",
+      "domain": "metropt3",
+      "taskLevel": "basic",
+      "resourceType": "tiered_quiz",
+      "task": "解释 MetroPT-3 压力开关与安全阀信号在现场的含义，输出讲义",
+      "requiredKnowledgePoints": [
+        "pandas-reading",
+        "time-series-basics",
+        "anomaly-threshold",
+        "data-cleaning",
+        "evidence-boundary",
+        "python-basics"
+      ],
+      "targetDifficultyRange": [
+        0.05,
+        0.4
+      ],
+      "allowedEvidenceScope": [
+        "dataset:metropt-3",
+        "document:knowledge-cards"
+      ],
+      "expectedStructure": {
+        "requiresEvidenceBlocks": true,
+        "requiresKnowledgePointBinding": true,
+        "quizTier": [
+          "L1",
+          "L2",
+          "L3"
+        ]
+      }
+    },
+    {
+      "id": "eval-learner-maintenance-09",
+      "code": "learner-maintenance:practice_guide:ai4i:basic#9",
+      "persona": "learner-maintenance",
+      "domain": "ai4i",
+      "taskLevel": "basic",
+      "resourceType": "practice_guide",
+      "task": "从运维视角解释 AI4I 五类故障对应的现场检查动作，输出复习卡片",
+      "requiredKnowledgePoints": [
+        "pandas-reading",
+        "ai4i-overview",
+        "ai4i-failure-modes",
+        "statistics-basics",
+        "evidence-boundary",
+        "python-basics"
+      ],
+      "targetDifficultyRange": [
+        0.1,
+        0.5
+      ],
+      "allowedEvidenceScope": [
+        "dataset:ai4i-2020",
+        "document:knowledge-cards"
+      ],
+      "expectedStructure": {
+        "requiresEvidenceBlocks": true,
+        "requiresKnowledgePointBinding": true,
+        "quizTier": null
+      }
+    },
+    {
+      "id": "eval-learner-maintenance-10",
+      "code": "learner-maintenance:practice_guide:metropt3:advanced#10",
+      "persona": "learner-maintenance",
+      "domain": "metropt3",
+      "taskLevel": "advanced",
+      "resourceType": "practice_guide",
+      "task": "结合故障窗口生成一份可执行的现场诊断报告讲义",
+      "requiredKnowledgePoints": [
+        "pandas-reading",
+        "time-series-basics",
+        "anomaly-threshold",
+        "data-cleaning",
+        "evidence-boundary",
+        "statistics-basics"
+      ],
+      "targetDifficultyRange": [
+        0.1,
+        0.5
+      ],
+      "allowedEvidenceScope": [
+        "dataset:metropt-3",
+        "document:knowledge-cards"
+      ],
+      "expectedStructure": {
+        "requiresEvidenceBlocks": true,
+        "requiresKnowledgePointBinding": true,
+        "quizTier": null
+      }
+    },
+    {
+      "id": "eval-learner-maintenance-11",
+      "code": "learner-maintenance:practice_guide:metropt3:transfer#11",
+      "persona": "learner-maintenance",
+      "domain": "metropt3",
+      "taskLevel": "transfer",
+      "resourceType": "practice_guide",
+      "task": "为同类空压机输出一份可复用的诊断报告模板挑战任务",
+      "requiredKnowledgePoints": [
+        "pandas-reading",
+        "time-series-basics",
+        "anomaly-threshold",
+        "data-cleaning",
+        "evidence-boundary"
+      ],
+      "targetDifficultyRange": [
+        0.1,
+        0.5
+      ],
+      "allowedEvidenceScope": [
+        "dataset:metropt-3",
+        "document:knowledge-cards"
+      ],
+      "expectedStructure": {
+        "requiresEvidenceBlocks": true,
+        "requiresKnowledgePointBinding": true,
+        "quizTier": null
+      }
+    },
+    {
+      "id": "eval-learner-maintenance-12",
+      "code": "learner-maintenance:concept_map:ai4i:basic#12",
+      "persona": "learner-maintenance",
+      "domain": "ai4i",
+      "taskLevel": "basic",
+      "resourceType": "concept_map",
+      "task": "从运维视角解释 AI4I 五类故障对应的现场检查动作，输出复习卡片",
+      "requiredKnowledgePoints": [
+        "pandas-reading",
+        "ai4i-overview",
+        "ai4i-failure-modes",
+        "statistics-basics",
+        "evidence-boundary",
+        "python-basics"
+      ],
+      "targetDifficultyRange": [
+        0.1,
+        0.5
+      ],
+      "allowedEvidenceScope": [
+        "dataset:ai4i-2020",
+        "document:knowledge-cards"
+      ],
+      "expectedStructure": {
+        "requiresEvidenceBlocks": true,
+        "requiresKnowledgePointBinding": true,
+        "quizTier": null
+      }
+    },
+    {
+      "id": "eval-learner-maintenance-13",
+      "code": "learner-maintenance:concept_map:metropt3:advanced#13",
+      "persona": "learner-maintenance",
+      "domain": "metropt3",
+      "taskLevel": "advanced",
+      "resourceType": "concept_map",
+      "task": "结合故障窗口生成一份可执行的现场诊断报告讲义",
+      "requiredKnowledgePoints": [
+        "pandas-reading",
+        "time-series-basics",
+        "anomaly-threshold",
+        "data-cleaning",
+        "evidence-boundary",
+        "statistics-basics"
+      ],
+      "targetDifficultyRange": [
+        0.1,
+        0.5
+      ],
+      "allowedEvidenceScope": [
+        "dataset:metropt-3",
+        "document:knowledge-cards"
+      ],
+      "expectedStructure": {
+        "requiresEvidenceBlocks": true,
+        "requiresKnowledgePointBinding": true,
+        "quizTier": null
+      }
+    },
+    {
+      "id": "eval-learner-maintenance-14",
+      "code": "learner-maintenance:concept_map:metropt3:transfer#14",
+      "persona": "learner-maintenance",
+      "domain": "metropt3",
+      "taskLevel": "transfer",
+      "resourceType": "concept_map",
+      "task": "为同类空压机输出一份可复用的诊断报告模板挑战任务",
+      "requiredKnowledgePoints": [
+        "pandas-reading",
+        "time-series-basics",
+        "anomaly-threshold",
+        "data-cleaning",
+        "evidence-boundary"
+      ],
+      "targetDifficultyRange": [
+        0.1,
+        0.5
+      ],
+      "allowedEvidenceScope": [
+        "dataset:metropt-3",
+        "document:knowledge-cards"
+      ],
+      "expectedStructure": {
+        "requiresEvidenceBlocks": true,
+        "requiresKnowledgePointBinding": true,
+        "quizTier": null
+      }
+    },
+    {
+      "id": "eval-learner-maintenance-15",
+      "code": "learner-maintenance:review_cards:ai4i:basic#15",
+      "persona": "learner-maintenance",
+      "domain": "ai4i",
+      "taskLevel": "basic",
+      "resourceType": "review_cards",
+      "task": "从运维视角解释 AI4I 五类故障对应的现场检查动作，输出复习卡片",
+      "requiredKnowledgePoints": [
+        "pandas-reading",
+        "ai4i-overview",
+        "ai4i-failure-modes",
+        "statistics-basics",
+        "evidence-boundary",
+        "python-basics"
+      ],
+      "targetDifficultyRange": [
+        0.1,
+        0.5
+      ],
+      "allowedEvidenceScope": [
+        "dataset:ai4i-2020",
+        "document:knowledge-cards"
+      ],
+      "expectedStructure": {
+        "requiresEvidenceBlocks": true,
+        "requiresKnowledgePointBinding": true,
+        "quizTier": null
+      }
+    },
+    {
+      "id": "eval-learner-maintenance-16",
+      "code": "learner-maintenance:review_cards:metropt3:advanced#16",
+      "persona": "learner-maintenance",
+      "domain": "metropt3",
+      "taskLevel": "advanced",
+      "resourceType": "review_cards",
+      "task": "结合故障窗口生成一份可执行的现场诊断报告讲义",
+      "requiredKnowledgePoints": [
+        "pandas-reading",
+        "time-series-basics",
+        "anomaly-threshold",
+        "data-cleaning",
+        "evidence-boundary",
+        "statistics-basics"
+      ],
+      "targetDifficultyRange": [
+        0.1,
+        0.5
+      ],
+      "allowedEvidenceScope": [
+        "dataset:metropt-3",
+        "document:knowledge-cards"
+      ],
+      "expectedStructure": {
+        "requiresEvidenceBlocks": true,
+        "requiresKnowledgePointBinding": true,
+        "quizTier": null
+      }
+    },
+    {
+      "id": "eval-learner-maintenance-17",
+      "code": "learner-maintenance:review_cards:metropt3:transfer#17",
+      "persona": "learner-maintenance",
+      "domain": "metropt3",
+      "taskLevel": "transfer",
+      "resourceType": "review_cards",
+      "task": "为同类空压机输出一份可复用的诊断报告模板挑战任务",
+      "requiredKnowledgePoints": [
+        "pandas-reading",
+        "time-series-basics",
+        "anomaly-threshold",
+        "data-cleaning",
+        "evidence-boundary"
+      ],
+      "targetDifficultyRange": [
+        0.1,
+        0.5
+      ],
+      "allowedEvidenceScope": [
+        "dataset:metropt-3",
+        "document:knowledge-cards"
+      ],
+      "expectedStructure": {
+        "requiresEvidenceBlocks": true,
+        "requiresKnowledgePointBinding": true,
+        "quizTier": null
+      }
+    },
+    {
+      "id": "eval-learner-maintenance-18",
+      "code": "learner-maintenance:challenge_task:ai4i:basic#18",
+      "persona": "learner-maintenance",
+      "domain": "ai4i",
+      "taskLevel": "basic",
+      "resourceType": "challenge_task",
+      "task": "从运维视角解释 AI4I 五类故障对应的现场检查动作，输出复习卡片",
+      "requiredKnowledgePoints": [
+        "pandas-reading",
+        "ai4i-overview",
+        "ai4i-failure-modes",
+        "statistics-basics",
+        "evidence-boundary",
+        "python-basics"
+      ],
+      "targetDifficultyRange": [
+        0,
+        0.25
+      ],
+      "allowedEvidenceScope": [
+        "dataset:ai4i-2020",
+        "document:knowledge-cards"
+      ],
+      "expectedStructure": {
+        "requiresEvidenceBlocks": true,
+        "requiresKnowledgePointBinding": true,
+        "quizTier": null
+      }
+    },
+    {
+      "id": "eval-learner-maintenance-19",
+      "code": "learner-maintenance:challenge_task:metropt3:advanced#19",
+      "persona": "learner-maintenance",
+      "domain": "metropt3",
+      "taskLevel": "advanced",
+      "resourceType": "challenge_task",
+      "task": "结合故障窗口生成一份可执行的现场诊断报告讲义",
+      "requiredKnowledgePoints": [
+        "pandas-reading",
+        "time-series-basics",
+        "anomaly-threshold",
+        "data-cleaning",
+        "evidence-boundary",
+        "statistics-basics"
+      ],
+      "targetDifficultyRange": [
+        0,
+        0.25
+      ],
+      "allowedEvidenceScope": [
+        "dataset:metropt-3",
+        "document:knowledge-cards"
+      ],
+      "expectedStructure": {
+        "requiresEvidenceBlocks": true,
+        "requiresKnowledgePointBinding": true,
+        "quizTier": null
+      }
+    },
+    {
+      "id": "eval-learner-maintenance-20",
+      "code": "learner-maintenance:challenge_task:metropt3:transfer#20",
+      "persona": "learner-maintenance",
+      "domain": "metropt3",
+      "taskLevel": "transfer",
+      "resourceType": "challenge_task",
+      "task": "为同类空压机输出一份可复用的诊断报告模板挑战任务",
+      "requiredKnowledgePoints": [
+        "pandas-reading",
+        "time-series-basics",
+        "anomaly-threshold",
+        "data-cleaning",
+        "evidence-boundary"
+      ],
+      "targetDifficultyRange": [
+        0,
+        0.25
+      ],
+      "allowedEvidenceScope": [
+        "dataset:metropt-3",
+        "document:knowledge-cards"
+      ],
+      "expectedStructure": {
+        "requiresEvidenceBlocks": true,
+        "requiresKnowledgePointBinding": true,
+        "quizTier": null
+      }
+    }
+  ]
+}

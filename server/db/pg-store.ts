@@ -854,12 +854,12 @@ export class PgLearningStore {
     }
   }
 
-  async listPrivacyAuditEvents(limit = 8): Promise<PrivacyAuditEventView[]> {
+  async listPrivacyAuditEvents(learnerId: string, limit = 8): Promise<PrivacyAuditEventView[]> {
     const boundedLimit = Math.max(1, Math.min(limit, 30));
     const rows = (await this.pool.query(
       `SELECT id, event_type AS "eventType", file_name AS "fileName", byte_count AS "byteCount",
         redacted_fields_json AS "redactedFieldsJson", retained, created_at AS "createdAt"
-       FROM privacy_audit_events ORDER BY created_at DESC LIMIT $1`, [boundedLimit],
+       FROM privacy_audit_events WHERE learner_id = $1 ORDER BY created_at DESC LIMIT $2`, [learnerId, boundedLimit],
     )).rows as Array<{
       id: string; eventType: string; fileName: string | null; byteCount: string | number | null;
       redactedFieldsJson: unknown; retained: boolean; createdAt: string | number;
@@ -870,13 +870,13 @@ export class PgLearningStore {
       fileName: row.fileName,
       byteCount: row.byteCount === null || row.byteCount === undefined ? null : Number(row.byteCount),
       redactedFieldCount: Array.isArray(row.redactedFieldsJson) ? row.redactedFieldsJson.length : 0,
-      retained: false,
+      retained: row.retained,
       createdAt: Number(row.createdAt),
     }));
   }
 
-  async clearPrivacyAuditEvents(): Promise<number> {
-    const result = await this.pool.query('DELETE FROM privacy_audit_events');
+  async clearPrivacyAuditEvents(learnerId: string): Promise<number> {
+    const result = await this.pool.query('DELETE FROM privacy_audit_events WHERE learner_id = $1', [learnerId]);
     return result.rowCount ?? 0;
   }
 

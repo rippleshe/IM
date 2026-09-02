@@ -9,7 +9,7 @@
  *
  * 核验结论只能比输入 verdict 更严（supported → review → unsupported），绝不放松。
  */
-import { claimLogicalKey, type ClaimAuditRecord, type ClaimType } from './audit.js';
+import { claimLogicalKey, numericAssertionsSupported, type ClaimAuditRecord, type ClaimType } from './audit.js';
 import type { EvidencePack } from './types.js';
 
 export interface DatasetFieldInfo {
@@ -58,20 +58,22 @@ function verifyNumeric(record: ClaimAuditRecord, evidenceText: string): ClaimChe
   if (numbers.length === 0) {
     return { id: 'numeric-precision', label: '数值与证据一致', status: 'passed', detail: '无数值表述' };
   }
-  const missing = numbers.filter((number) => !evidenceText.includes(number));
-  if (missing.length === 0) {
+  if (numericAssertionsSupported(record.text, evidenceText)) {
     return { id: 'numeric-precision', label: '数值与证据一致', status: 'passed', detail: `${numbers.length} 个数字均可在证据中定位` };
   }
   return {
     id: 'numeric-precision',
     label: '数值与证据一致',
     status: 'failed',
-    detail: `数字 ${missing.join('、')} 未在绑定证据中出现（数量级/改动风险）`,
+    detail: '数字或数量边界未能在绑定证据中核对（数量级/改动风险）',
   };
 }
 
-/** 字段含义核验：Claim 提到的字段名必须在字段字典中，且解释词与登记含义有重叠 */
+/** 字段含义核验：只校验“表示/含义”等语义断言，不把字段名或类型操作误当字段释义。 */
 function verifyFieldMeaning(record: ClaimAuditRecord, fields: DatasetFieldInfo[]): ClaimCheck | null {
+  const semanticAssertion = ['含义', '表示', '是指', '定义为', '指的是', '含义为', '代表']
+    .some((hint) => record.text.includes(hint));
+  if (!semanticAssertion) return null;
   const mentioned = fields.filter((field) => record.text.includes(field.fieldName));
   if (mentioned.length === 0) return null;
   for (const field of mentioned) {
@@ -158,7 +160,7 @@ export function verifyClaim(
     const fieldCheck = verifyFieldMeaning(record, context.datasetFields ?? []);
     if (fieldCheck) checks.push(fieldCheck);
   } else if (claimType === 'field_meaning') {
-    checks.push({ id: 'field-meaning', label: '字段含义与数据集字典一致', status: 'review', detail: '字段字典不可用，需人工复核字段解释' });
+    checks.push({ id: 'field-meaning', label: '字段含义与数据集字典一致', status: 'review', detail: '字段字典不可用，需智能体补充核验字段解释' });
   }
   const causalCheck = verifyCausalBoundary(record);
   if (causalCheck) checks.push(causalCheck);

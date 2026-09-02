@@ -46,6 +46,8 @@ export const REVISION_BUDGET = 2;
 export interface TemporaryReference {
   name: string;
   content: string;
+  /** 默认 false；用户明确同意后，才允许策展智能体评估并沉淀。 */
+  allowKnowledgeRetention?: boolean;
 }
 
 export interface StudyConversationTurn {

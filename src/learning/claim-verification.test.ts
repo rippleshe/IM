@@ -57,6 +57,7 @@ describe('Claim 分类（升级计划 §4.5）', () => {
     expect(classifyClaimText('Torque 字段表示主轴扭矩')).toBe('field_meaning');
     expect(classifyClaimText('首先读取数据，然后筛选异常行')).toBe('method_step');
     expect(classifyClaimText('油温偏高可能存在风险，建议关注')).toBe('risk_advice');
+    expect(classifyClaimText('练习：假设某个时间点为 2023-01-01')).toBe('non_factual');
   });
 });
 
@@ -73,6 +74,12 @@ describe('声明级幻觉治理：故障注入（升级计划 里程碑 D 必测
     const packData = pack([evidenceItem('e1', 'Air temperature 298.1 K, Torque 52.3 Nm')]);
     const good = claim('环境温度为 298.1 K', ['e1'], 'numeric');
     expect(verifyClaim(good, packData).verdict).toBe('supported');
+  });
+
+  it('精确行数可以支持保守的中文数量下界，不能支持更高下界', () => {
+    const packData = pack([evidenceItem('e1', '共 1516948 行记录')]);
+    expect(verifyClaim(claim('数据包含超过 150 万行记录', ['e1'], 'numeric'), packData).verdict).toBe('supported');
+    expect(verifyClaim(claim('数据包含超过 200 万行记录', ['e1'], 'numeric'), packData).verdict).toBe('unsupported');
   });
 
   it('注入 3：把"异常风险"写成"一定发生故障" → 越界因果拦截', () => {
@@ -94,6 +101,12 @@ describe('声明级幻觉治理：故障注入（升级计划 里程碑 D 必测
     expect(result.checks.find((check) => check.id === 'field-meaning')?.status).toBe('failed');
     const right = claim('Torque 扭矩数值为 52.3', ['e1'], 'field_meaning');
     expect(verifyClaim(right, packData, { datasetFields: AI4I_FIELDS }).verdict).toBe('supported');
+  });
+
+  it('字段类型与格式操作不被误当作字段语义解释', () => {
+    const packData = pack([evidenceItem('e1', 'timestamp 采样时间')]);
+    const operation = claim('确认 timestamp 列的数据类型后转换为 datetime', ['e1'], 'field_meaning');
+    expect(verifyClaim(operation, packData, { datasetFields: [{ fieldName: 'timestamp', meaning: '采样时间' }] }).verdict).toBe('supported');
   });
 
   it('注入 5：引用越出允许证据范围 → 引用核验拦截', () => {

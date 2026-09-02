@@ -334,8 +334,8 @@ export function getSettingsPayload() {
       })),
     agentRouting: runtimeWorkbenchSettings.agentRouting,
     privacy: {
-      uploadPolicy: 'session_only' as const,
-      uploadContentRetained: false as const,
+      uploadPolicy: 'session_only_unless_curated' as const,
+      uploadContentRetained: 'only_after_opt_in_and_ai_screening' as const,
       learnerDataScope: storageKind,
       dataSource: 'PostgreSQL 16 + pgvector',
     },

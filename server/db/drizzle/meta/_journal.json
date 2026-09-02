@@ -85,6 +85,20 @@
       "when": 1787999000000,
       "tag": "0011_retire_migration_state",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1788000000000,
+      "tag": "0012_knowledge_source_governance",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1788001000000,
+      "tag": "0013_knowledge_admin",
+      "breakpoints": true
     }
   ]
 }
