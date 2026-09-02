@@ -30,8 +30,10 @@ export async function embedQuery(text: string): Promise<number[] | null> {
   if (!apiKey) return null;
   const model = process.env['EMBEDDING_MODEL'] ?? 'text-embedding-v4';
   const dimensions = Number(process.env['EMBEDDING_DIM'] ?? 1024);
+  const baseUrl = (process.env['DASHSCOPE_BASE_URL'] ?? 'https://dashscope.aliyuncs.com/compatible-mode/v1').replace(/\/+$/, '');
+  if (!Number.isInteger(dimensions) || dimensions <= 0) return null;
   try {
-    const response = await fetch(`${process.env['DASHSCOPE_BASE_URL'] ?? 'https://dashscope.aliyuncs.com/compatible-mode/v1'}/embeddings`, {
+    const response = await fetch(`${baseUrl}/embeddings`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
       body: JSON.stringify({ model, input: text.slice(0, 6000), dimensions, encoding_format: 'float' }),
@@ -131,6 +133,7 @@ export async function hybridDocumentRowsPg(
       }
     } catch {
       info.reason = 'vector_query_failed';
+      info.degraded = true;
     }
   } else {
     info.reason = 'embed_failed';

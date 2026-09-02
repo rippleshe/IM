@@ -144,15 +144,36 @@ export async function getMetroSummaryPg(pool: Pool): Promise<DatasetSummary> {
   };
 }
 
-export async function queryMetroReadingsPg(pool: Pool, limit = 5): Promise<MetroReading[]> {
+function metroQueryShape(query: string): { where: string; orderBy: string } {
+  const text = query.toLowerCase();
+  if (/压力|pressure|tp2|tp3|reservoir|lps|低压/.test(text)) {
+    return {
+      where: 'tp2 IS NOT NULL OR tp3 IS NOT NULL OR dv_pressure IS NOT NULL OR reservoirs IS NOT NULL',
+      orderBy: 'GREATEST(ABS(COALESCE(tp2, 0) - COALESCE(tp3, 0)), ABS(COALESCE(dv_pressure, 0))) DESC NULLS LAST, timestamp DESC',
+    };
+  }
+  if (/油温|温度|temperature|oil_temperature/.test(text)) {
+    return { where: 'oil_temperature IS NOT NULL', orderBy: 'oil_temperature DESC NULLS LAST, timestamp DESC' };
+  }
+  if (/电流|current|motor_current/.test(text)) {
+    return { where: 'motor_current IS NOT NULL', orderBy: 'motor_current DESC NULLS LAST, timestamp DESC' };
+  }
+  if (/阀|valve|dv_pressure|dv_electric|pressure_switch/.test(text)) {
+    return { where: 'dv_pressure IS NOT NULL OR dv_electric IS NOT NULL OR pressure_switch IS NOT NULL', orderBy: 'ABS(COALESCE(dv_pressure, 0)) DESC NULLS LAST, timestamp DESC' };
+  }
+  return { where: 'TRUE', orderBy: 'timestamp DESC' };
+}
+
+export async function queryMetroReadingsPg(pool: Pool, limit = 5, query = ''): Promise<MetroReading[]> {
   const boundedLimit = Math.max(1, Math.min(limit, 20));
+  const shape = metroQueryShape(query);
   const rows = await pool.query(
     `SELECT row_id AS "rowId", timestamp, tp2, tp3, h1, dv_pressure AS "dvPressure",
       reservoirs, oil_temperature AS "oilTemperature", motor_current AS "motorCurrent",
       comp, dv_electric AS "dvElectric", towers, mpg, lps,
       pressure_switch AS "pressureSwitch", oil_level AS "oilLevel",
       caudal_impulses AS "caudalImpulses"
-     FROM metro_readings ORDER BY timestamp DESC LIMIT $1`, [boundedLimit],
+     FROM metro_readings WHERE ${shape.where} ORDER BY ${shape.orderBy} LIMIT $1`, [boundedLimit],
   );
   return rows.rows as MetroReading[];
 }
@@ -227,47 +248,59 @@ function evidenceItem(item: Omit<EvidenceItem, 'id'>): EvidenceItem {
   return { id: `evidence-${randomUUID()}`, ...item };
 }
 
-async function structuredEvidencePg(pool: Pool): Promise<EvidenceItem[]> {
-  const summary = await getMetroSummaryPg(pool);
-  const rows = await queryMetroReadingsPg(pool, 6);
-  const summaryItem = evidenceItem({
-    sourceType: 'dataset',
-    sourceId: 'metropt-3',
-    sourceTitle: 'MetroPT-3 CSV 数据集',
-    locator: 'postgres:datasets.id=metropt-3',
-    content: JSON.stringify({
-      dataset: summary.name,
-      rowCount: summary.rowCount,
-      fieldCount: summary.fieldCount,
-      firstTimestamp: summary.firstTimestamp,
-      lastTimestamp: summary.lastTimestamp,
-    }),
-    retrievalMethod: 'sql',
-    relevanceScore: 0.92,
-    trustLevel: 'high',
-    scope: 'system',
-    metadata: { queryKind: 'dataset_summary', rowCount: summary.rowCount, fieldCount: summary.fieldCount },
-  });
-  const rowItems = rows.map((row, index) => evidenceItem({
-    sourceType: 'dataset',
-    sourceId: 'metropt-3',
-    sourceTitle: 'MetroPT-3 CSV 数据行',
-    locator: `postgres:metro_readings.row_id=${row.rowId}`,
-    content: JSON.stringify(row),
-    retrievalMethod: 'sql',
-    relevanceScore: Math.max(0.58, 0.86 - index * 0.04),
-    trustLevel: 'high',
-    scope: 'system' as EvidenceScope,
-    metadata: { queryKind: 'recent_rows', rowId: row.rowId, timestamp: row.timestamp },
-  }));
-  return [summaryItem, ...rowItems, ...(await genericDatasetEvidencePg(pool))];
+function structuredIntent(query: string, terms: string[]): { text: string; wantsRows: boolean; wantsDatasets: boolean; metroRelevant: boolean } | null {
+  const text = `${query} ${terms.join(' ')}`.toLowerCase();
+  if (!/数据|dataset|csv|字段|field|feature|传感器|sensor|压力|pressure|油温|温度|temperature|电流|current|阀|valve|低压|lps|故障|failure|fault|异常|anomaly|时序|time series|样本|sample|数据行|row|观测|reading/.test(text)) return null;
+  const ai4iOnly = /ai4i/.test(text) && !/metropt|压缩机/.test(text);
+  return {
+    text,
+    wantsRows: /数据|dataset|csv|传感器|sensor|压力|pressure|油温|温度|temperature|电流|current|阀|valve|低压|lps|故障|failure|fault|异常|anomaly|时序|time series|样本|sample|数据行|row|观测|reading/.test(text),
+    wantsDatasets: /数据集|dataset|csv|ai4i|metropt|样本|sample|数据行|row/.test(text),
+    metroRelevant: !ai4iOnly && /metropt|压缩机|传感器|sensor|压力|pressure|油温|温度|temperature|电流|current|阀|valve|低压|lps|故障|failure|fault|异常|anomaly|时序|time series|字段|field|feature|reading|观测/.test(text),
+  };
 }
 
-async function genericDatasetEvidencePg(pool: Pool): Promise<EvidenceItem[]> {
+async function datasetFieldEvidencePg(pool: Pool, terms: string[]): Promise<EvidenceItem[]> {
+  const patterns = [...new Set(terms.filter((term) => term.length >= 2))].slice(0, 10);
+  if (patterns.length === 0) return [];
+  const wantsFieldCatalog = terms.some((term) => ['字段', 'field', 'feature', 'attribute'].includes(term));
+  const clauses = patterns.map((_, index) => {
+    const parameter = `$${index + 2}`;
+    return `(LOWER(COALESCE(field_name, '')) LIKE ${parameter} OR LOWER(COALESCE(meaning, '')) LIKE ${parameter} OR LOWER(COALESCE(unit, '')) LIKE ${parameter} OR LOWER(COALESCE(label_role, '')) LIKE ${parameter})`;
+  }).join(' OR ');
+  const rows = (await pool.query(
+    `SELECT dataset_id AS "datasetId", field_name AS "fieldName", data_type AS "dataType", meaning, unit, label_role AS "labelRole"
+     FROM dataset_fields WHERE dataset_id = $1 AND (${wantsFieldCatalog ? 'TRUE' : clauses})
+     ORDER BY field_name LIMIT 8`,
+    wantsFieldCatalog ? [METRO_DATASET_ID] : [METRO_DATASET_ID, ...patterns.map((term) => `%${term}%`)],
+  )).rows as Array<{ datasetId: string; fieldName: string; dataType: string; meaning: string | null; unit: string | null; labelRole: string | null }>;
+  return rows.map((row, index) => evidenceItem({
+    sourceType: 'dataset',
+    sourceId: row.datasetId,
+    sourceTitle: `MetroPT-3 字段：${row.fieldName}`,
+    locator: `postgres:dataset_fields.dataset_id=${row.datasetId}&field_name=${row.fieldName}`,
+    content: JSON.stringify({ fieldName: row.fieldName, dataType: row.dataType, meaning: row.meaning, unit: row.unit, labelRole: row.labelRole }),
+    retrievalMethod: 'sql',
+    relevanceScore: Math.max(0.7, 0.9 - index * 0.03),
+    trustLevel: 'high',
+    scope: 'system',
+    metadata: { queryKind: 'field_definition', matchedTerms: patterns.join('、') },
+  }));
+}
+
+async function genericDatasetEvidencePg(pool: Pool, terms: string[]): Promise<EvidenceItem[]> {
+  const patterns = [...new Set(terms.filter((term) => term.length >= 2))].slice(0, 8);
+  if (patterns.length === 0) return [];
+  const clauses = patterns.map((_, index) => {
+    const parameter = `$${index + 1}`;
+    return `(LOWER(COALESCE(d.name, '')) LIKE ${parameter} OR LOWER(COALESCE(d.source_path, '')) LIKE ${parameter})`;
+  }).join(' OR ');
   const datasets = (await pool.query(
     `SELECT d.id, d.name, d.source_path AS "sourcePath"
      FROM datasets d JOIN dataset_rows r ON r.dataset_id = d.id
+     WHERE ${clauses}
      GROUP BY d.id ORDER BY d.id`,
+    patterns.map((term) => `%${term}%`),
   )).rows as Array<{ id: string; name: string; sourcePath: string }>;
   const items: EvidenceItem[] = [];
   for (const dataset of datasets) {
@@ -300,6 +333,51 @@ async function genericDatasetEvidencePg(pool: Pool): Promise<EvidenceItem[]> {
       }));
     });
   }
+  return items;
+}
+
+async function structuredEvidencePg(pool: Pool, query: string, terms: string[]): Promise<EvidenceItem[]> {
+  const intent = structuredIntent(query, terms);
+  if (!intent) return [];
+  const items: EvidenceItem[] = [];
+  if (intent.metroRelevant) {
+    const summary = await getMetroSummaryPg(pool);
+    items.push(evidenceItem({
+      sourceType: 'dataset',
+      sourceId: summary.id,
+      sourceTitle: `${summary.name} 数据集摘要`,
+      locator: `postgres:datasets.id=${summary.id}`,
+      content: JSON.stringify({
+        dataset: summary.name,
+        rowCount: summary.rowCount,
+        fieldCount: summary.fieldCount,
+        firstTimestamp: summary.firstTimestamp,
+        lastTimestamp: summary.lastTimestamp,
+      }),
+      retrievalMethod: 'sql',
+      relevanceScore: 0.92,
+      trustLevel: 'high',
+      scope: 'system',
+      metadata: { queryKind: 'dataset_summary', matchedTerms: terms.join('、'), rowCount: summary.rowCount, fieldCount: summary.fieldCount },
+    }));
+    items.push(...await datasetFieldEvidencePg(pool, terms));
+    if (intent.wantsRows) {
+      const rows = await queryMetroReadingsPg(pool, 6, query);
+      items.push(...rows.map((row, index) => evidenceItem({
+        sourceType: 'dataset',
+        sourceId: summary.id,
+        sourceTitle: 'MetroPT-3 相关数据行',
+        locator: `postgres:metro_readings.row_id=${row.rowId}`,
+        content: JSON.stringify(row),
+        retrievalMethod: 'sql',
+        relevanceScore: Math.max(0.58, 0.86 - index * 0.04),
+        trustLevel: 'high',
+        scope: 'system' as EvidenceScope,
+        metadata: { queryKind: 'query_matched_rows', rowId: row.rowId, timestamp: row.timestamp, matchedTerms: terms.join('、') },
+      })));
+    }
+  }
+  if (intent.wantsDatasets) items.push(...await genericDatasetEvidencePg(pool, terms));
   return items;
 }
 
@@ -400,7 +478,7 @@ export class PgEvidenceService {
     const wantStructured = !options.retrievalPlan || options.retrievalPlan.includes('structured');
     const wantDocuments = !options.retrievalPlan || options.retrievalPlan.includes('document');
     const terms = normalizeSearchTerms(query);
-    const structured = wantStructured ? await structuredEvidencePg(this.pool) : [];
+    const structured = wantStructured ? await structuredEvidencePg(this.pool, query, terms) : [];
     let documents: EvidenceItem[] = [];
     let hybrid: EvidencePack['hybrid'];
     if (wantDocuments) {

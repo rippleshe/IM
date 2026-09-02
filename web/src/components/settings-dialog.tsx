@@ -40,6 +40,7 @@ const agentLabels: Array<[string, string, string | null]> = [
 
 const privacyEventLabels: Record<string, string> = {
   temporary_reference_used: "资料已完成隐私审计",
+  web_search_blocked: "外部检索已被隐私规则拦截",
 };
 
 function readableError(reason: unknown, fallback: string) {
@@ -101,7 +102,8 @@ function PrivacyPanel({ apiBase }: { apiBase: string }) {
     </section>
     <section className="rounded-xl border bg-background">
       <div className="flex items-center justify-between border-b px-4 py-3"><span className="text-xs font-medium">隐私审计记录 · {overview?.records.auditEvents ?? 0}</span><button type="button" disabled={clearing || !events?.length} onClick={() => void clear()} className="rounded-md border px-2.5 py-1.5 text-[11px] text-muted-foreground hover:bg-muted disabled:opacity-40">{clearing ? "清除中" : "清除记录"}</button></div>
-      <div className="max-h-48 overflow-y-auto p-2">{events === null ? <div className="px-2 py-3 text-xs text-muted-foreground">正在读取</div> : events.length === 0 ? <div className="px-2 py-3 text-xs text-muted-foreground">暂无审计记录</div> : events.map((event) => <div key={event.id} className="flex items-center justify-between gap-2 rounded-lg px-2 py-2 text-[11px] hover:bg-muted/50"><span className="min-w-0 truncate">{event.retained ? "已通过智能筛选并沉淀" : privacyEventLabels[event.eventType] ?? event.eventType}<span className="text-muted-foreground"> · {event.fileName ?? "未知文件"}</span></span><span className="shrink-0 text-muted-foreground">{event.byteCount === null ? "" : `${Math.max(1, Math.round(event.byteCount / 1024))} KB · `}{new Intl.DateTimeFormat("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(event.createdAt)}</span></div>)}</div>
+      <div className="border-b bg-muted/20 px-4 py-2.5 text-[11px] leading-5 text-muted-foreground">这里记录上传资料的隐私处理，以及包含敏感信息时被拦截的外部检索。普通学习、习题作答、资源反馈和库内资料检索不会产生审计记录；显示 0 代表目前没有发生以上隐私事件。</div>
+      <div className="max-h-48 overflow-y-auto p-2">{events === null ? <div className="px-2 py-3 text-xs text-muted-foreground">正在读取</div> : events.length === 0 ? <div className="px-2 py-3 text-xs text-muted-foreground">当前没有需要审计的隐私事件</div> : events.map((event) => <div key={event.id} className="flex items-center justify-between gap-2 rounded-lg px-2 py-2 text-[11px] hover:bg-muted/50"><span className="min-w-0 truncate">{event.retained ? "已通过智能筛选并沉淀" : privacyEventLabels[event.eventType] ?? event.eventType}<span className="text-muted-foreground"> · {event.fileName ?? "未使用文件"}</span></span><span className="shrink-0 text-muted-foreground">{event.byteCount === null ? "" : `${Math.max(1, Math.round(event.byteCount / 1024))} KB · `}{new Intl.DateTimeFormat("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(event.createdAt)}</span></div>)}</div>
     </section>
   </div>;
 }

@@ -14,25 +14,6 @@ function applyDifficulty(resource: ResourceDocument, calibration?: DifficultyCal
   return resource;
 }
 
-function evidenceBlocks(pack: EvidencePack, knowledgePointId: string): ResourceBlock[] {
-  // 结构化数据证据已由「数据摘录」表格呈现，原始 JSON 摘要对学习者是噪音；只保留领域文档说明卡
-  return pack.items
-    .filter((item) => item.sourceType !== 'dataset')
-    .slice(0, 4)
-    .map((item, index) => ({
-      id: `resource-block-${randomUUID()}`,
-      type: 'evidence' as const,
-      position: index + 2,
-      content: {
-        label: '领域说明',
-        locator: item.locator,
-        summary: item.content,
-      },
-      knowledgePointIds: [knowledgePointId],
-      evidenceIds: [item.id],
-    }));
-}
-
 const isRowEvidence = (item: EvidenceItem): boolean => item.sourceType === 'dataset'
   && (item.metadata?.['queryKind'] === 'recent_rows' || item.metadata?.['queryKind'] === 'dataset_row');
 
@@ -119,7 +100,7 @@ export function buildResourceDraft(
     content: isLecture
       ? ['识别时间序列中的关键观测字段', '区分数据证据、风险判断和维护动作', '保留故障结论的不确定性边界']
       : isPresentation
-      ? ['第 1 页：学习目标与问题边界', '第 2 页：关键证据与数据摘录', '第 3 页：风险判断与不确定性', '第 4 页：复核行动与练习']
+      ? ['第 1 页：学习目标', '第 2 页：数据与资料来源', '第 3 页：字段含义', '第 4 页：时间序列观察', '第 5 页：多字段交叉验证', '第 6 页：风险判断边界', '第 7 页：复核与行动', '第 8 页：练习与迁移']
       : type === 'tiered_quiz'
       ? ['L1 基础：解释一个观测字段的作用', 'L2 判断：根据证据说明风险而非直接下结论', 'L3 迁移：提出复核动作并说明不确定性']
       : ['目标：理解压缩机诊断证据', '证据：传感器与状态记录', '判断：风险与不确定性', '行动：现场复核与维护训练'],
@@ -213,15 +194,55 @@ export function buildResourceDraft(
     });
   }
   if (isPresentation) {
-    const slides = [
-      ['学习目标', `围绕“${query}”建立可追溯的诊断判断框架。`],
-      ['关键证据', '先观察数据和字段关系，再区分已知事实与尚待验证的风险。'],
-      ['判断边界', '异常信号提示风险，不直接等同于确定故障；需要交叉核验或现场复核。'],
-      ['下一步', '完成一组分层习题，并把不确定点带回学习路径继续补强。'],
+    const evidenceLabel = pack.items[0]?.sourceTitle ?? '当前检索证据';
+    const taskLabel = query.trim().slice(0, 60) || '当前学习任务';
+    const slides: Array<[string, string[], string]> = [
+      ['学习目标', [
+        `围绕“${taskLabel}”明确本次要回答的问题`,
+        '把每个判断连接到可回溯的数据或资料依据',
+        '最后给出行动建议，并保留尚未确认的部分',
+      ], '这一页先把任务边界说清楚：先理解问题，再寻找证据，最后形成带有依据和不确定性说明的判断。这样可以避免一开始就跳到故障结论。'],
+      ['数据与资料来源', [
+        `当前优先参考：${evidenceLabel}`,
+        '记录来源位置，便于回到原始数据或资料复核',
+        '区分结构化数据、文档说明和待复核线索',
+      ], '资料来源不是装饰，而是后续复核的入口。阅读时要同时看来源名称、定位信息和证据内容，不能只凭标题或模型概括做判断。'],
+      ['先看字段含义', [
+        '确认字段代表什么观测量以及单位',
+        '分清原始读数、状态标签和推导结果',
+        '遇到含义不确定的字段时先回查资料',
+      ], '同一个数值只有放回字段定义和单位里才有意义。先确认“测了什么”，再讨论“是否异常”，可以减少把字段名称误读成设备结论的风险。'],
+      ['时间序列观察', [
+        '同时观察单点、相邻时间窗口和整体趋势',
+        '标出突变、持续偏移和重复出现的区间',
+        '记录观察窗口，避免脱离时间语境引用数值',
+      ], '时间序列分析不能只截取一个醒目的点。应把异常放在相邻时间段和运行阶段中比较，并记录窗口范围，让其他人能够复现你的观察。'],
+      ['多字段交叉验证', [
+        '先看目标字段，再核对相关传感器的同步变化',
+        '比较不同来源是否支持同一个方向的判断',
+        '把相互矛盾的证据单独列出，不强行统一',
+      ], '一个字段的偏离只能提供线索。把相关字段和运行记录放在一起比较，既能发现更可靠的模式，也能及时暴露证据之间的冲突。'],
+      ['风险判断边界', [
+        '异常读数可以支持风险提示',
+        '风险提示不等同于已经确认的故障',
+        '结论中明确证据覆盖范围和剩余疑问',
+      ], '这一步是整个诊断训练的边界控制：把“观察到什么”和“因此能下什么结论”分开写。证据不足时降低表达强度，而不是补写一个看似确定的答案。'],
+      ['复核与行动', [
+        '列出需要补看的数据、资料或现场检查项',
+        '为每个检查项说明预期确认的现象',
+        '把高风险或高不确定性问题优先交给复核',
+      ], '好的分析会落到下一步动作。复核项要能执行、能记录结果，并且与前面的证据缺口直接对应，而不是只写一句泛化的“建议维修”。'],
+      ['练习与迁移', [
+        '用分层题检查字段、证据和边界是否理解',
+        '把同一方法迁移到新的时间窗口或设备问题',
+        '提交反馈后让学习路径更新下一步建议',
+      ], '最后把阅读转成练习，再把练习反馈带回路径。资源完成、作答和掌握反馈会成为下一次学习决策的输入，帮助你逐步从理解走向迁移。'],
     ];
-    slides.forEach(([heading, text], index) => {
-      extraBlocks.push({ id: `resource-block-${randomUUID()}`, type: 'heading', position: 2 + index * 2, content: heading, knowledgePointIds: [knowledgePoint], evidenceIds: pack.items.map((item) => item.id) });
-      extraBlocks.push({ id: `resource-block-${randomUUID()}`, type: 'paragraph', position: 3 + index * 2, content: text, knowledgePointIds: [knowledgePoint], evidenceIds: pack.items.map((item) => item.id) });
+    slides.forEach(([heading, bullets, notes], index) => {
+      const evidenceIds = pack.items.map((item) => item.id);
+      extraBlocks.push({ id: `resource-block-${randomUUID()}`, type: 'heading', position: 2 + index * 3, content: heading, knowledgePointIds: [knowledgePoint], evidenceIds });
+      extraBlocks.push({ id: `resource-block-${randomUUID()}`, type: 'list', position: 3 + index * 3, content: bullets, knowledgePointIds: [knowledgePoint], evidenceIds });
+      extraBlocks.push({ id: `resource-block-${randomUUID()}`, type: 'paragraph', position: 4 + index * 3, content: notes, knowledgePointIds: [knowledgePoint], evidenceIds });
     });
   }
 
@@ -262,7 +283,6 @@ export function buildResourceDraft(
     ...extraBlocks,
     ...(isLecture ? [analysisCodeBlock] : []),
     ...(tableBlock ? [tableBlock] : []),
-    ...evidenceBlocks(pack, knowledgePoint),
   ];
 
   return applyDifficulty({
@@ -710,7 +730,6 @@ export function buildLlmResourceDocument(
     }
   }
 
-  blocks.push(...evidenceBlocks(pack, knowledgePoint));
   return applyDifficulty({
     id: `resource-${randomUUID()}`,
     taskId,

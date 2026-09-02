@@ -31,6 +31,8 @@ export type NodeRecommendation = {
   attemptCount: number;
   correctCount: number;
   mastery: number;
+  sources?: Array<"diagnostic" | "quiz_attempt" | "asset_feedback" | "learning_decision">;
+  updatedAt?: number | null;
 };
 
 export type PathNode = {
@@ -59,9 +61,23 @@ export function recommendationView(level: NodeRecommendation["level"]): { label:
 
 export function RecommendationBadge({ recommendation }: { recommendation: NodeRecommendation }) {
   const view = recommendationView(recommendation.level);
-  return <div className="flex items-start gap-2">
-    <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] leading-4 ${view.chipClass}`}>{view.label}</span>
-    <span className="text-[11px] leading-4 text-muted-foreground">{recommendationMessage(recommendation.level)}</span>
+  const sourceLabels: Record<NonNullable<NodeRecommendation["sources"]>[number], string> = {
+    diagnostic: "入学诊断",
+    quiz_attempt: "习题作答",
+    asset_feedback: "资源反馈",
+    learning_decision: "学习决策",
+  };
+  const sources = (recommendation.sources ?? []).map((source) => sourceLabels[source]);
+  return <div className="min-w-0">
+    <div className="flex items-start gap-2">
+      <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] leading-4 ${view.chipClass}`}>{view.label}</span>
+      <span className="text-[11px] leading-4 text-muted-foreground">{recommendationMessage(recommendation.level)}</span>
+    </div>
+    <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] leading-4 text-muted-foreground">
+      {sources.length > 0 ? <span>依据：{sources.join("、")}</span> : <span>该节点暂无直接作答或资源反馈</span>}
+      {recommendation.attemptCount > 0 ? <span>· {recommendation.attemptCount} 次作答，答对 {recommendation.correctCount} 次</span> : null}
+      {recommendation.updatedAt ? <span>· 更新于 {new Intl.DateTimeFormat("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(recommendation.updatedAt)}</span> : null}
+    </div>
   </div>;
 }
 
@@ -175,7 +191,8 @@ function NodeDecisionBasis({ apiBase, knowledgePointId }: { apiBase: string; kno
     return () => { active = false; };
   }, [apiBase, knowledgePointId]);
 
-  if (!loaded || !decision) return null;
+  if (!loaded) return null;
+  if (!decision) return null;
   const resourceLabel = decision.recommendedResourceType === "lecture" ? "讲义"
     : decision.recommendedResourceType === "tiered_quiz" ? "分层习题"
     : decision.recommendedResourceType === "presentation" ? "PPT"
@@ -257,8 +274,8 @@ function statusDot(node: PathNode) {
   return "bg-zinc-300";
 }
 
-function nodeClassName(node: PathNode, selected: boolean) {
-  const ring = selected ? "ring-2 ring-foreground/15 shadow-md" : "hover:shadow-sm";
+function nodeClassName(node: PathNode, selected: boolean, next = false) {
+  const ring = selected ? "ring-2 ring-foreground/15 shadow-md" : next ? "ring-2 ring-amber-300 shadow-sm" : "hover:shadow-sm";
   if (node.mastered) return `border-emerald-300 bg-emerald-50 hover:border-emerald-500 ${ring}`;
   if (node.userStatus === "completed") return `border-blue-300 bg-blue-50/60 hover:border-blue-500 ${ring}`;
   if (node.userStatus === "learning") return `border-amber-300 bg-amber-50/70 hover:border-amber-500 ${ring}`;
@@ -336,9 +353,43 @@ function getTreeLayout(graph: PathGraph, direction: TreeDirection): TreeLayout {
   return { width, height: Math.max(340, levels.length * (nodeHeight + laneGap) + 20), positions };
 }
 
+function getPathSequence(graph: PathGraph): PathNode[] {
+  const nodes = [...graph.nodes].sort((a, b) => a.sortOrder - b.sortOrder);
+  const nodeIds = new Set(nodes.map((node) => node.id));
+  const indegree = new Map(nodes.map((node) => [node.id, 0]));
+  const outgoing = new Map<string, string[]>();
+  for (const edge of graph.edges) {
+    if (!nodeIds.has(edge.fromNodeId) || !nodeIds.has(edge.toNodeId)) continue;
+    outgoing.set(edge.fromNodeId, [...(outgoing.get(edge.fromNodeId) ?? []), edge.toNodeId]);
+    indegree.set(edge.toNodeId, (indegree.get(edge.toNodeId) ?? 0) + 1);
+  }
+  const ready = nodes.filter((node) => indegree.get(node.id) === 0);
+  const sequence: PathNode[] = [];
+  while (ready.length > 0) {
+    ready.sort((a, b) => a.sortOrder - b.sortOrder);
+    const node = ready.shift()!;
+    sequence.push(node);
+    for (const nextId of outgoing.get(node.id) ?? []) {
+      const nextDegree = (indegree.get(nextId) ?? 0) - 1;
+      indegree.set(nextId, nextDegree);
+      if (nextDegree === 0) {
+        const next = nodes.find((item) => item.id === nextId);
+        if (next) ready.push(next);
+      }
+    }
+  }
+  if (sequence.length < nodes.length) {
+    const included = new Set(sequence.map((node) => node.id));
+    sequence.push(...nodes.filter((node) => !included.has(node.id)));
+  }
+  return sequence;
+}
+
 export function TreeCanvas({ graph, selectedNodeId, onSelect }: { graph: PathGraph; selectedNodeId: string | null; onSelect: (node: PathNode) => void }) {
   const [direction, setDirection] = useState<TreeDirection>("horizontal");
   const layout = useMemo(() => getTreeLayout(graph, direction), [direction, graph]);
+  const sequence = useMemo(() => getPathSequence(graph), [graph]);
+  const nextNode = sequence.find((node) => node.userStatus !== "completed" && !node.mastered) ?? null;
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const pointersRef = useRef(new Map<number, { x: number; y: number }>());
   const pinchRef = useRef<{ distance: number; zoom: number } | null>(null);
@@ -419,6 +470,20 @@ export function TreeCanvas({ graph, selectedNodeId, onSelect }: { graph: PathGra
   };
   return <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border bg-card">
     <div className="flex shrink-0 items-center justify-between border-b bg-background px-3 py-2 text-[10px] text-muted-foreground"><span className="inline-flex items-center gap-1.5"><Move className="h-3.5 w-3.5 text-blue-500" />拖动查看，点击节点</span><div className="flex items-center gap-1"><button type="button" onClick={toggleDirection} aria-label={direction === "horizontal" ? "切换为纵向路径" : "切换为横向路径"} title={direction === "horizontal" ? "切换为纵向路径" : "切换为横向路径"} className="tree-canvas-tool"><ArrowDownUp className={`h-3.5 w-3.5 ${direction === "horizontal" ? "rotate-90" : ""}`} />{direction === "horizontal" ? "横向" : "纵向"}</button><button type="button" onClick={resetViewport} className="tree-canvas-tool" title="适应窗口"><RefreshCw className="h-3.5 w-3.5" /><span className="sr-only">适应窗口</span></button></div></div>
+    <div className="shrink-0 border-b bg-slate-50/70 px-3 py-2.5">
+      <div className="flex items-center justify-between gap-3 text-[10px]"><span className="font-semibold text-slate-700">建议学习顺序</span><span className="min-w-0 truncate text-muted-foreground">{nextNode ? `下一步：${nextNode.title}` : "全部节点已学完"}</span></div>
+      <div className="mt-2 flex gap-1.5 overflow-x-auto pb-0.5" aria-label="建议学习顺序">
+        {sequence.map((node, index) => {
+          const done = node.mastered || node.userStatus === "completed";
+          const next = node.id === nextNode?.id;
+          const selected = node.id === selectedNodeId;
+          return <button key={node.id} type="button" title={`${index + 1}. ${node.title}`} aria-label={`${index + 1}. ${node.title}${next ? "，下一步" : ""}`} aria-pressed={selected} onClick={() => onSelect(node)} className={`path-sequence-item ${selected ? "is-selected" : ""} ${next ? "is-next" : ""}`}>
+            <span className={`path-sequence-number ${done ? "is-done" : ""}`}>{done ? <Check className="h-3 w-3" /> : index + 1}</span>
+            <span className="max-w-24 truncate">{node.title}</span>
+          </button>;
+        })}
+      </div>
+    </div>
     <div ref={viewportRef} aria-label="可拖动学习路径画布" onWheel={(event) => { event.preventDefault(); setZoom((value) => clampZoom(value * (event.deltaY > 0 ? 0.9 : 1.1))); }} onPointerDown={(event) => { if ((event.target as HTMLElement).closest("button")) return; handlePointerDown(event); }} onPointerMove={handlePointerMove} onPointerUp={releasePointer} onPointerCancel={releasePointer} className="min-h-0 flex-1 cursor-grab select-none overflow-auto active:cursor-grabbing" style={{ touchAction: "none", overscrollBehavior: "contain" }}>
       <div className="relative shrink-0" style={{ width: layout.width * zoom + canvasPadding * 2, height: layout.height * zoom + canvasPadding * 2 }}>
         <div className="absolute origin-top-left" style={{ left: canvasPadding, top: canvasPadding, width: layout.width, height: layout.height, transform: `scale(${zoom})` }}>
@@ -436,7 +501,8 @@ export function TreeCanvas({ graph, selectedNodeId, onSelect }: { graph: PathGra
           {[...graph.nodes].sort((a, b) => a.sortOrder - b.sortOrder).map((node) => {
             const position = layout.positions.get(node.id);
             if (!position) return null;
-             return <button key={node.id} type="button" title={node.title} aria-pressed={node.id === selectedNodeId} onClick={() => onSelect(node)} className={`absolute rounded-lg border p-2.5 text-left transition-all ${nodeClassName(node, node.id === selectedNodeId)}`} style={{ left: position.x, top: position.y, width: position.width, height: position.height }}>
+             const isNext = node.id === nextNode?.id;
+             return <button key={node.id} type="button" title={node.title} aria-label={`${node.title}${isNext ? "，下一步" : node.id === selectedNodeId ? "，当前查看" : ""}`} aria-pressed={node.id === selectedNodeId} onClick={() => onSelect(node)} className={`absolute rounded-lg border p-2.5 text-left transition-all ${nodeClassName(node, node.id === selectedNodeId, isNext)}`} style={{ left: position.x, top: position.y, width: position.width, height: position.height }}>
               <div className="flex items-center gap-1.5"><span className={`h-2 w-2 shrink-0 rounded-full ${statusDot(node)}`} /><span className="min-w-0 flex-1 truncate text-xs font-semibold">{node.title}</span>{node.recommendation && recommendationView(node.recommendation.level).dotClass ? <span aria-label={recommendationView(node.recommendation.level).label} title={recommendationView(node.recommendation.level).label} className={`h-1.5 w-1.5 shrink-0 rounded-full ${recommendationView(node.recommendation.level).dotClass}`} /> : null}<ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" /></div>
             </button>;
           })}
@@ -463,6 +529,7 @@ export function LearningPathWorkbench({ apiBase, user, onLogout, onNavigate, onU
   const [notice, setNotice] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const feedRef = useRef<HTMLDivElement | null>(null);
+  const feedFollowRef = useRef(true);
   const detailsRef = useRef<HTMLDivElement | null>(null);
   const streamMessageRef = useRef<string | null>(null);
   const agentTimersRef = useRef(new Map<string, number>());
@@ -485,6 +552,16 @@ export function LearningPathWorkbench({ apiBase, user, onLogout, onNavigate, onU
     } catch { return null; }
   }, []);
 
+  const rememberedNodeId = (graph: PathGraph): string | null => {
+    try {
+      const raw = window.localStorage.getItem("im-training-agent:selected-path-node");
+      if (!raw) return null;
+      const parsed = JSON.parse(raw) as { nodeId?: unknown; createdAt?: unknown };
+      if (typeof parsed.createdAt === "number" && Date.now() - parsed.createdAt > 86_400_000) return null;
+      return typeof parsed.nodeId === "string" && graph.nodes.some((node) => node.id === parsed.nodeId) ? parsed.nodeId : null;
+    } catch { return null; }
+  };
+
   const loadWorkbench = useCallback(async () => {
     const [pathResponse, profileResponse, chatResponse] = await Promise.all([
       fetch(`${apiBase}/api/learning/path-graph`, { credentials: "include" }),
@@ -496,7 +573,7 @@ export function LearningPathWorkbench({ apiBase, user, onLogout, onNavigate, onU
     const profileData = await profileResponse.json() as { profile?: ProfileMetric };
     const chatData = await chatResponse.json() as { messages?: ChatMessage[] };
     const nextPath = pathData.path ?? { nodes: [], edges: [] };
-    const preferredNodeId = consumePathPrefill(nextPath);
+    const preferredNodeId = consumePathPrefill(nextPath) ?? rememberedNodeId(nextPath);
     setPath(nextPath);
     setProfile(profileData.profile ?? null);
     setMessages(chatData.messages ?? []);
@@ -514,11 +591,11 @@ export function LearningPathWorkbench({ apiBase, user, onLogout, onNavigate, onU
     let frame = 0;
     const scrollToLatest = () => {
       const feed = feedRef.current;
-      if (!feed) return;
-      feed.scrollTo({ top: feed.scrollHeight, behavior: "smooth" });
-      // 消息气泡和字体完成布局后再校正一次，避免首次加载时停在列表顶部。
+      if (!feed || !feedFollowRef.current) return;
+      feed.scrollTop = feed.scrollHeight;
+      // 只在用户仍停留在底部时校正，避免流式输出期间把用户正在看的历史消息推走。
       frame = window.requestAnimationFrame(() => {
-        if (feedRef.current) feedRef.current.scrollTop = feedRef.current.scrollHeight;
+        if (feedRef.current && feedFollowRef.current) feedRef.current.scrollTop = feedRef.current.scrollHeight;
       });
     };
     frame = window.requestAnimationFrame(scrollToLatest);
@@ -560,7 +637,7 @@ export function LearningPathWorkbench({ apiBase, user, onLogout, onNavigate, onU
 
   const carryIntoChat = (node: PathNode) => {
     const mention = `@${node.title}`;
-    setSelectedNodeId(node.id);
+    selectNode(node);
     setDraft((current) => current.includes(mention) ? current : `${mention}${current.trim() ? " " : ""}${current}`);
   };
 
@@ -590,6 +667,7 @@ export function LearningPathWorkbench({ apiBase, user, onLogout, onNavigate, onU
     setSending(true);
     setDraft("");
     setNotice("");
+    feedFollowRef.current = true;
     const temporaryUser: ChatMessage = { id: `local-${Date.now()}`, role: "user", content, metadata: {}, createdAt: Date.now() };
     setMessages((current) => [...current, temporaryUser]);
     try {
@@ -679,7 +757,12 @@ export function LearningPathWorkbench({ apiBase, user, onLogout, onNavigate, onU
   };
 
   const logout = async () => { await fetch(`${apiBase}/api/auth/logout`, { method: "POST", credentials: "include" }).catch(() => undefined); onLogout(); };
-  const selectNode = (node: PathNode) => setSelectedNodeId(node.id);
+  const selectNode = (node: PathNode) => {
+    setSelectedNodeId(node.id);
+    try {
+      window.localStorage.setItem("im-training-agent:selected-path-node", JSON.stringify({ nodeId: node.id, knowledgePointId: node.knowledgePointId, createdAt: Date.now() }));
+    } catch { /* 本地存储不可用时仍保留当前页面的选择 */ }
+  };
 
   useEffect(() => {
     detailsRef.current?.scrollTo({ top: 0, behavior: "smooth" });
@@ -695,7 +778,7 @@ export function LearningPathWorkbench({ apiBase, user, onLogout, onNavigate, onU
     <div className="path-layout grid min-h-0 flex-1 grid-cols-[minmax(360px,40%)_minmax(0,1fr)] overflow-hidden">
        <section className="flex min-h-0 min-w-0 flex-col bg-card" aria-label="路径调整对话与处理过程">
         <div className="workspace-pane-titlebar flex shrink-0 items-center justify-between border-b px-5 py-3.5 sm:px-6"><div className="flex items-center gap-2"><MessageSquareText className="h-4 w-4" /><h1 className="text-sm font-semibold">路径调整</h1></div></div>
-         <div ref={feedRef} role="log" aria-live="polite" aria-busy={sending} className="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-6">
+         <div ref={feedRef} role="log" aria-live="polite" aria-busy={sending} onScroll={(event) => { const feed = event.currentTarget; feedFollowRef.current = feed.scrollHeight - feed.scrollTop - feed.clientHeight < 72; }} className="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-6">
           <div className="mx-auto max-w-2xl space-y-5">
             {loading ? <div className="flex min-h-[250px] items-center justify-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4" />正在加载路径对话</div> : messages.length === 0 ? null : messages.map((chat) => chat.role === "user"
               ? <article key={chat.id} className="ml-auto max-w-[84%] border-r border-blue-200 pr-3 text-right text-[13px] leading-6 text-blue-950"><RichText text={chat.content} /><div className="mt-1 text-[10px] text-muted-foreground">{new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit" }).format(chat.createdAt)}</div></article>

@@ -1111,6 +1111,9 @@ summary:focus-visible {
 .run-progress-event-dot-active { background: #6f9ee7; }
 
 .agent-message-bubble {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
   border: 1px solid #e1eaf3;
   border-radius: 4px 12px 12px 12px;
   padding: 9px 12px;
@@ -1170,6 +1173,54 @@ summary:focus-visible {
 .path-update-action:disabled {
   cursor: not-allowed;
   opacity: .45;
+}
+
+.path-sequence-item {
+  display: inline-flex;
+  min-width: 0;
+  height: 28px;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid #dce6f1;
+  border-radius: 8px;
+  padding: 0 7px 0 4px;
+  color: #687d94;
+  background: #ffffff;
+  font-size: 10px;
+  transition: border-color 160ms ease, background-color 160ms ease, color 160ms ease;
+}
+
+.path-sequence-item:hover,
+.path-sequence-item.is-selected {
+  border-color: #b9cde9;
+  color: #42658f;
+  background: #f1f6ff;
+}
+
+.path-sequence-item.is-next {
+  border-color: #efd39e;
+  color: #976d2b;
+  background: #fffaf0;
+}
+
+.path-sequence-number {
+  display: inline-flex;
+  height: 18px;
+  width: 18px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  color: #6d88ad;
+  background: #edf4ff;
+  font-size: 9px;
+  font-weight: 650;
+}
+
+.path-sequence-number.is-done {
+  color: #3d8a6f;
+  background: #e5f7ee;
 }
 
 @media (prefers-reduced-motion: reduce) {

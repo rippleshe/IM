@@ -74,7 +74,10 @@ function verifyFieldMeaning(record: ClaimAuditRecord, fields: DatasetFieldInfo[]
   const semanticAssertion = ['含义', '表示', '是指', '定义为', '指的是', '含义为', '代表']
     .some((hint) => record.text.includes(hint));
   if (!semanticAssertion) return null;
-  const mentioned = fields.filter((field) => record.text.includes(field.fieldName));
+  // 习题解析可能同时提到正确字段和干扰项字段；干扰项不是作者对这些字段的
+  // 释义，不能因为它们出现在同一段解析里就逐个触发字段含义门禁。
+  const primaryAssertion = record.text.split(/(?:选项|干扰项|错误选项)/)[0] ?? record.text;
+  const mentioned = fields.filter((field) => primaryAssertion.includes(field.fieldName));
   if (mentioned.length === 0) return null;
   for (const field of mentioned) {
     // 含义关键词重叠：解释句中至少 2 个 2+ 字片段能在登记含义中找到

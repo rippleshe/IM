@@ -111,7 +111,12 @@ function readableLearningText(text: string): string {
     .replace(/pMastery/gi, "掌握情况")
     .replace(/readiness/gi, "准备度")
     .replace(/BKT/g, "学习记录模型")
-    .replace(/协同/g, "任务处理");
+    .replace(/协同/g, "任务处理")
+    .replace(/\s+([，。；：！？、」』】）])/g, "$1")
+    .replace(/([「『【（])\s+/g, "$1")
+    .replace(/。(?=[，,])/g, "")
+    .replace(/([，。；：！？])\1+/g, "$1")
+    .trim();
 }
 
 /** 学习画像弹窗：三页顶栏共用。展示画像描述/关键词/能力雷达/学习指标，支持上传与移除自定义头像。 */

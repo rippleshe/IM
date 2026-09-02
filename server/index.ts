@@ -70,13 +70,11 @@ const AUTH_COOKIE_NAME = 'im_training_agent_auth';
 function resourceToMarkdown(resource: ResourceDocument): string {
   const lines = [`# ${resource.title}`, '', `- 类型：${resource.type}`, `- 难度：${Math.round(resource.difficulty * 100)}%`, '', '## 学习目标', ...resource.learningObjectives.map((item) => `- ${item}`), ''];
   for (const block of resource.blocks) {
+    if (block.type === 'evidence') continue;
     if (block.type === 'heading') lines.push(`## ${String(block.content)}`, '');
     else if (block.type === 'list' || block.type === 'checklist') {
       const items = Array.isArray(block.content) ? block.content : [block.content];
       lines.push(...items.map((item) => `- ${typeof item === 'string' ? item : JSON.stringify(item)}`), '');
-    } else if (block.type === 'evidence') {
-      const content = block.content as { label?: string; locator?: string; summary?: string };
-      lines.push(`> ${content.label ?? '证据'}：${content.locator ?? ''}`, '', String(content.summary ?? ''), '');
     } else if (block.type === 'code') {
       const content = block.content as { language?: string; caption?: string; code?: string };
       lines.push(content.caption ? `**${content.caption}**` : '', `\`\`\`${content.language ?? ''}`, String(content.code ?? ''), '```', '');
@@ -113,6 +111,7 @@ function resourceToPresentation(resource: ResourceDocument): string {
   };
   start(resource.title);
   for (const block of resource.blocks) {
+    if (block.type === 'evidence') continue;
     if (block.type === 'heading') {
       start(String(block.content));
       continue;
@@ -125,9 +124,6 @@ function resourceToPresentation(resource: ResourceDocument): string {
       const content = block.content as { caption?: string; code?: string };
       if (content.caption) current!.body.push(content.caption);
       if (content.code) current!.body.push(content.code);
-    } else if (block.type === 'evidence') {
-      const content = block.content as { label?: string; locator?: string; summary?: string };
-      current!.body.push(`${content.label ?? '证据'}：${content.summary ?? ''}${content.locator ? `（${content.locator}）` : ''}`);
     } else if (typeof block.content === 'string') current!.body.push(block.content);
   }
   if (slides.length > 1 && slides[0]?.body.length === 0) slides.shift();
@@ -1259,7 +1255,11 @@ app.post('/api/learning/profile/regenerate', async (req, res) => {
   if (!learner) return;
   try {
     const thinking = getThinkingSettings(req.body?.thinkingDepth);
-    const result = await withTimeout(generateProfileSnapshot(learner.id, getRequestedModel(req.body?.model), thinking), 8_000, '学习画像生成超时');
+    const result = await withTimeout((async () => {
+      const snapshot = await generateProfileSnapshot(learner.id, getRequestedModel(req.body?.model), thinking);
+      const insights = await buildProfileInsights(learner.id);
+      return { ...snapshot, profile: { ...snapshot.profile, ...insights } };
+    })(), 8_000, '学习画像生成超时');
     res.json({ success: true, ...result });
   } catch (error) {
     res.status(500).json({ success: false, error: error instanceof Error ? error.message : String(error) });

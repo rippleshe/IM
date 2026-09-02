@@ -53,6 +53,11 @@ type QuizQuestion = { id: string; type?: QuizQuestionType; level: "L1" | "L2" | 
 type QuizAttempt = { id: string; questionId: string; answerId: string; correct: boolean; durationMs: number; createdAt: number };
 type ReaderData = { asset: ResourceAsset; pageNotes: PageNote[]; feedback: Feedback | null; quizAttempts: QuizAttempt[] };
 
+// 证据 ID 已随资源、区块和审核记录持久化；原始证据卡只适合验证页，不应混入学习正文。
+function visibleLearningBlocks(blocks: ResourceBlock[]): ResourceBlock[] {
+  return [...blocks].filter((block) => block.type !== "evidence").sort((a, b) => a.position - b.position);
+}
+
 const typeItems: Array<{ type: ResourceType; label: string; icon: typeof BookOpen }> = [
   { type: "lecture", label: "讲义", icon: BookOpen },
   { type: "tiered_quiz", label: "习题", icon: ClipboardList },
@@ -204,6 +209,7 @@ function MermaidDiagram({ code }: { code: string }) {
 }
 
 function renderBlockContent(block: ResourceBlock, sectionNumber?: number) {
+  if (block.type === "evidence") return null;
   if (block.type === "heading") return <h3 className="flex items-center gap-3 border-b border-border/70 pb-3 text-xl font-semibold tracking-tight text-foreground">{typeof sectionNumber === "number" ? <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-blue-500 to-indigo-500 text-[13px] font-bold text-white">{sectionNumber}</span> : <span className="h-5 w-1 rounded-full bg-gradient-to-b from-blue-500 to-indigo-500" />}<RichInlineText text={String(block.content)} /></h3>;
   if (block.type === "paragraph" && typeof block.content === "string" && /^(flowchart|graph)\b/.test(block.content.trim())) {
     return <MermaidDiagram code={block.content} />;
@@ -250,7 +256,7 @@ function runIdOfAsset(assetId: string): string | null {
 function ResourceFrontmatter({ asset, onOpenValidation, onSaveTags }: { asset: ResourceAsset; onOpenValidation: (runId: string) => void; onSaveTags: (tags: string[]) => Promise<void> }) {
   const runId = runIdOfAsset(asset.id);
   const createdAt = new Intl.DateTimeFormat("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit" }).format(asset.createdAt);
-  const status = asset.auditStatus === "passed" ? "已通过检查" : "等待检查";
+  const status = asset.auditStatus === "passed" ? "已通过检查" : asset.auditStatus === "revise" ? "待复核" : "等待检查";
   const [editingTags, setEditingTags] = useState(false);
   const [tags, setTags] = useState(() => defaultAssetTags(asset));
   const [tagDraft, setTagDraft] = useState("");
@@ -272,6 +278,7 @@ function ResourceFrontmatter({ asset, onOpenValidation, onSaveTags }: { asset: R
       {runId ? <button type="button" onClick={() => onOpenValidation(runId)} className="resource-frontmatter-action">查看验证记录</button> : null}
     </div>
     <h1 className="mt-1.5 text-[18px] font-semibold tracking-[-0.025em] text-[#334155]">{asset.title}</h1>
+    {asset.auditStatus === "revise" ? <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50/70 px-3 py-2 text-[11px] leading-5 text-amber-800">自动检查未通过，已保留可查看版本。可先阅读内容，再补充依据或降低事实表述强度后重新生成。</p> : null}
     <dl className="resource-frontmatter-grid mt-4">
       <div><dt>类型</dt><dd>{typeLabel(asset.type)}</dd></div>
       <div><dt>状态</dt><dd className={asset.auditStatus === "passed" ? "text-[#397b61]" : "text-[#9a6b32]"}>{status}</dd></div>
@@ -430,7 +437,7 @@ function EmptyReader({ label }: { label: string }) {
 
 // 讲义为持续下滑的富文本长文：标题即章节锚点（自动编号），顶部细条显示阅读进度，右侧目录滚动定位。
 function LectureReader({ reader, onExport, onQuote }: { reader: ReaderData; onExport: (format: "md" | "txt" | "json" | "ppt") => void; onQuote: (quote: string) => void }) {
-  const blocks = useMemo(() => [...reader.asset.blocks].sort((a, b) => a.position - b.position), [reader.asset]);
+  const blocks = useMemo(() => visibleLearningBlocks(reader.asset.blocks), [reader.asset.blocks]);
   const headings = blocks.filter((block) => block.type === "heading");
   const sectionNumber = useMemo(() => {
     const map = new Map<string, number>();
@@ -474,7 +481,7 @@ function LectureReader({ reader, onExport, onQuote }: { reader: ReaderData; onEx
 }
 
 function PresentationReader({ reader, onExport }: { reader: ReaderData; onExport: (format: "md" | "txt" | "json" | "ppt") => void }) {
-  const blocks = useMemo(() => [...reader.asset.blocks].sort((a, b) => a.position - b.position), [reader.asset]);
+  const blocks = useMemo(() => visibleLearningBlocks(reader.asset.blocks), [reader.asset.blocks]);
   const slides = useMemo(() => {
     const result: ResourceBlock[][] = [];
     let current: ResourceBlock[] = [];
@@ -598,18 +605,20 @@ function QuizReader({ apiBase, reader, onReaderChange }: { apiBase: string; read
   const [answerId, setAnswerId] = useState("");
   const [showReference, setShowReference] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState("");
   const startedAt = useRef(Date.now());
-  useEffect(() => { setIndex(0); setAnswerId(""); setShowReference(false); startedAt.current = Date.now(); }, [reader.asset.id]);
+  useEffect(() => { setIndex(0); setAnswerId(""); setShowReference(false); setSubmitError(""); startedAt.current = Date.now(); }, [reader.asset.id]);
   const question = questions[index];
   const questionType: QuizQuestionType = question?.type ?? "choice";
   const latest = reader.quizAttempts.filter((attempt) => attempt.questionId === question?.id).at(-1) ?? null;
-  const jump = (next: number) => { setIndex(next); setAnswerId(""); setShowReference(false); startedAt.current = Date.now(); };
+  const jump = (next: number) => { setIndex(next); setAnswerId(""); setShowReference(false); setSubmitError(""); startedAt.current = Date.now(); };
   const submit = async (selfAssessed?: boolean) => {
     if (!question || submitting) return;
     const answer = questionType === "choice" ? answerId : answerId.trim();
     if (!answer || (questionType === "choice" && !answerId)) return;
     if (questionType === "short_answer" && selfAssessed === undefined) return;
     setSubmitting(true);
+    setSubmitError("");
     try {
       const response = await fetch(`${apiBase}/api/learning/assets/${encodeURIComponent(reader.asset.id)}/quiz-attempts`, {
         method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
@@ -619,6 +628,8 @@ function QuizReader({ apiBase, reader, onReaderChange }: { apiBase: string; read
       if (!response.ok || !data.success || !data.attempt) throw new Error(data.error || "作答提交失败");
       onReaderChange({ ...reader, quizAttempts: [...reader.quizAttempts, data.attempt] });
       notifyEvidenceUpdated();
+    } catch (error) {
+      setSubmitError(error instanceof Error ? error.message : "作答提交失败，请重试");
     } finally { setSubmitting(false); }
   };
   if (!question) return <EmptyReader label="习题" />;
@@ -659,6 +670,7 @@ function QuizReader({ apiBase, reader, onReaderChange }: { apiBase: string; read
       {showReference && !answered ? <div className="rounded-xl border bg-muted/30 p-4"><div className="text-xs font-semibold">参考答案要点</div><p className="mt-2 text-sm leading-6 text-muted-foreground">{question.answerId}</p><div className="mt-4 flex gap-2"><button type="button" onClick={() => void submit(true)} className="h-9 flex-1 rounded-lg border border-emerald-300 bg-emerald-50 text-xs font-medium text-emerald-700 hover:bg-emerald-100">我答出了关键要点</button><button type="button" onClick={() => void submit(false)} className="h-9 flex-1 rounded-lg border border-amber-300 bg-amber-50 text-xs font-medium text-amber-700 hover:bg-amber-100">还有要点没答到</button></div></div> : null}
       {answered ? <div className={`rounded-xl border px-4 py-3 text-xs leading-5 ${latest!.correct ? "border-emerald-200 bg-emerald-50/50 text-emerald-800" : "border-amber-200 bg-amber-50/50 text-amber-800"}`}>你的回答：{latest!.answerId || "（未作答）"}</div> : null}
     </div> : null}
+    {submitError ? <p role="alert" className="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs leading-5 text-rose-700">{submitError}</p> : null}
     {questionType !== "short_answer" ? <button type="button" disabled={!canSubmit || submitting} onClick={() => void submit()} className="mt-8 inline-flex h-10 items-center justify-center rounded-lg bg-blue-400 px-5 text-sm font-medium text-white shadow-sm shadow-blue-200 transition-colors hover:bg-blue-500 disabled:opacity-35">{submitting ? "正在提交" : answered ? "再次提交" : "提交答案"}</button> : null}
     </article></div><div className="shrink-0 border-t bg-background px-5 py-4"><div className="flex flex-wrap gap-2">{questions.map((item, itemIndex) => { const attempt = reader.quizAttempts.filter((record) => record.questionId === item.id).at(-1); return <button key={item.id} type="button" onClick={() => jump(itemIndex)} className={`flex h-9 w-9 items-center justify-center rounded-lg border text-xs font-medium transition-colors ${itemIndex === index ? "border-blue-400 bg-blue-400 text-white" : attempt?.correct ? "border-emerald-300 bg-emerald-50 text-emerald-700" : attempt ? "border-rose-300 bg-rose-50 text-rose-700" : "hover:bg-muted"}`}>{itemIndex + 1}</button>; })}</div></div></div>;
 }
@@ -678,7 +690,8 @@ function QuizAnswerPanel({ reader }: { reader: ReaderData }) {
 }
 
 function GenericReader({ reader, onExport }: { apiBase: string; reader: ReaderData; onReaderChange: (data: ReaderData) => void; onExport: (format: "md" | "txt" | "json" | "ppt") => void }) {
-  return <div className="resource-generic-reader flex min-h-0 flex-1 flex-col"><div className="resource-reading-toolbar flex shrink-0 items-center justify-between border-b px-5 py-3.5"><div className="resource-reading-title"><MapIcon className="h-4 w-4" /><span>知识脉络</span></div><ResourceExportMenu assetType={reader.asset.type} onExport={onExport} /></div><div className="min-h-0 flex-1 overflow-y-auto"><article className="mx-auto max-w-3xl space-y-7 px-8 py-9"><div className="resource-learning-objectives"><div className="text-[11px] font-semibold text-slate-700">学习目标</div><ul className="mt-3 space-y-2 text-sm leading-6 text-muted-foreground">{reader.asset.learningObjectives.map((objective) => <li key={objective} className="flex gap-2"><span className="resource-objective-dot" />{objective}</li>)}</ul></div>{reader.asset.blocks.sort((a, b) => a.position - b.position).map((block) => <section key={block.id}>{renderBlockContent(block)}</section>)}</article></div></div>;
+  const blocks = useMemo(() => visibleLearningBlocks(reader.asset.blocks), [reader.asset.blocks]);
+  return <div className="resource-generic-reader flex min-h-0 flex-1 flex-col"><div className="resource-reading-toolbar flex shrink-0 items-center justify-between border-b px-5 py-3.5"><div className="resource-reading-title"><MapIcon className="h-4 w-4" /><span>知识脉络</span></div><ResourceExportMenu assetType={reader.asset.type} onExport={onExport} /></div><div className="min-h-0 flex-1 overflow-y-auto"><article className="mx-auto max-w-3xl space-y-7 px-8 py-9"><div className="resource-learning-objectives"><div className="text-[11px] font-semibold text-slate-700">学习目标</div><ul className="mt-3 space-y-2 text-sm leading-6 text-muted-foreground">{reader.asset.learningObjectives.map((objective) => <li key={objective} className="flex gap-2"><span className="resource-objective-dot" />{objective}</li>)}</ul></div>{blocks.map((block) => <section key={block.id}>{renderBlockContent(block)}</section>)}</article></div></div>;
 }
 
 function GenericFeedback({ apiBase, reader, onReaderChange, onReinforce }: { apiBase: string; reader: ReaderData; onReaderChange: (data: ReaderData) => void; onReinforce: () => void }) {

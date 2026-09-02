@@ -6,6 +6,7 @@ import {
   parseLlmResourceDraft,
   validateLlmResourceDraftQuality,
 } from './resource-builder.js';
+import { extractQuizQuestions } from './store.js';
 import type { EvidenceItem, EvidencePack, LearningResourceType, QuizQuestion } from './types.js';
 
 function evidenceItem(id: string, content: string, sourceType: EvidenceItem['sourceType'] = 'dataset'): EvidenceItem {
@@ -147,7 +148,7 @@ describe('validateLlmResourceDraftQuality：可交付质量门槛', () => {
 });
 
 describe('buildLlmResourceDocument：块组装与证据绑定', () => {
-  it('讲义：lead + 各节 + 误区 + 自测 + 数据表 + 证据卡，内容块全部绑定证据', () => {
+  it('讲义：lead + 各节 + 误区 + 自测 + 数据表，内容块全部绑定证据', () => {
     const llm = parseLlmResourceDraft('lecture', {
       title: '观察设备数据',
       lead: '导语',
@@ -159,6 +160,8 @@ describe('buildLlmResourceDocument：块组装与证据绑定', () => {
     })!;
     const doc = buildLlmResourceDocument('task-1', '设备数据观察', 'lecture', pack(EVIDENCE), 'industrial-diagnosis-foundation', llm);
     const types = doc.blocks.map((block) => block.type);
+    expect(types).not.toContain('evidence');
+    expect(doc.evidenceIds).toEqual(expect.arrayContaining(['e1', 'e2', 'e3']));
     expect(types[0]).toBe('paragraph'); // lead
     expect(types).toContain('heading');
     expect(types).toContain('code');
@@ -183,10 +186,20 @@ describe('buildLlmResourceDocument：块组装与证据绑定', () => {
     })!;
     const doc = buildLlmResourceDocument('task-1', '压缩机诊断', 'presentation', pack(EVIDENCE), 'kp', llm);
     const headings = doc.blocks.filter((block) => block.type === 'heading');
+    expect(doc.blocks.some((block) => block.type === 'evidence')).toBe(false);
     expect(headings).toHaveLength(2);
     const lists = doc.blocks.filter((block) => block.type === 'list');
     expect(lists).toHaveLength(2);
     expect(doc.blocks.some((block) => block.type === 'paragraph' && String(block.content).includes('这一页说明现象'))).toBe(true);
+  });
+
+  it('PPT模板兜底：门禁退回时仍保留 8 页以上的完整讲解结构', () => {
+    const doc = buildResourceDraft('task-fallback', '设备数据时间序列观察', 'presentation', pack(EVIDENCE), 'kp');
+    const headings = doc.blocks.filter((block) => block.type === 'heading');
+    const slideLists = doc.blocks.filter((block) => block.type === 'list' && Array.isArray(block.content)).slice(1);
+    expect(headings.length).toBeGreaterThanOrEqual(8);
+    expect(slideLists).toHaveLength(headings.length);
+    expect(slideLists.every((block) => (block.content as unknown[]).length >= 3)).toBe(true);
   });
 
   it('习题：生成 question 块，非法 answerId 回退首个选项', () => {
@@ -199,6 +212,7 @@ describe('buildLlmResourceDocument：块组装与证据绑定', () => {
     })!;
     const doc = buildLlmResourceDocument('task-1', '证据边界', 'tiered_quiz', pack(EVIDENCE), 'kp', llm);
     const questionBlock = doc.blocks.find((block) => block.type === 'question');
+    expect(doc.blocks.some((block) => block.type === 'evidence')).toBe(false);
     expect(questionBlock).toBeDefined();
     const questions = (questionBlock!.content as { questions: Array<{ answerId: string; explanation: string }> }).questions;
     expect(questions).toHaveLength(2);
@@ -209,6 +223,7 @@ describe('buildLlmResourceDocument：块组装与证据绑定', () => {
   it('知识脉络：mermaid 非法 → 回退确定性模板', () => {
     const llm = { kind: 'concept_map' as const, title: '知识脉络', objectives: [], map: { mermaid: '不是 mermaid 语法', nodes: [] } };
     const doc = buildLlmResourceDocument('task-1', '压缩机诊断', 'concept_map', pack(EVIDENCE), 'kp', llm);
+    expect(doc.blocks.some((block) => block.type === 'evidence')).toBe(false);
     // 模板兜底：包含 flowchart 段落与 checklist
     expect(doc.blocks.some((block) => block.type === 'paragraph' && String(block.content).startsWith('flowchart'))).toBe(true);
   });
@@ -276,6 +291,14 @@ describe('生成 → 审核门禁联动', () => {
     }
   });
 
+  it('四类模板资源都只保留证据关联，不把原始证据卡拼进学习正文', () => {
+    for (const type of ['lecture', 'presentation', 'tiered_quiz', 'concept_map'] as const) {
+      const doc = buildResourceDraft(`task-${type}`, '设备数据观察', type, pack(EVIDENCE), 'kp');
+      expect(doc.evidenceIds).toEqual(expect.arrayContaining(['e1', 'e2', 'e3']));
+      expect(doc.blocks.some((block) => block.type === 'evidence')).toBe(false);
+    }
+  });
+
   it('判分：填空多候选规范化匹配，简答按自评', async () => {
     const { judgeQuizAnswer } = await import('./quiz.js');
     const blank: QuizQuestion = { id: 'q', type: 'blank', level: 'L1', prompt: 'p', answerId: '风险|风险判断', explanation: '', evidenceIds: [] };
@@ -286,5 +309,14 @@ describe('生成 → 审核门禁联动', () => {
     expect(judgeQuizAnswer(short, '我的回答', { selfAssessed: false })).toBe(false);
     const choice: QuizQuestion = { id: 'q3', level: 'L1', prompt: 'p', options: [{ id: 'A', text: 'a' }], answerId: 'A', explanation: '', evidenceIds: [] };
     expect(judgeQuizAnswer(choice, 'A')).toBe(true);
+  });
+
+  it('资源阅读解析保留填空与简答题，提交时可按题目 ID 找到它们', () => {
+    const asset = buildResourceDraft('task-quiz-types', '证据边界', 'tiered_quiz', pack(EVIDENCE), 'kp');
+    const questions = extractQuizQuestions(asset);
+    expect(questions).toHaveLength(9);
+    expect(questions.map((question) => question.type)).toEqual([
+      'choice', 'short_answer', 'blank', 'choice', 'blank', 'short_answer', 'choice', 'blank', 'short_answer',
+    ]);
   });
 });

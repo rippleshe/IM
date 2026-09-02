@@ -1,4 +1,4 @@
-import type { QuizQuestion, ResourceDocument } from './types.js';
+import type { QuizQuestion, QuizQuestionType, ResourceDocument } from './types.js';
 
 export interface LearningPathNodeView {
   id: string;
@@ -19,6 +19,10 @@ export interface PathNodeRecommendation {
   attemptCount: number;
   correctCount: number;
   mastery: number;
+  /** 参与本次建议计算的持久化证据来源。 */
+  sources?: Array<'diagnostic' | 'quiz_attempt' | 'asset_feedback' | 'learning_decision'>;
+  /** 参与本次建议计算的最新证据时间；没有直接证据时为空。 */
+  updatedAt?: number | null;
 }
 
 export interface NodeRecommendationInput {
@@ -167,16 +171,19 @@ export function extractQuizQuestions(asset: ResourceDocument): QuizQuestion[] {
   return candidate.flatMap((item): QuizQuestion[] => {
     if (!item || typeof item !== 'object' || Array.isArray(item)) return [];
     const value = item as Partial<QuizQuestion>;
-    if (typeof value.id !== 'string' || typeof value.prompt !== 'string' || typeof value.answerId !== 'string' || !Array.isArray(value.options)) return [];
-    const options = value.options.flatMap((option) => option && typeof option.id === 'string' && typeof option.text === 'string'
+    if (typeof value.id !== 'string' || typeof value.prompt !== 'string' || typeof value.answerId !== 'string') return [];
+    const type: QuizQuestionType = value.type === 'blank' || value.type === 'short_answer' ? value.type : 'choice';
+    const options = (Array.isArray(value.options) ? value.options : []).flatMap((option) => option && typeof option.id === 'string' && typeof option.text === 'string'
       ? [{ id: option.id, text: option.text }]
       : []);
-    if (options.length < 2 || !options.some((option) => option.id === value.answerId)) return [];
+    if (!value.answerId.trim()) return [];
+    if (type === 'choice' && (options.length < 2 || !options.some((option) => option.id === value.answerId))) return [];
     return [{
       id: value.id,
+      type,
       level: value.level === 'L2' || value.level === 'L3' ? value.level : 'L1',
       prompt: value.prompt,
-      options,
+      options: options.length > 0 ? options : undefined,
       answerId: value.answerId,
       explanation: typeof value.explanation === 'string' ? value.explanation : '',
       evidenceIds: Array.isArray(value.evidenceIds) ? value.evidenceIds.filter((id): id is string => typeof id === 'string') : [],

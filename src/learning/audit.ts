@@ -98,32 +98,51 @@ export function numericAssertionsSupported(text: string, evidenceText: string): 
 
 export function auditResource(resource: ResourceDocument, pack: EvidencePack): ResourceAuditResult {
   const claims: ClaimAuditRecord[] = [];
+  const appendClaim = (text: string, block: ResourceDocument['blocks'][number]) => {
+    const evidenceIds = block.evidenceIds.filter((id) => pack.items.some((item) => item.id === id));
+    const evidenceText = evidenceIds
+      .map((id) => pack.items.find((item) => item.id === id)?.content ?? '')
+      .join('\n');
+    const hasEvidence = evidenceIds.length > 0;
+    const numericSupported = numericAssertionsSupported(text, evidenceText);
+    const verdict = !hasEvidence ? 'unsupported' : !numericSupported ? 'review' : 'supported';
+    claims.push({
+      id: `${resource.id}-claim-${claims.length + 1}`,
+      text: text.slice(0, 500),
+      verdict,
+      critique: !hasEvidence
+        ? '没有绑定证据定位，不能发布为确定结论。'
+        : !numericSupported
+        ? '数字或单位未在绑定证据中找到，需要智能体补充核验。'
+        : '已绑定结构化数据或领域文档证据。',
+      factualScore: verdict === 'supported' ? 1 : verdict === 'review' ? 0.6 : 0,
+      evidenceIds,
+      claimType: classifyClaimText(text),
+      logicalKey: claimLogicalKey(text),
+    });
+  };
   resource.blocks.forEach((block) => {
     // 代码示例是操作说明，数据表格是证据摘录，证据块本身是定位信息——都不是需要逐条核对的事实声明。
     if (block.type === 'code' || block.type === 'table' || block.type === 'evidence') return;
-    claimText(block.content).forEach((text) => {
-      const evidenceIds = block.evidenceIds.filter((id) => pack.items.some((item) => item.id === id));
-      const evidenceText = evidenceIds
-        .map((id) => pack.items.find((item) => item.id === id)?.content ?? '')
-        .join('\n');
-      const hasEvidence = evidenceIds.length > 0;
-      const numericSupported = numericAssertionsSupported(text, evidenceText);
-      const verdict = !hasEvidence ? 'unsupported' : !numericSupported ? 'review' : 'supported';
-      claims.push({
-        id: `${resource.id}-claim-${claims.length + 1}`,
-        text: text.slice(0, 500),
-        verdict,
-        critique: !hasEvidence
-          ? '没有绑定证据定位，不能发布为确定结论。'
-          : !numericSupported
-          ? '数字或单位未在绑定证据中找到，需要智能体补充核验。'
-          : '已绑定结构化数据或领域文档证据。',
-        factualScore: verdict === 'supported' ? 1 : verdict === 'review' ? 0.6 : 0,
-        evidenceIds,
-        claimType: classifyClaimText(text),
-        logicalKey: claimLogicalKey(text),
-      });
-    });
+    if (block.type === 'question') {
+      // 选择题的干扰项本来就包含故意错误的表述，不能把它们当成资源作者的事实声明。
+      // 只审核题目解析（以及没有解析时的题干），仍然保留数字、字段、因果和引用门禁。
+      const questions = block.content && typeof block.content === 'object' && !Array.isArray(block.content)
+        ? (block.content as { questions?: unknown }).questions
+        : null;
+      if (Array.isArray(questions)) {
+        questions.forEach((question) => {
+          if (!question || typeof question !== 'object' || Array.isArray(question)) return;
+          const value = question as { explanation?: unknown; prompt?: unknown };
+          const explanation = typeof value.explanation === 'string' && value.explanation.trim() ? value.explanation.trim() : '';
+          const prompt = typeof value.prompt === 'string' ? value.prompt.trim() : '';
+          const text = explanation ? `题目解析：${explanation}` : prompt;
+          if (text) appendClaim(text, block);
+        });
+      }
+      return;
+    }
+    claimText(block.content).forEach((text) => appendClaim(text, block));
   });
   // 汇总口径（升级计划 F 官方口径）：non_factual 教学表达不进入幻觉率分母，也不阻断发布
   const auditable = claims.filter((claim) => (claim.claimType ?? 'risk_advice') !== 'non_factual');

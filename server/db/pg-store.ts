@@ -580,36 +580,39 @@ export class PgLearningStore {
   }
 
   private async getRecommendationEvidence(learnerId: string): Promise<{
-    skills: Map<string, { mastery: number; attemptCount: number; correctCount: number }>;
-    feedbackLevels: Map<string, 'high' | 'medium' | 'low'>;
+    skills: Map<string, { mastery: number; attemptCount: number; correctCount: number; evidenceSource: string; updatedAt: number }>;
+    feedbackLevels: Map<string, { level: 'high' | 'medium' | 'low'; updatedAt: number }>;
     decisions: Map<string, { decision: string; level: string; reason: string; resourceType: string | null; createdAt: number }>;
   }> {
     const skillRows = (await this.pool.query(
-      `SELECT knowledge_point_id AS "knowledgePointId", p_mastery AS "mastery", attempt_count AS "attemptCount", correct_count AS "correctCount"
+      `SELECT knowledge_point_id AS "knowledgePointId", p_mastery AS "mastery", attempt_count AS "attemptCount", correct_count AS "correctCount",
+         evidence_source AS "evidenceSource", updated_at AS "updatedAt"
        FROM learner_skill_states WHERE learner_id = $1`, [learnerId],
-    )).rows as Array<{ knowledgePointId: string; mastery: number; attemptCount: number; correctCount: number }>;
-    const skills = new Map<string, { mastery: number; attemptCount: number; correctCount: number }>();
+    )).rows as Array<{ knowledgePointId: string; mastery: number; attemptCount: number; correctCount: number; evidenceSource: string; updatedAt: number | string }>;
+    const skills = new Map<string, { mastery: number; attemptCount: number; correctCount: number; evidenceSource: string; updatedAt: number }>();
     for (const row of skillRows) {
       skills.set(normalizeKnowledgePointId(row.knowledgePointId), {
         mastery: Number(row.mastery),
         attemptCount: Number(row.attemptCount),
         correctCount: Number(row.correctCount),
+        evidenceSource: row.evidenceSource || 'none',
+        updatedAt: Number(row.updatedAt),
       });
     }
     const feedbackRows = (await this.pool.query(
-      `SELECT a.content_json AS "contentJson", f.mastery_level AS "masteryLevel"
+      `SELECT a.content_json AS "contentJson", f.mastery_level AS "masteryLevel", f.updated_at AS "updatedAt"
        FROM learning_asset_feedback f
        JOIN learning_assets a ON a.learner_id = f.learner_id AND a.id = f.asset_id
        WHERE f.learner_id = $1 AND f.mastery_level IN ('high', 'medium', 'low')
        ORDER BY f.updated_at DESC`, [learnerId],
-    )).rows as Array<{ contentJson: { knowledgePointIds?: unknown }; masteryLevel: string }>;
-    const feedbackLevels = new Map<string, 'high' | 'medium' | 'low'>();
+    )).rows as Array<{ contentJson: { knowledgePointIds?: unknown }; masteryLevel: string; updatedAt: number | string }>;
+    const feedbackLevels = new Map<string, { level: 'high' | 'medium' | 'low'; updatedAt: number }>();
     for (const row of feedbackRows) {
       const firstKnowledgePointId = Array.isArray(row.contentJson?.knowledgePointIds) && typeof row.contentJson.knowledgePointIds[0] === 'string'
         ? row.contentJson.knowledgePointIds[0]
         : '';
       const key = normalizeKnowledgePointId(firstKnowledgePointId);
-      if (key && !feedbackLevels.has(key)) feedbackLevels.set(key, row.masteryLevel as 'high' | 'medium' | 'low');
+      if (key && !feedbackLevels.has(key)) feedbackLevels.set(key, { level: row.masteryLevel as 'high' | 'medium' | 'low', updatedAt: Number(row.updatedAt) });
     }
     // 里程碑 E（G12）：路径节点建议优先读取最近的持久化决策，缺失时回退即时计算
     const decisionRows = (await this.pool.query(
@@ -635,22 +638,37 @@ export class PgLearningStore {
   private recommendationForNode(
     node: { knowledgePointId: string },
     evidence: {
-      skills: Map<string, { mastery: number; attemptCount: number; correctCount: number }>;
-      feedbackLevels: Map<string, 'high' | 'medium' | 'low'>;
+      skills: Map<string, { mastery: number; attemptCount: number; correctCount: number; evidenceSource: string; updatedAt: number }>;
+      feedbackLevels: Map<string, { level: 'high' | 'medium' | 'low'; updatedAt: number }>;
       decisions: Map<string, { decision: string; level: string; reason: string; resourceType: string | null; createdAt: number }>;
     },
   ) {
     const key = normalizeKnowledgePointId(node.knowledgePointId);
     const persisted = evidence.decisions.get(key);
+    const skill = evidence.skills.get(key) ?? null;
+    const feedback = evidence.feedbackLevels.get(key) ?? null;
     const computed = computeNodeRecommendation({
-      skill: evidence.skills.get(key) ?? null,
-      feedbackLevel: evidence.feedbackLevels.get(key) ?? null,
+      skill,
+      feedbackLevel: feedback?.level ?? null,
     });
-    if (!persisted) return computed;
+    const sources = [
+      ...(skill && skill.attemptCount > 0 ? [skill.evidenceSource.includes('diagnostic') ? 'diagnostic' as const : 'quiz_attempt' as const] : []),
+      ...(feedback ? ['asset_feedback' as const] : []),
+      ...(persisted ? ['learning_decision' as const] : []),
+    ].filter((source, index, list) => list.indexOf(source) === index);
+    const updatedAt = Math.max(
+      ...(skill ? [skill.updatedAt] : []),
+      ...(feedback ? [feedback.updatedAt] : []),
+      ...(persisted ? [persisted.createdAt] : []),
+      0,
+    ) || null;
+    if (!persisted) return { ...computed, sources, updatedAt };
     return {
       ...computed,
       level: persisted.level as PathNodeRecommendation['level'],
       reason: `${persisted.reason}（${computed.reason}）`.slice(0, 240),
+      sources,
+      updatedAt,
     };
   }
 

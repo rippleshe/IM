@@ -14,16 +14,29 @@ const KNOWLEDGE_LABELS: Record<string, string> = {
   'data-cleaning': '数据清洗',
   'statistics-basics': '统计基础',
   'time-series-basics': '时序分析',
+  'evidence-boundary': '证据边界',
+  'anomaly-threshold': '阈值与异常判断',
+  'ai4i-overview': 'AI4I 数据集',
+  'ai4i-failure-modes': '故障机理',
+  'metropt-3-basics': 'MetroPT-3 时序',
+  'machine-learning-basics': '机器学习基础',
   'industrial-diagnosis-foundation': '设备诊断基础',
+  'compressor-diagnosis-evidence': '设备诊断证据',
 };
 
-function labelOf(knowledgePointId: string): string {
-  return KNOWLEDGE_LABELS[knowledgePointId] ?? '专业知识学习';
+function cleanSentence(value: string): string {
+  return value
+    .replace(/\s+([，。；：！？、」』】）])/g, '$1')
+    .replace(/([「『【（])\s+/g, '$1')
+    .replace(/[。！？!?；;，,：:]+$/g, '')
+    .trim();
 }
 
 function textOf(value: unknown): string {
-  if (typeof value === 'string') return value.trim();
-  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string').join('、').trim() : '';
+  if (typeof value === 'string') return cleanSentence(value);
+  return Array.isArray(value)
+    ? cleanSentence(value.filter((item): item is string => typeof item === 'string').join('、'))
+    : '';
 }
 
 function backgroundKeywords(background: string): string[] {
@@ -46,13 +59,17 @@ function backgroundKeywords(background: string): string[] {
 export async function generateProfileSnapshot(learnerId: string, _model?: string, _thinking?: { temperature: number; maxTokens: number }) {
   const current = await learningStore.getProfile(learnerId);
   const onboarding = await identityStore.getOnboarding(learnerId);
+  const graph = await learningStore.getPathGraph(learnerId);
+  const titleByKnowledgePoint = new Map(graph.nodes.map((node) => [node.knowledgePointId, node.title]));
+  const labelOf = (knowledgePointId: string): string => KNOWLEDGE_LABELS[knowledgePointId] ?? titleByKnowledgePoint.get(knowledgePointId) ?? knowledgePointId;
   const skills = [...current.skills].sort((a, b) => a.mastery - b.mastery || b.confidence - a.confidence);
   const focus = skills[0];
   const background: string = textOf(onboarding?.selfDescription) || textOf(onboarding?.role);
   const accuracy = current.accuracy === null || current.accuracy === undefined ? null : Math.round(current.accuracy * 100);
+  const intro = background ? `${background}，` : '';
   const summary = current.evidenceCount === 0
-    ? `${background ? `${background}，` : ''}尚未产生可用学习记录。完成入学诊断或一次练习后，系统会基于作答和反馈更新画像。`
-    : `${background ? `${background}，` : ''}已积累 ${current.evidenceCount} 条学习记录${accuracy === null ? '' : `，当前正确率 ${accuracy}%`}。${focus ? `建议优先巩固「${labelOf(focus.knowledgePointId)}」。` : '继续通过作答与反馈积累学习证据。'}`;
+    ? `${intro}尚未产生可用学习记录。完成入学诊断或一次练习后，系统会基于作答和反馈更新画像。`
+    : `${intro}已积累 ${current.evidenceCount} 条学习记录${accuracy === null ? '' : `，当前正确率 ${accuracy}%`}。${focus ? `建议优先巩固「${labelOf(focus.knowledgePointId)}」。` : '继续通过作答与反馈积累学习证据。'}`;
   const keywords: string[] = [...new Set([
     ...(background ? backgroundKeywords(background) : []),
     ...skills.slice(0, 3).map((skill) => labelOf(skill.knowledgePointId)).filter((label) => label !== '专业知识学习'),
