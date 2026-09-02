@@ -263,7 +263,7 @@ describe('buildLlmResourceDocument：块组装与证据绑定', () => {
     expect(JSON.stringify(doc.blocks[glossaryHeading + 1]?.content)).toContain('按时间先后比较');
   });
 
-  it('PPT：每页为 heading + 要点列表 + 讲解词段落', () => {
+  it('PPT：保留讲解结构，并加入真实数据样本作为视觉锚点', () => {
     const llm = parseLlmResourceDraft('presentation', {
       title: '诊断演示',
       slides: [
@@ -274,9 +274,10 @@ describe('buildLlmResourceDocument：块组装与证据绑定', () => {
     const doc = buildLlmResourceDocument('task-1', '压缩机诊断', 'presentation', pack(EVIDENCE), 'kp', llm);
     const headings = doc.blocks.filter((block) => block.type === 'heading');
     expect(doc.blocks.some((block) => block.type === 'evidence')).toBe(false);
-    expect(headings).toHaveLength(2);
+    expect(headings).toHaveLength(3);
     const lists = doc.blocks.filter((block) => block.type === 'list');
     expect(lists).toHaveLength(2);
+    expect(doc.blocks.some((block) => block.type === 'table')).toBe(true);
     expect(doc.blocks.some((block) => block.type === 'paragraph' && String(block.content).includes('这一页说明现象'))).toBe(true);
   });
 

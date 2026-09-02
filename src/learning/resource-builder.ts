@@ -483,7 +483,7 @@ export function parseLlmResourceDraft(type: LearningResourceType, raw: unknown):
       const notes = asString(slide['notes']);
       if (!heading || bullets.length === 0) return [];
       return [{ heading, bullets, notes: notes || undefined }];
-    }).slice(0, 10) : [];
+    }).slice(0, 12) : [];
     if (!title || slides.length < 2) return null;
     return { kind: 'presentation', ...base, slides };
   }
@@ -568,7 +568,7 @@ export function validateLlmResourceDraftQuality(draft: LlmResourceDraft): string
     if ((draft.misconceptions?.length ?? 0) < 2) issues.push('常见误区少于 2 个');
     if ((draft.reviewQuestions?.length ?? 0) < 3) issues.push('自测问题少于 3 个');
   } else if (draft.kind === 'presentation') {
-    if (draft.slides.length < 8) issues.push('PPT 少于 8 页，叙事不完整');
+    if (draft.slides.length < 10) issues.push('PPT 少于 10 页，叙事不完整');
     if (draft.slides.some((slide) => slide.bullets.length < 3)) issues.push('存在少于 3 条要点的幻灯片');
     if (draft.slides.filter((slide) => (slide.notes?.replace(/\s/g, '').length ?? 0) >= 80).length < Math.max(1, draft.slides.length - 1)) issues.push('多数幻灯片缺少完整讲解词');
   } else if (draft.kind === 'tiered_quiz') {
@@ -752,7 +752,19 @@ export function buildLlmResourceDocument(
       });
     }
   } else if (llm.kind === 'presentation') {
-    for (const slide of llm.slides.slice(0, 10)) {
+    const table = representativeTable(pack);
+    if (table) {
+      pushHeading(blocks, '这次数据里实际看什么', evidenceIdList, knowledgePoint);
+      blocks.push({
+        id: `resource-block-${randomUUID()}`,
+        type: 'table',
+        position: 0,
+        content: table,
+        knowledgePointIds: [knowledgePoint],
+        evidenceIds: table.evidenceIds,
+      });
+    }
+    for (const slide of llm.slides.slice(0, 12)) {
       if (!slide.heading?.trim()) continue;
       pushHeading(blocks, slide.heading, evidenceIdList, knowledgePoint);
       const bullets = Array.isArray(slide.bullets) ? slide.bullets : [];

@@ -60,6 +60,7 @@ import { assetAttemptStats, latestBktUpdate, listDecisions, prereqGapFor, record
 import { getLearningDatabase } from './db/client.js';
 import { generateProfileSnapshot } from './profile-snapshot.js';
 import { buildProfileInsights } from './profile-insights.js';
+import { resourceToPptx } from './pptx-export.js';
 import { AVATAR_IMAGE_MAX_CHARS } from '../src/learning/identity.js';
 import type { AuthenticatedLearner, OnboardingInput } from '../src/learning/identity.js';
 import type { LearningPathEdgeView, LearningPathRevisionInput, LearnerProfileView } from '../src/learning/store.js';
@@ -92,43 +93,6 @@ function resourceToMarkdown(resource: ResourceDocument): string {
     }
   }
   return lines.join('\n');
-}
-
-function escapeHtml(value: string): string {
-  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-}
-
-/**
- * PPT 资源使用可被 PowerPoint 直接打开的 HTML 演示稿导出。
- * 每个 heading 作为一页，后续正文/列表归入该页；没有 heading 时按内容块分组。
- */
-function resourceToPresentation(resource: ResourceDocument): string {
-  const slides: Array<{ title: string; body: string[] }> = [];
-  let current: { title: string; body: string[] } | null = null;
-  const start = (title: string) => {
-    current = { title: title || resource.title, body: [] };
-    slides.push(current);
-  };
-  start(resource.title);
-  for (const block of resource.blocks) {
-    if (block.type === 'evidence') continue;
-    if (block.type === 'heading') {
-      start(String(block.content));
-      continue;
-    }
-    if (!current) start(resource.title);
-    if (block.type === 'list' || block.type === 'checklist') {
-      const items = Array.isArray(block.content) ? block.content : [block.content];
-      current!.body.push(...items.map((item) => `• ${typeof item === 'string' ? item : JSON.stringify(item)}`));
-    } else if (block.type === 'code') {
-      const content = block.content as { caption?: string; code?: string };
-      if (content.caption) current!.body.push(content.caption);
-      if (content.code) current!.body.push(content.code);
-    } else if (typeof block.content === 'string') current!.body.push(block.content);
-  }
-  if (slides.length > 1 && slides[0]?.body.length === 0) slides.shift();
-  const htmlSlides = slides.map((slide, index) => `<section class="slide"><div class="slide-number">${index + 1} / ${slides.length}</div><h1>${escapeHtml(slide.title)}</h1><div class="body">${slide.body.map((line) => `<p>${escapeHtml(line)}</p>`).join('')}</div></section>`).join('\n');
-  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>${escapeHtml(resource.title)}</title><style>body{margin:0;background:#e9edf2;font-family:"Microsoft YaHei","Segoe UI",sans-serif}.slide{box-sizing:border-box;width:1280px;height:720px;margin:28px auto;padding:76px 92px;background:#fff;color:#18212b;page-break-after:always;position:relative}.slide h1{font-size:42px;line-height:1.25;border-bottom:4px solid #2563eb;padding-bottom:20px;margin:0 0 34px}.body{font-size:25px;line-height:1.65}.body p{margin:0 0 16px;white-space:pre-wrap}.slide-number{position:absolute;right:92px;top:30px;color:#64748b;font-size:16px}@media print{body{background:#fff}.slide{margin:0}}</style></head><body>${htmlSlides}</body></html>`;
 }
 
 function readCookie(header: string | undefined, name: string): string | undefined {
@@ -1283,8 +1247,9 @@ app.get('/api/learning/assets/:assetId/export', async (req, res) => {
   }
   const format = req.query['format'] === 'json' ? 'json' : req.query['format'] === 'txt' ? 'txt' : req.query['format'] === 'ppt' ? 'ppt' : 'md';
   const safeName = resource.title.replace(/[\\/:*?"<>|]/g, '-').slice(0, 80) || 'learning-resource';
-  const fileName = `${safeName}.${format}`;
-  const disposition = `attachment; filename="learning-resource.${format}"; filename*=UTF-8''${encodeURIComponent(fileName)}`;
+  const extension = format === 'ppt' ? 'pptx' : format;
+  const fileName = `${safeName}.${extension}`;
+  const disposition = `attachment; filename="learning-resource.${extension}"; filename*=UTF-8''${encodeURIComponent(fileName)}`;
   if (format === 'json') {
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
     res.setHeader('Content-Disposition', disposition);
@@ -1292,9 +1257,10 @@ app.get('/api/learning/assets/:assetId/export', async (req, res) => {
     return;
   }
   if (format === 'ppt') {
-    res.setHeader('Content-Type', 'application/vnd.ms-powerpoint; charset=utf-8');
+    const output = await resourceToPptx(resource);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.presentationml.presentation');
     res.setHeader('Content-Disposition', disposition);
-    res.send(resourceToPresentation(resource));
+    res.send(output);
     return;
   }
   res.setHeader('Content-Type', 'text/plain; charset=utf-8');

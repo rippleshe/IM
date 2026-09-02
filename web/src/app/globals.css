@@ -1438,6 +1438,692 @@ summary:focus-visible {
   font-size: clamp(1.65rem, 3vw, 2.45rem);
 }
 
+/* 演示阅读器：画布是真正的 16:9 页面，讲解词单独收纳，避免把段落当成幻灯片正文。 */
+.presentation-reader-hint {
+  color: #8a9aab;
+  font-size: 10px;
+  font-weight: 450;
+}
+
+.presentation-stage {
+  padding: 12px;
+  border: 1px solid #dbe5ee;
+  border-radius: 18px;
+  background: #e3ebf2;
+  box-shadow: 0 14px 32px rgb(49 76 102 / 10%);
+}
+
+.presentation-slide {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  width: 100%;
+  overflow: hidden;
+  border-radius: 11px;
+  box-shadow: 0 4px 16px rgb(24 54 80 / 10%);
+}
+
+.presentation-slide-light {
+  padding: clamp(20px, 3.2vw, 42px) clamp(22px, 4.3vw, 58px) clamp(18px, 3vw, 38px);
+  background: #fbfdff;
+  color: #102a43;
+}
+
+.presentation-slide-cover {
+  padding: clamp(24px, 4vw, 52px) clamp(24px, 5.5vw, 74px) clamp(20px, 3.4vw, 46px);
+  background: #0b2239;
+  color: #fff;
+}
+
+.presentation-cover-orbit {
+  position: absolute;
+  border: 1px solid rgb(88 172 163 / 38%);
+  border-radius: 50%;
+  pointer-events: none;
+}
+
+.presentation-cover-orbit-one {
+  top: -30%;
+  right: -12%;
+  width: 43%;
+  aspect-ratio: 1;
+}
+
+.presentation-cover-orbit-two {
+  right: -5%;
+  bottom: -47%;
+  width: 36%;
+  aspect-ratio: 1;
+  border-color: rgb(47 107 255 / 44%);
+}
+
+.presentation-cover-kicker,
+.presentation-slide-topline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  color: #55b7a7;
+  font-size: clamp(8px, 1.2vw, 11px);
+  font-weight: 700;
+  letter-spacing: .08em;
+}
+
+.presentation-slide-topline {
+  color: #0d9488;
+}
+
+.presentation-slide-cover h2 {
+  position: relative;
+  max-width: 72%;
+  margin: clamp(20px, 4vw, 52px) 0 0;
+  color: #fff;
+  font-size: clamp(1.35rem, 3.4vw, 3rem);
+  font-weight: 760;
+  letter-spacing: -.035em;
+  line-height: 1.18;
+}
+
+.presentation-cover-lead {
+  max-width: 62%;
+  margin: clamp(13px, 2vw, 24px) 0 0;
+  color: #d7e6ef;
+  font-size: clamp(10px, 1.55vw, 15px);
+  line-height: 1.65;
+}
+
+.presentation-cover-method {
+  display: grid;
+  max-width: 70%;
+  margin-top: clamp(18px, 3vw, 34px);
+  padding: clamp(11px, 1.8vw, 18px) clamp(13px, 2vw, 22px);
+  border: 1px solid #2b526b;
+  border-radius: 10px;
+  background: #173751;
+}
+
+.presentation-cover-method span {
+  color: #9fd5cb;
+  font-size: clamp(8px, 1.15vw, 11px);
+  font-weight: 700;
+}
+
+.presentation-cover-method strong {
+  margin-top: 5px;
+  color: #fff;
+  font-size: clamp(10px, 1.4vw, 14px);
+  font-weight: 650;
+}
+
+.presentation-cover-method small {
+  margin-top: 4px;
+  color: #b5cbe0;
+  font-size: clamp(8px, 1.1vw, 11px);
+}
+
+.presentation-cover-footer {
+  position: absolute;
+  right: clamp(24px, 5.5vw, 74px);
+  bottom: clamp(20px, 3.4vw, 46px);
+  left: clamp(24px, 5.5vw, 74px);
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  color: #9db5c7;
+  font-size: clamp(8px, 1.1vw, 11px);
+}
+
+.presentation-slide-title {
+  max-width: 74%;
+  margin: clamp(7px, 1.2vw, 14px) 0 0;
+  color: #102a43;
+  font-size: clamp(1.05rem, 2.55vw, 2rem) !important;
+  font-weight: 760;
+  letter-spacing: -.035em;
+  line-height: 1.2;
+}
+
+.presentation-slide-intro {
+  max-width: 82%;
+  margin: clamp(10px, 1.8vw, 20px) 0 0;
+  color: #5e7184;
+  font-size: clamp(9px, 1.3vw, 13px);
+  line-height: 1.6;
+}
+
+.presentation-agenda-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: clamp(8px, 1.6vw, 18px);
+  margin-top: clamp(18px, 3vw, 34px);
+}
+
+.presentation-agenda-item {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: clamp(8px, 1.2vw, 15px);
+  min-height: clamp(50px, 8vw, 82px);
+  padding: clamp(9px, 1.4vw, 16px);
+  border: 1px solid #cfdce8;
+  border-radius: 10px;
+  background: #eaf2ff;
+}
+
+.presentation-agenda-item.is-teal {
+  background: #e4f7f2;
+}
+
+.presentation-agenda-item > span,
+.presentation-process-step > span,
+.presentation-practice-steps span,
+.presentation-bullet-list > div > span {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: clamp(20px, 2.8vw, 31px);
+  height: clamp(20px, 2.8vw, 31px);
+  border-radius: 50%;
+  color: #fff;
+  background: #2f6bff;
+  font-size: clamp(8px, 1.1vw, 11px);
+  font-weight: 700;
+}
+
+.presentation-agenda-item.is-teal > span,
+.presentation-process-step:nth-child(even) > span {
+  background: #0d9488;
+}
+
+.presentation-agenda-item strong,
+.presentation-agenda-item small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.presentation-agenda-item strong {
+  color: #102a43;
+  font-size: clamp(10px, 1.45vw, 15px);
+}
+
+.presentation-agenda-item small {
+  margin-top: 4px;
+  color: #5e7184;
+  font-size: clamp(8px, 1.1vw, 11px);
+}
+
+.presentation-slide-footnote {
+  position: absolute;
+  right: clamp(22px, 4.3vw, 58px);
+  bottom: clamp(16px, 2.5vw, 29px);
+  left: clamp(22px, 4.3vw, 58px);
+  overflow: hidden;
+  color: #72869a;
+  font-size: clamp(8px, 1.05vw, 10px);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.presentation-slide-content {
+  min-height: 0;
+  margin-top: clamp(17px, 3vw, 33px);
+}
+
+.presentation-glossary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: clamp(10px, 1.7vw, 18px);
+}
+
+.presentation-glossary-card {
+  min-height: clamp(73px, 11vw, 118px);
+  padding: clamp(11px, 1.7vw, 18px);
+  border: 1px solid #cfdce8;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.presentation-glossary-card.is-teal {
+  background: #e4f7f2;
+}
+
+.presentation-glossary-card strong {
+  color: #102a43;
+  font-size: clamp(11px, 1.5vw, 16px);
+}
+
+.presentation-glossary-card p {
+  display: -webkit-box;
+  overflow: hidden;
+  margin: clamp(7px, 1vw, 11px) 0 0;
+  color: #5e7184;
+  font-size: clamp(9px, 1.15vw, 12px);
+  line-height: 1.55;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.presentation-evidence-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(180px, .8fr);
+  gap: clamp(12px, 2vw, 24px);
+  align-items: start;
+}
+
+.presentation-visual-label {
+  margin-bottom: 8px;
+  color: #0d9488;
+  font-size: clamp(8px, 1.1vw, 11px);
+  font-weight: 700;
+}
+
+.presentation-table-wrap {
+  overflow: auto;
+  max-height: 160px;
+  border: 1px solid #cfdce8;
+  border-radius: 9px;
+  background: #fff;
+}
+
+.presentation-table-wrap table {
+  width: 100%;
+  border-collapse: collapse;
+  color: #102a43;
+  font-size: clamp(7px, .95vw, 10px);
+  white-space: nowrap;
+}
+
+.presentation-table-wrap th,
+.presentation-table-wrap td {
+  padding: 7px 8px;
+  border-bottom: 1px solid #e3ebf4;
+  text-align: left;
+}
+
+.presentation-table-wrap th {
+  color: #fff;
+  background: #102a43;
+  font-weight: 700;
+}
+
+.presentation-table-wrap tr:last-child td {
+  border-bottom: 0;
+}
+
+.presentation-source {
+  overflow: hidden;
+  margin-top: 7px;
+  color: #72869a;
+  font-size: 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.presentation-chart-wrap {
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid #cfdce8;
+  border-radius: 9px;
+  background: #f7fafc;
+}
+
+.presentation-chart-title,
+.presentation-chart-range {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: #5e7184;
+  font-size: clamp(7px, 1vw, 10px);
+}
+
+.presentation-chart-title span:first-child {
+  color: #102a43;
+  font-weight: 700;
+}
+
+.presentation-mini-chart {
+  display: block;
+  width: 100%;
+  margin: 8px 0 2px;
+}
+
+.presentation-chart-grid {
+  fill: none;
+  stroke: #dce6ef;
+  stroke-width: 1;
+}
+
+.presentation-chart-line {
+  fill: none;
+  stroke: #2f6bff;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 3;
+}
+
+.presentation-chart-point {
+  fill: #fff;
+  stroke: #2f6bff;
+  stroke-width: 2;
+}
+
+.presentation-chart-empty,
+.presentation-table-empty {
+  padding: 28px 12px;
+  color: #72869a;
+  font-size: 10px;
+  line-height: 1.5;
+  text-align: center;
+}
+
+.presentation-process-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: clamp(8px, 1.4vw, 16px);
+  padding-top: 9px;
+}
+
+.presentation-process-step {
+  position: relative;
+  min-width: 0;
+  min-height: 118px;
+  padding: 44px 10px 12px;
+  border: 1px solid #cfdce8;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.presentation-process-step:not(:last-child)::after {
+  position: absolute;
+  top: 25px;
+  right: -12px;
+  width: 20px;
+  height: 1px;
+  background: #aec4d8;
+  content: "";
+}
+
+.presentation-process-step > span {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+}
+
+.presentation-process-step strong {
+  display: -webkit-box;
+  overflow: hidden;
+  color: #102a43;
+  font-size: clamp(9px, 1.2vw, 12px);
+  line-height: 1.55;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.presentation-concept-layout {
+  display: grid;
+  grid-template-columns: minmax(160px, .72fr) minmax(0, 1.28fr);
+  gap: clamp(12px, 2vw, 24px);
+}
+
+.presentation-focus-panel {
+  display: flex;
+  min-height: 178px;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: clamp(14px, 2vw, 22px);
+  border-radius: 10px;
+  background: #102a43;
+}
+
+.presentation-focus-panel span {
+  color: #9fd5cb;
+  font-size: clamp(8px, 1.1vw, 11px);
+  font-weight: 700;
+}
+
+.presentation-focus-panel strong {
+  display: -webkit-box;
+  overflow: hidden;
+  color: #fff;
+  font-size: clamp(14px, 2vw, 22px);
+  line-height: 1.35;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+}
+
+.presentation-focus-panel small {
+  color: #b5cbe0;
+  font-size: clamp(8px, 1vw, 10px);
+}
+
+.presentation-bullet-list {
+  display: grid;
+  gap: 10px;
+}
+
+.presentation-bullet-list > div {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 12px;
+  min-height: 48px;
+  padding: 9px 12px;
+  border: 1px solid #cfdce8;
+  border-radius: 9px;
+  background: #fff;
+}
+
+.presentation-bullet-list > div:nth-child(even) {
+  background: #e4f7f2;
+}
+
+.presentation-bullet-list > div > span {
+  width: 24px;
+  height: 24px;
+  background: #2f6bff;
+  font-size: 9px;
+}
+
+.presentation-bullet-list p {
+  display: -webkit-box;
+  overflow: hidden;
+  color: #102a43;
+  font-size: clamp(9px, 1.25vw, 13px);
+  line-height: 1.5;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.presentation-practice-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.18fr) minmax(160px, .82fr);
+  gap: clamp(14px, 2.2vw, 28px);
+}
+
+.presentation-practice-question {
+  display: flex;
+  min-height: 184px;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: clamp(15px, 2.2vw, 24px);
+  border: 1px solid #f2d894;
+  border-radius: 10px;
+  background: #fff3d6;
+}
+
+.presentation-practice-question span {
+  color: #9a6700;
+  font-size: clamp(8px, 1.1vw, 11px);
+  font-weight: 700;
+}
+
+.presentation-practice-question strong {
+  display: -webkit-box;
+  overflow: hidden;
+  color: #102a43;
+  font-size: clamp(13px, 1.9vw, 20px);
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+}
+
+.presentation-practice-question small {
+  color: #704e00;
+  font-size: clamp(8px, 1vw, 10px);
+}
+
+.presentation-practice-steps {
+  display: grid;
+  align-content: center;
+  gap: 14px;
+}
+
+.presentation-practice-steps > div {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.presentation-practice-steps span {
+  width: 23px;
+  height: 23px;
+  background: #2f6bff;
+  font-size: 9px;
+}
+
+.presentation-practice-steps p {
+  color: #102a43;
+  font-size: clamp(9px, 1.15vw, 12px);
+  line-height: 1.45;
+}
+
+.presentation-slide-action {
+  position: absolute;
+  right: clamp(22px, 4.3vw, 58px);
+  bottom: clamp(13px, 2vw, 23px);
+  left: clamp(22px, 4.3vw, 58px);
+  overflow: hidden;
+  color: #0d9488;
+  font-size: clamp(8px, 1.05vw, 10px);
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.presentation-speaker-notes {
+  margin: 13px 3px 0;
+  border: 1px solid #dbe5ee;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.presentation-speaker-notes summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 13px;
+  color: #52677e;
+  cursor: pointer;
+  font-size: 11px;
+  list-style: none;
+}
+
+.presentation-speaker-notes summary::-webkit-details-marker {
+  display: none;
+}
+
+.presentation-speaker-notes summary span:last-child {
+  color: #8a9aab;
+  font-size: 10px;
+}
+
+.presentation-speaker-notes > div {
+  border-top: 1px solid #e3ebf4;
+  padding: 11px 13px 13px;
+  color: #5e7184;
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.presentation-slide-strip {
+  display: flex;
+  max-width: min(72vw, 770px);
+  align-items: center;
+  gap: 5px;
+  overflow-x: auto;
+  padding: 2px 0;
+}
+
+.presentation-slide-tab {
+  display: inline-flex;
+  min-width: 72px;
+  max-width: 110px;
+  flex-direction: column;
+  gap: 3px;
+  padding: 5px 7px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  color: #8a9aab;
+  text-align: left;
+}
+
+.presentation-slide-tab:hover {
+  background: #edf4ff;
+}
+
+.presentation-slide-tab.is-active {
+  border-color: #b8cde7;
+  color: #3f6093;
+  background: #edf4ff;
+}
+
+.presentation-slide-tab span {
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+}
+
+.presentation-slide-tab strong {
+  overflow: hidden;
+  font-size: 9px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 760px) {
+  .presentation-reader-hint,
+  .presentation-slide-tab strong {
+    display: none;
+  }
+
+  .presentation-slide-tab {
+    min-width: 30px;
+    align-items: center;
+  }
+
+  .presentation-evidence-layout,
+  .presentation-concept-layout,
+  .presentation-practice-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .presentation-chart-wrap {
+    display: none;
+  }
+
+  .presentation-focus-panel,
+  .presentation-practice-question {
+    min-height: 134px;
+  }
+
+  .presentation-process-step {
+    min-height: 92px;
+    padding-top: 36px;
+  }
+}
+
 .resource-diagram-fallback {
   margin: 18px 0;
   padding: 16px;
@@ -1746,4 +2432,173 @@ summary:focus-visible {
   border-color: transparent;
   color: #466a98;
   background: #edf4ff;
+}
+
+/* 幻灯片内部按画布宽度缩放，避免在窄阅读区沿用浏览器视口字号而裁切内容。 */
+.presentation-slide {
+  container-type: inline-size;
+}
+
+.presentation-slide-cover {
+  padding: clamp(18px, 5.5cqw, 74px) clamp(18px, 7.5cqw, 74px) clamp(16px, 3.4cqw, 46px);
+}
+
+.presentation-slide-cover h2 {
+  max-width: 76%;
+  margin-top: clamp(18px, 4cqw, 52px);
+  font-size: clamp(1.35rem, 3.4cqw, 3rem);
+}
+
+.presentation-cover-lead {
+  display: -webkit-box;
+  max-width: 80%;
+  max-height: 1.65em;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.presentation-cover-method {
+  position: absolute;
+  right: auto;
+  bottom: clamp(10px, 2cqw, 18px);
+  left: clamp(18px, 7.5cqw, 74px);
+  max-width: 64%;
+  margin-top: 0;
+  padding: clamp(8px, 1.4cqw, 14px) clamp(10px, 1.8cqw, 18px);
+}
+
+.presentation-cover-footer {
+  right: clamp(18px, 7.5cqw, 74px);
+  bottom: clamp(16px, 3.4cqw, 46px);
+  left: clamp(18px, 7.5cqw, 74px);
+}
+
+.presentation-cover-footer span:first-child {
+  display: none;
+}
+
+.presentation-cover-footer {
+  left: auto;
+  width: auto;
+}
+
+.presentation-slide-light {
+  padding: clamp(16px, 3.2cqw, 42px) clamp(18px, 4.3cqw, 58px) clamp(16px, 3cqw, 38px);
+}
+
+.presentation-slide-title {
+  margin-top: clamp(7px, 1.2cqw, 14px);
+  font-size: clamp(1.05rem, 2.55cqw, 2rem) !important;
+}
+
+.presentation-slide-intro {
+  margin-top: clamp(8px, 1.8cqw, 20px);
+  font-size: clamp(9px, 1.3cqw, 13px);
+}
+
+.presentation-agenda-grid {
+  gap: clamp(8px, 1.6cqw, 18px);
+  margin-top: clamp(14px, 3cqw, 34px);
+}
+
+.presentation-agenda-item {
+  gap: clamp(8px, 1.2cqw, 15px);
+  min-height: clamp(50px, 8cqw, 82px);
+  padding: clamp(9px, 1.4cqw, 16px);
+}
+
+.presentation-agenda-item > span,
+.presentation-process-step > span,
+.presentation-practice-steps span,
+.presentation-bullet-list > div > span {
+  width: clamp(20px, 2.8cqw, 31px);
+  height: clamp(20px, 2.8cqw, 31px);
+}
+
+.presentation-agenda-item strong {
+  font-size: clamp(10px, 1.45cqw, 15px);
+}
+
+.presentation-agenda-item small {
+  font-size: clamp(8px, 1.1cqw, 11px);
+}
+
+.presentation-slide-footnote {
+  right: clamp(18px, 4.3cqw, 58px);
+  bottom: clamp(14px, 2.5cqw, 29px);
+  left: clamp(18px, 4.3cqw, 58px);
+  font-size: clamp(8px, 1.05cqw, 10px);
+}
+
+.presentation-slide-content {
+  margin-top: clamp(14px, 3cqw, 33px);
+}
+
+.presentation-glossary-grid {
+  gap: clamp(8px, 1.7cqw, 18px);
+}
+
+.presentation-glossary-card {
+  min-height: clamp(62px, 11cqw, 118px);
+  padding: clamp(10px, 1.7cqw, 18px);
+}
+
+.presentation-glossary-card strong {
+  font-size: clamp(11px, 1.5cqw, 16px);
+}
+
+.presentation-glossary-card p {
+  margin-top: clamp(6px, 1cqw, 11px);
+  font-size: clamp(9px, 1.15cqw, 12px);
+}
+
+.presentation-evidence-layout,
+.presentation-concept-layout,
+.presentation-practice-layout {
+  gap: clamp(10px, 2cqw, 24px);
+}
+
+.presentation-process-row {
+  gap: clamp(8px, 1.4cqw, 16px);
+}
+
+.presentation-process-step strong,
+.presentation-practice-steps p {
+  font-size: clamp(9px, 1.2cqw, 12px);
+}
+
+.presentation-focus-panel {
+  min-height: clamp(150px, 25cqw, 178px);
+  padding: clamp(12px, 2cqw, 22px);
+}
+
+.presentation-focus-panel strong {
+  font-size: clamp(14px, 2cqw, 22px);
+}
+
+.presentation-bullet-list p {
+  font-size: clamp(9px, 1.25cqw, 13px);
+}
+
+.presentation-practice-question {
+  min-height: clamp(150px, 30cqw, 184px);
+  padding: clamp(13px, 2.2cqw, 24px);
+}
+
+.presentation-practice-question strong {
+  font-size: clamp(13px, 1.9cqw, 20px);
+}
+
+.presentation-pager {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.presentation-slide-strip {
+  min-width: 0;
+  max-width: none;
+  flex: 1 1 auto;
 }

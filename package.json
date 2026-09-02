@@ -131,6 +131,7 @@
     "node-html-parser": "^9.0.1",
     "openai": "^6.39.1",
     "pg": "^8.23.0",
-    "pg-copy-streams": "^7.0.0"
+    "pg-copy-streams": "^7.0.0",
+    "pptxgenjs": "^4.0.1"
   }
 }
