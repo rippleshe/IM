@@ -48,6 +48,17 @@ const EVIDENCE = [
 
 EVIDENCE[2]!.metadata = { queryKind: 'recent_rows' };
 
+const METRO_ROW = evidenceItem(
+  'metro-row-1',
+  JSON.stringify({ rowId: '15169470', timestamp: '2020-09-01 03:59:50', tp2: -0.014, tp3: 8.86, h1: 8.848, dvPressure: -0.0219, motorCurrent: 3.7, oilTemperature: 59.4 }),
+  'dataset',
+);
+METRO_ROW.sourceId = 'metropt-3';
+METRO_ROW.sourceTitle = 'MetroPT-3 Air Compressor 数据行';
+METRO_ROW.metadata = { queryKind: 'recent_rows' };
+
+const METRO_PACK = { ...pack([METRO_ROW]), query: '空压机传感器时间序列数据清洗' };
+
 describe('parseLlmResourceDraft：结构校验与回退', () => {
   it('讲义：完整输出解析为各字段，缺失字段被剔除', () => {
     const draft = parseLlmResourceDraft('lecture', {
@@ -244,6 +255,39 @@ describe('buildLlmResourceDocument：块组装与证据绑定', () => {
     expect(String(doc.blocks[1]?.content)).toMatch(/^flowchart TD/);
     expect(doc.blocks.some((block) => String(block.content).includes('**传感器证据**'))).toBe(true);
     expect(doc.blocks.some((block) => block.type === 'heading' && String(block.content).includes('入门阅读线'))).toBe(true);
+  });
+});
+
+describe('buildResourceDraft：长内容与数据集跟随', () => {
+  it('讲义模板兜底仍然是可学习的长内容，而不是几块短占位符', () => {
+    const doc = buildResourceDraft('task-long-lecture', '空压机数据清洗与时间字段处理', 'lecture', METRO_PACK, 'kp');
+    const headings = doc.blocks.filter((block) => block.type === 'heading');
+    const textChars = doc.blocks.reduce((total, block) => {
+      if (typeof block.content === 'string') return total + block.content.length;
+      if (Array.isArray(block.content)) return total + block.content.map(String).join('').length;
+      return total;
+    }, 0);
+    expect(headings.length).toBeGreaterThanOrEqual(6);
+    expect(textChars).toBeGreaterThan(1500);
+  });
+
+  it('讲义代码示例跟随当前 MetroPT-3 证据，不再固定套用 AI4I 故障字段', () => {
+    const doc = buildResourceDraft('task-metro-code', '空压机传感器时间序列分析', 'lecture', METRO_PACK, 'kp');
+    const code = String(doc.blocks.find((block) => block.type === 'code')?.content && (doc.blocks.find((block) => block.type === 'code')!.content as { code: string }).code);
+    expect(code).toContain('MetroPT3(AirCompressor).csv');
+    expect(code).toContain('timestamp');
+    expect(code).toContain('motorCurrent');
+    expect(code).not.toContain('Machine failure');
+    expect(code).not.toContain('Air temperature [K]');
+  });
+
+  it('知识脉络模板兜底包含可读的关系图、节点解释和两条阅读路径', () => {
+    const doc = buildResourceDraft('task-long-map', '空压机传感器证据到风险判断', 'concept_map', METRO_PACK, 'kp');
+    const mermaid = String(doc.blocks.find((block) => block.type === 'paragraph' && String(block.content).startsWith('flowchart'))?.content ?? '');
+    expect((mermaid.match(/\[/g) ?? []).length).toBeGreaterThanOrEqual(10);
+    expect(doc.blocks.filter((block) => block.type === 'heading').length).toBeGreaterThanOrEqual(3);
+    expect(doc.blocks.some((block) => String(block.content).includes('阅读路径：从证据到行动'))).toBe(true);
+    expect(doc.blocks.some((block) => String(block.content).includes('dvPressure'))).toBe(true);
   });
 });
 

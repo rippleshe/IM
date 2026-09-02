@@ -134,7 +134,7 @@ async function callResourceGeneration(agentId: LearningAgentId, system: string, 
       temperature: route.thinking.temperature,
       maxTokens: Math.min(maxTokens, limits.maxOutputTokens),
     }),
-    200_000,
+    360_000,
     '资源生成超时',
   );
   return response.text;
@@ -1103,6 +1103,17 @@ async function runFinalizePublish(run: StudyRunRow, node: RunNodeSpec, attempt: 
     const audited: ResourceDocument = { ...draft, evidencePackId: merged.id, auditSummary: ctx.audit?.summary, auditStatus: 'passed' };
     await learningStore.saveAsset(run.learnerId, undefined, audited);
     finalAssetId = audited.id;
+  } else if (draft && producerKind === 'llm' && merged) {
+    // 模型已经交付完整成品但审核未通过时，保留成品供学习者查看和复核。
+    // 之前这里无条件替换为短模板，导致讲义/PPT/习题/知识脉络都可能“生成成功”
+    // 却只剩几块兜底内容；待复核状态已经足够表达风险，不应丢失教学内容。
+    fallbackAsset = {
+      ...draft,
+      evidencePackId: merged.id,
+      auditSummary: ctx.audit?.summary,
+      auditStatus: 'revise',
+    };
+    await learningStore.saveAsset(run.learnerId, undefined, fallbackAsset);
   } else {
     // 门禁拒绝不再让学习者得到一个“什么都没有”的结果：保存保守模板，
     // 但明确标记为待复核，不能冒充已通过审核的正式资源。
@@ -1161,7 +1172,7 @@ async function runFinalizePublish(run: StudyRunRow, node: RunNodeSpec, attempt: 
     pathNodeId: run.request.pathNodeId, resourceType: run.request.resourceType,
     asset: finalAssetId
       ? { id: draft!.id, title: draft!.title, type: draft!.type, auditStatus: 'passed', persisted: true, producer: producerKind, generationNote }
-      : { id: fallbackAsset?.id ?? '', title: persistedTitle, type: run.request.resourceType, auditStatus: 'revise', persisted: Boolean(fallbackAsset), producer: 'rule', generationNote: '自动检查未通过，已保存保守模板，可在资源页继续查看并反馈。', failureReason: '自动检查未通过，资源已保存为待复核版本。' },
+      : { id: fallbackAsset?.id ?? '', title: persistedTitle, type: run.request.resourceType, auditStatus: 'revise', persisted: Boolean(fallbackAsset), producer: producerKind === 'llm' ? 'llm' : 'rule', generationNote: producerKind === 'llm' ? '模型已生成完整成品，但自动检查未通过，已保存为待复核版本，可先查看并根据审核提示修订。' : '自动检查未通过，已保存保守模板，可在资源页继续查看并反馈。', failureReason: producerKind === 'llm' ? '自动检查未通过，保留模型成品供复核；未标记为已通过资源。' : '自动检查未通过，资源已保存为待复核版本。' },
     evidence: { count: merged?.items.length ?? 0, score: merged?.coverageScore ?? 0, crossValidation: ctx.audit?.summary.status ?? 'unsupported' },
   });
   await learningStore.recordLearningEvent(run.learnerId, 'study_run_completed', {

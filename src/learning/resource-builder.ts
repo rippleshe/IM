@@ -109,6 +109,25 @@ export function buildResourceDraft(
   };
 
   const extraBlocks: ResourceBlock[] = [];
+  if (isLecture) {
+    const datasetTitle = pack.items.find((item) => item.sourceType === 'dataset')?.sourceTitle ?? '当前检索数据';
+    const table = representativeTable(pack);
+    const fields = table?.columns.filter((column) => !/^(rowId|rowid|id|udi)$/i.test(column)).slice(0, 6) ?? [];
+    const fieldText = fields.length > 0 ? fields.join('、') : '当前证据中的观测字段';
+    const fallbackSections: Array<[string, string, string[]]> = [
+      ['先把问题说清楚', `这份材料围绕“${query.trim().slice(0, 100)}”展开。拿到${datasetTitle}的记录后，不要直接跳到异常或故障结论，先确认数据来自什么设备、每列代表什么、时间字段能否排序，以及本次判断到底需要回答哪个问题。对初学者来说，数据清洗不是把所有“奇怪”的值删掉，而是把原始记录变成可解释、可复查的分析输入。每一步都要留下处理前后的依据，后面看到趋势或差异时才能知道它来自数据本身，还是来自清洗操作。`, ['先定义分析问题，再决定清洗动作', '每一步处理都要能说明理由']],
+      ['检查字段与数据类型', `当前证据中可观察到的字段包括${fieldText}。先用表格查看列名、缺失情况和数据类型，再确认哪些列是时间、哪些列是连续测量值、哪些列是状态或标识。字段名相似不代表含义相同，尤其是压力、电流和温度等变量，必须结合资料中的字段说明与单位解释。时间列如果仍是字符串，排序结果可能只是字符顺序；数值列如果混入文本，也会让统计结果失真。因此，清洗的第一项产出应是一张字段字典：列名、类型、单位、允许的空值处理方式，以及对应的来源位置。`, ['字段含义和单位先于数值解释', '类型转换要记录成功与失败的行']],
+      ['处理缺失与重复记录', '缺失值要先区分“没有采到”“传输中断”和“本来就不适用”，不能看到空白就统一填零。可以先按列统计缺失，再结合时间窗口和相邻字段决定删除、保留并标记，或使用有依据的填补。重复值也要区分完整重复和关键键重复：同一时间点的整行重复可能是重复上报，但同一时间点不同传感器值则可能需要进一步核对。处理前后都应保留计数和样本，避免为了让图表好看而悄悄改变故障信号。', ['缺失值处理必须说明依据', '重复记录要按业务键和整行分别检查']],
+      ['解析时间并建立索引', '时间字段是时序分析的骨架。先将可解析的字符串转换为时间类型，对转换失败的值单独列出，不要静默丢弃；随后检查时间是否重复、是否倒序、相邻记录间隔是否稳定，再决定是否设置为索引。只有时间顺序可靠，滚动统计、重采样、区间比较和趋势可视化才有意义。如果采样间隔不稳定，应在分析中明确这一限制，不要把不规则记录直接当成等间隔序列。清洗后的时间索引还要保留原始字段或版本说明，保证别人可以回溯处理过程。', ['先解析再排序，最后设置索引', '转换失败和不规则间隔都要显式记录']],
+      ['观察异常并交叉核验', `清洗完成后，围绕${fieldText}观察单点、相邻窗口和整体趋势。一个读数偏离常见范围只能作为线索，不能直接证明设备故障；要同时核对相关字段是否同步变化、来源资料是否支持该解释，以及现场工况是否一致。对于极端值，先排查单位、符号、传感器状态和采集过程，再决定它是应保留的故障信号还是需要复核的数据问题。最终结果应把“观察到的事实”“基于事实的风险判断”和“仍需确认的内容”分开写，避免图表和统计量制造虚假的确定性。`, ['异常是风险线索，不是确定故障', '用多字段和多来源证据减少误判']],
+      ['形成可复查的分析结果', '一份合格的清洗结果不仅有一张干净表格，还应包含处理清单、保留与删除规则、关键字段变化、时间窗口和未解决问题。建议把原始数据、清洗后的数据和处理日志分开保存，给每次处理标注主题和来源。复查时，其他人应能从字段说明回到数据行，从数据行回到分析步骤，再从分析结论找到下一步检查动作。这样做的价值不是增加文档负担，而是让模型生成的讲解、学习者的练习和后续的设备判断共享同一套可追溯事实。', ['处理日志是结果的一部分', '结论必须带来源、边界和下一步动作']],
+    ];
+    for (const [heading, text, keyPoints] of fallbackSections) {
+      pushHeading(extraBlocks, heading, pack.items.map((item) => item.id), knowledgePoint);
+      pushParagraph(extraBlocks, text, pack.items.map((item) => item.id), knowledgePoint);
+      pushList(extraBlocks, keyPoints, pack.items.map((item) => item.id), knowledgePoint);
+    }
+  }
   if (type === 'tiered_quiz') {
     const evidenceIds = pack.items.slice(0, 3).map((item) => item.id);
     const q = (
@@ -184,14 +203,27 @@ export function buildResourceDraft(
     });
   }
   if (type === 'concept_map') {
+    const table = representativeTable(pack);
+    const fields = table?.columns.filter((column) => !/^(rowId|rowid|id|udi)$/i.test(column)).slice(0, 6) ?? [];
+    const fieldNodes = fields.length > 0 ? fields : ['时间字段', '压力字段', '电流字段', '温度字段'];
+    const fieldLines = fieldNodes.map((field, index) => `  F${index}[${escapeMermaid(field)}] --> G[趋势观察]`).join('\n');
+    const fieldExplanations = fieldNodes.map((field) => [field, `先确认${field}在当前数据中的字段含义、单位和来源位置，再观察它在相邻时间窗口中的变化。该字段只能作为证据链中的一个环节，出现偏离时需要结合其他字段与资料交叉核对，不能把单点读数直接写成确定故障。`]);
     extraBlocks.push({
       id: `resource-block-${randomUUID()}`,
       type: 'paragraph',
       position: 2,
-      content: `flowchart TD\n  A[学习目标：${escapeMermaid(query)}] --> B[传感器与状态证据]\n  B --> C[风险判断]\n  C --> D[现场复核]\n  D --> E[维护动作]\n  C --> F[保留不确定性]`,
+      content: `flowchart TD\n  A[学习目标 ${escapeMermaid(query)}] --> B[数据来源]\n  B --> C[数据清洗]\n  C --> D[时间顺序]\n${fieldLines}\n  G --> H[多字段核验]\n  H --> I[风险判断]\n  I --> J[现场复核]\n  I --> K[保留边界]\n  J --> L[行动记录]\n  L --> M[学习反馈]`,
       knowledgePointIds: [knowledgePoint],
       evidenceIds: pack.items.map((item) => item.id),
     });
+    pushHeading(extraBlocks, '关键节点解读', pack.items.map((item) => item.id), knowledgePoint);
+    for (const [label, explanation] of fieldExplanations) pushParagraph(extraBlocks, `**${label}**：${explanation}`, pack.items.map((item) => item.id), knowledgePoint);
+    pushParagraph(extraBlocks, '**风险判断**：把已观察到的事实、证据支持的风险方向和仍需复核的部分分开记录。知识脉络的作用是帮助你按顺序推进分析，而不是替代现场确认。', pack.items.map((item) => item.id), knowledgePoint);
+    pushParagraph(extraBlocks, '**现场复核**：根据证据缺口列出要补看的时间窗口、相关字段、设备状态或资料条目，并为每项复核写明预期确认的现象。', pack.items.map((item) => item.id), knowledgePoint);
+    pushHeading(extraBlocks, '阅读路径：从证据到行动', pack.items.map((item) => item.id), knowledgePoint);
+    pushList(extraBlocks, ['1. 先确认数据来源、字段含义和时间顺序', '2. 再观察目标字段与相关字段的联动变化', '3. 最后形成带边界的风险判断并安排现场复核'], pack.items.map((item) => item.id), knowledgePoint);
+    pushHeading(extraBlocks, '阅读路径：从问题到迁移', pack.items.map((item) => item.id), knowledgePoint);
+    pushList(extraBlocks, ['1. 从当前节点的问题定义开始', '2. 把同一观察方法迁移到新的时间窗口', '3. 用学习反馈修正下一步练习与资源建议'], pack.items.map((item) => item.id), knowledgePoint);
   }
   if (isPresentation) {
     const evidenceLabel = pack.items[0]?.sourceTitle ?? '当前检索证据';
@@ -246,28 +278,7 @@ export function buildResourceDraft(
     });
   }
 
-  const analysisCodeBlock: ResourceBlock = {
-    id: `resource-block-${randomUUID()}`,
-    type: 'code',
-    position: 0,
-    content: {
-      language: 'python',
-      caption: '分析入门：用 pandas 观察设备数据',
-      code: [
-        'import pandas as pd',
-        '',
-        'df = pd.read_csv("ai4i_2020.csv")',
-        'print(df.shape)                              # 行数与列数',
-        'print(df.head())                             # 先看几行长什么样',
-        'print(df["Machine failure"].value_counts())  # 故障样本有多少',
-        '',
-        'failed = df[df["Machine failure"] == 1]',
-        'print(failed[["Air temperature [K]", "Torque [Nm]", "Tool wear [min]"]].describe())',
-      ].join('\n'),
-    },
-    knowledgePointIds: [knowledgePoint],
-    evidenceIds: [],
-  };
+  const fallbackCodeBlock = analysisCodeBlock(knowledgePoint, pack);
   const table = representativeTable(pack);
   const tableBlock: ResourceBlock | null = table ? {
     id: `resource-block-${randomUUID()}`,
@@ -281,7 +292,7 @@ export function buildResourceDraft(
     opening,
     taskBlock,
     ...extraBlocks,
-    ...(isLecture ? [analysisCodeBlock] : []),
+    ...(isLecture ? [fallbackCodeBlock] : []),
     ...(tableBlock ? [tableBlock] : []),
   ];
 
@@ -633,7 +644,7 @@ export function buildLlmResourceDocument(
       pushHeading(blocks, '自测问题', evidenceIdList, knowledgePoint);
       pushList(blocks, llm.reviewQuestions, evidenceIdList, knowledgePoint);
     }
-    if (!hasLlmCode) blocks.push(analysisCodeBlock(knowledgePoint));
+    if (!hasLlmCode) blocks.push(analysisCodeBlock(knowledgePoint, pack));
     const table = representativeTable(pack);
     if (table) {
       blocks.push({
@@ -763,7 +774,43 @@ function conciseResourceTitle(value: string, type: LearningResourceType, fallbac
   return `${prefix} · ${subject}`.slice(0, 24).replace(/[：:·\s]+$/u, '');
 }
 
-function analysisCodeBlock(knowledgePoint: string): ResourceBlock {
+function analysisCodeBlock(knowledgePoint: string, pack: EvidencePack): ResourceBlock {
+  const dataset = pack.items.find((item) => item.sourceType === 'dataset');
+  const row = pack.items.find(isRowEvidence);
+  let record: Record<string, unknown> = {};
+  if (row) {
+    try { record = JSON.parse(row.content) as Record<string, unknown>; } catch { /* 证据不是 JSON 行时仍生成通用代码 */ }
+  }
+  const sourceLabel = dataset?.sourceTitle ?? dataset?.sourceId ?? '当前检索数据集';
+  const sourceKey = `${dataset?.sourceId ?? ''} ${sourceLabel}`;
+  const fileName = /metropt|compressor|空压机/i.test(sourceKey)
+    ? 'MetroPT3(AirCompressor).csv'
+    : /ai4i/i.test(sourceKey)
+    ? 'ai4i_2020.csv'
+    : `${String(dataset?.sourceId || 'current-dataset').replace(/[^a-z0-9_-]+/gi, '-')}.csv`;
+  const keys = Object.keys(record);
+  const timeField = keys.find((key) => /timestamp|datetime|time|时间/i.test(key));
+  const numericFields = keys.filter((key) => {
+    if (/^(id|udi|rowid)$/i.test(key) || key === timeField) return false;
+    const value = record[key];
+    return typeof value === 'number' || (typeof value === 'string' && value.trim() !== '' && Number.isFinite(Number(value)));
+  }).slice(0, 6);
+  const lines = [
+    'import pandas as pd',
+    '',
+    `# 来源：${sourceLabel}（字段与样本应以当前检索证据为准）`,
+    `df = pd.read_csv(${JSON.stringify(fileName)})`,
+    'print(df.shape)',
+    'print(df.head())',
+  ];
+  if (timeField) {
+    lines.push('', `df[${JSON.stringify(timeField)}] = pd.to_datetime(df[${JSON.stringify(timeField)}], errors="coerce")`, `df = df.sort_values(${JSON.stringify(timeField)})`);
+  }
+  if (numericFields.length > 0) {
+    lines.push('', `numeric_fields = ${JSON.stringify(numericFields)}`, 'print(df[numeric_fields].describe())');
+  } else {
+    lines.push('', 'print(df.info())  # 先核对字段类型、缺失值与记录数');
+  }
   return {
     id: `resource-block-${randomUUID()}`,
     type: 'code',
@@ -771,17 +818,7 @@ function analysisCodeBlock(knowledgePoint: string): ResourceBlock {
     content: {
       language: 'python',
       caption: '分析入门：用 pandas 观察设备数据',
-      code: [
-        'import pandas as pd',
-        '',
-        'df = pd.read_csv("ai4i_2020.csv")',
-        'print(df.shape)                              # 行数与列数',
-        'print(df.head())                             # 先看几行长什么样',
-        'print(df["Machine failure"].value_counts())  # 故障样本有多少',
-        '',
-        'failed = df[df["Machine failure"] == 1]',
-        'print(failed[["Air temperature [K]", "Torque [Nm]", "Tool wear [min]"]].describe())',
-      ].join('\n'),
+      code: lines.join('\n'),
     },
     knowledgePointIds: [knowledgePoint],
     evidenceIds: [],

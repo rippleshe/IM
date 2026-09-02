@@ -42,7 +42,7 @@ export interface PlannerSignals {
 
 const BASE_TIMEOUT_MS = 90_000;
 /** 生成节点：推理模型输出长文（含思维段）需要宽松预算 */
-const GENERATION_TIMEOUT_MS = 240_000;
+const GENERATION_TIMEOUT_MS = 420_000;
 
 interface NodeSeed {
   key: RunNodeKey;

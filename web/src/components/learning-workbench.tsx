@@ -205,7 +205,10 @@ export function LearningWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
       const pathData = await pathResponse.json() as { path?: PathGraph };
       if (pathData.path) {
         setPath(pathData.path);
-        setSelectedNodeId((current) => current && pathData.path!.nodes.some((item) => item.id === current) ? current : pathData.path!.nodes[0]?.id ?? null);
+        const rememberedId = readRememberedNodeId(pathData.path);
+        setSelectedNodeId((current) => current && pathData.path!.nodes.some((item) => item.id === current)
+          ? current
+          : rememberedId ?? pathData.path!.nodes[0]?.id ?? null);
       }
     } catch { /* 证据刷新失败时保留当前页面，下一次聚焦再试 */ }
   }, [apiBase]);
