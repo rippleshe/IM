@@ -108,6 +108,10 @@ function notifyEvidenceUpdated() {
   if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent("im-training-agent:learning-evidence-updated"));
 }
 
+function currentTimestamp() {
+  return Date.now();
+}
+
 type MermaidRelation = { from: string; to: string };
 
 function normalizeMermaidCode(source: string): string {
@@ -261,7 +265,6 @@ function ResourceFrontmatter({ asset, onOpenValidation, onSaveTags }: { asset: R
   const [tags, setTags] = useState(() => defaultAssetTags(asset));
   const [tagDraft, setTagDraft] = useState("");
   const [savingTags, setSavingTags] = useState(false);
-  useEffect(() => { setTags(defaultAssetTags(asset)); setEditingTags(false); setTagDraft(""); }, [asset.id, asset.tags, asset.type]);
   const saveTags = async (nextTags = tags) => {
     const next = Array.from(new Set(nextTags.map((tag) => tag.trim()).filter(Boolean))).slice(0, 12);
     setSavingTags(true);
@@ -307,15 +310,7 @@ export function ResourceWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
 
   const activeAssets = useMemo(() => assets.filter((asset) => asset.type === activeType), [assets, activeType]);
   const selectedAsset = assets.find((asset) => asset.id === selectedId) ?? null;
-
-  const loadAssets = useCallback(async () => {
-    const response = await fetch(`${apiBase}/api/learning/assets`, { credentials: "include" });
-    const data = await response.json() as { success?: boolean; error?: string; assets?: ResourceAsset[] };
-    if (!response.ok || !data.success) throw new Error(data.error || "学习资产读取失败");
-    const nextAssets = data.assets ?? [];
-    setAssets(nextAssets);
-    setSelectedId((current) => current && nextAssets.some((asset) => asset.id === current) ? current : (nextAssets.find((asset) => asset.type === activeType)?.id ?? null));
-  }, [activeType, apiBase]);
+  const selectedReader = reader?.asset.id === selectedId ? reader : null;
 
   const loadReader = useCallback(async (assetId: string) => {
     const response = await fetch(`${apiBase}/api/learning/assets/${encodeURIComponent(assetId)}/reader`, { credentials: "include" });
@@ -324,18 +319,30 @@ export function ResourceWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
     return { asset: data.asset, pageNotes: data.pageNotes ?? [], feedback: data.feedback ?? null, quizAttempts: data.quizAttempts ?? [] } satisfies ReaderData;
   }, [apiBase]);
 
-  useEffect(() => { void loadAssets().catch((error) => setNotice(error instanceof Error ? error.message : "学习资产读取失败")).finally(() => setLoading(false)); }, [loadAssets]);
+  useEffect(() => {
+    let active = true;
+    void fetch(`${apiBase}/api/learning/assets`, { credentials: "include" })
+      .then(async (response) => {
+        const data = await response.json() as { success?: boolean; error?: string; assets?: ResourceAsset[] };
+        if (!response.ok || !data.success) throw new Error(data.error || "学习资产读取失败");
+        if (!active) return;
+        const nextAssets = data.assets ?? [];
+        setAssets(nextAssets);
+        setSelectedId((current) => current && nextAssets.some((asset) => asset.id === current) ? current : (nextAssets.find((asset) => asset.type === "lecture")?.id ?? null));
+      })
+      .catch((error) => { if (active) setNotice(error instanceof Error ? error.message : "学习资产读取失败"); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [apiBase]);
   useEffect(() => {
     const requestId = ++readerRequestRef.current;
-    if (!selectedId) { setReader(null); return; }
-    setReader(null);
+    if (!selectedId) return;
     void loadReader(selectedId).then((nextReader) => {
       if (requestId === readerRequestRef.current) setReader(nextReader);
     }).catch((error) => {
       if (requestId === readerRequestRef.current) setNotice(error instanceof Error ? error.message : "资源内容读取失败");
     });
   }, [loadReader, selectedId]);
-  useEffect(() => { setSelectedQuote(""); }, [selectedId]);
   useEffect(() => {
     if (!resizing) return;
     const move = (event: MouseEvent) => setNotesWidth(Math.max(280, Math.min(480, window.innerWidth - event.clientX)));
@@ -348,6 +355,13 @@ export function ResourceWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
   const selectType = (type: ResourceType) => {
     setActiveType(type);
     setSelectedId(assets.find((asset) => asset.type === type)?.id ?? null);
+    setSelectedQuote("");
+    setNotice("");
+  };
+
+  const selectAsset = (assetId: string) => {
+    setSelectedId(assetId);
+    setSelectedQuote("");
     setNotice("");
   };
 
@@ -407,22 +421,22 @@ export function ResourceWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
           <div className="resource-folder-heading"><span>资源库</span><span>{assets.length} 份</span></div>
           {typeItems.map((item) => { const Icon = item.icon; const active = activeType === item.type; const count = assets.filter((asset) => asset.type === item.type).length; return <button key={item.type} type="button" onClick={() => selectType(item.type)} className={`resource-folder-row ${active ? "resource-folder-row-active" : ""}`}><Icon className="h-4 w-4 shrink-0" /><span className="flex-1">{item.label}</span>{count > 0 ? <span className="resource-folder-count">{count}</span> : null}</button>; })}
         </nav>
-        <div className="resource-file-list min-h-0 flex-1 overflow-y-auto p-2">{loading ? <div className="px-2 py-4 text-xs text-muted-foreground">正在读取资源</div> : activeAssets.length === 0 ? <div className="border border-dashed px-3 py-8 text-center text-xs leading-5 text-muted-foreground">还没有{typeLabel(activeType)}，从学习页生成后会出现在这里。</div> : <div className="space-y-0.5">{activeAssets.map((asset) => <article key={asset.id} className={`resource-file-row group ${selectedId === asset.id ? "resource-file-row-active" : ""}`}><button type="button" onClick={() => setSelectedId(asset.id)} className="flex min-w-0 flex-1 items-start gap-2 text-left" title={asset.title}><FileText className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#8aa0b7]" /><span className="min-w-0"><span className="block truncate text-xs font-medium leading-5">{conciseAssetTitle(asset.title, asset.type)}</span><span className="mt-0.5 block text-[10px] text-muted-foreground">{new Intl.DateTimeFormat("zh-CN", { month: "numeric", day: "numeric" }).format(asset.createdAt)}</span></span></button><button type="button" onClick={() => void deleteAsset(asset)} className="mt-1 inline-flex items-center gap-1 text-[10px] text-muted-foreground opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100" aria-label={`删除${asset.title}`}><Trash2 className="h-3 w-3" /></button></article>)}</div>}</div>
+        <div className="resource-file-list min-h-0 flex-1 overflow-y-auto p-2">{loading ? <div className="px-2 py-4 text-xs text-muted-foreground">正在读取资源</div> : activeAssets.length === 0 ? <div className="border border-dashed px-3 py-8 text-center text-xs leading-5 text-muted-foreground">还没有{typeLabel(activeType)}，从学习页生成后会出现在这里。</div> : <div className="space-y-0.5">{activeAssets.map((asset) => <article key={asset.id} className={`resource-file-row group ${selectedId === asset.id ? "resource-file-row-active" : ""}`}><button type="button" onClick={() => selectAsset(asset.id)} className="flex min-w-0 flex-1 items-start gap-2 text-left" title={asset.title}><FileText className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#8aa0b7]" /><span className="min-w-0"><span className="block truncate text-xs font-medium leading-5">{conciseAssetTitle(asset.title, asset.type)}</span><span className="mt-0.5 block text-[10px] text-muted-foreground">{new Intl.DateTimeFormat("zh-CN", { month: "numeric", day: "numeric" }).format(asset.createdAt)}</span></span></button><button type="button" onClick={() => void deleteAsset(asset)} className="mt-1 inline-flex items-center gap-1 text-[10px] text-muted-foreground opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100" aria-label={`删除${asset.title}`}><Trash2 className="h-3 w-3" /></button></article>)}</div>}</div>
         <div className="shrink-0 border-t p-3"><button type="button" onClick={() => setQaOpen(true)} className="resource-sidebar-action"><MessageCircleQuestion className="h-3.5 w-3.5" />资源问答</button></div>
       </aside>
 
       <section className="flex min-w-[460px] flex-1 flex-col overflow-hidden bg-card" aria-label="资源阅读与作答">
         {notice ? <div className="shrink-0 border-b border-destructive/20 bg-destructive/5 px-5 py-2 text-xs text-destructive">{notice}</div> : null}
-        {selectedAsset ? <ResourceFrontmatter asset={selectedAsset} onSaveTags={saveAssetTags} onOpenValidation={(runId) => {
+        {selectedAsset ? <ResourceFrontmatter key={selectedAsset.id} asset={selectedAsset} onSaveTags={saveAssetTags} onOpenValidation={(runId) => {
           try { window.localStorage.setItem("im-training-agent:validation-prefill", JSON.stringify({ runId })); } catch { /* 忽略 */ }
           onNavigate("validation");
         }} /> : null}
-        {reader?.asset.type === "lecture" ? <LectureReader reader={reader} onExport={exportAsset} onQuote={setSelectedQuote} /> : reader?.asset.type === "tiered_quiz" ? <QuizReader apiBase={apiBase} reader={reader} onReaderChange={setReader} /> : reader?.asset.type === "presentation" ? <PresentationReader reader={reader} onExport={exportAsset} /> : reader ? <GenericReader apiBase={apiBase} reader={reader} onReaderChange={setReader} onExport={exportAsset} /> : loading ? <div className="flex h-full items-center justify-center text-sm text-muted-foreground">正在读取资源</div> : <EmptyReader label={typeLabel(activeType)} />}
+        {selectedReader?.asset.type === "lecture" ? <LectureReader reader={selectedReader} onExport={exportAsset} onQuote={setSelectedQuote} /> : selectedReader?.asset.type === "tiered_quiz" ? <QuizReader key={selectedReader.asset.id} apiBase={apiBase} reader={selectedReader} onReaderChange={setReader} /> : selectedReader?.asset.type === "presentation" ? <PresentationReader reader={selectedReader} onExport={exportAsset} /> : selectedReader ? <GenericReader apiBase={apiBase} reader={selectedReader} onReaderChange={setReader} onExport={exportAsset} /> : loading || selectedAsset ? <div className="flex h-full items-center justify-center text-sm text-muted-foreground">正在读取资源</div> : <EmptyReader label={typeLabel(activeType)} />}
       </section>
 
       <div role="separator" aria-orientation="vertical" onMouseDown={() => setResizing(true)} className="w-1.5 shrink-0 cursor-col-resize bg-border/60 transition-colors hover:bg-foreground/30" />
       <aside style={{ width: notesWidth }} className="flex shrink-0 flex-col border-l bg-muted/15" aria-label="资源笔记或解析">
-        {reader?.asset.type === "lecture" ? <LectureNotes apiBase={apiBase} reader={reader} selectedQuote={selectedQuote} onClearQuote={() => setSelectedQuote("")} onReaderChange={setReader} onReinforce={() => reinforceFromAsset(reader.asset, reader.feedback?.masteryLevel ?? null)} /> : reader?.asset.type === "tiered_quiz" ? <QuizAnswerPanel reader={reader} /> : reader ? <GenericFeedback apiBase={apiBase} reader={reader} onReaderChange={setReader} onReinforce={() => reinforceFromAsset(reader.asset, reader.feedback?.masteryLevel ?? null)} /> : <div className="flex h-full items-center justify-center px-8 text-center text-sm text-muted-foreground">选择一份资源后，在这里查看笔记、反馈或答案解析。</div>}
+        {selectedReader?.asset.type === "lecture" ? <LectureNotes key={selectedReader.asset.id} apiBase={apiBase} reader={selectedReader} selectedQuote={selectedQuote} onClearQuote={() => setSelectedQuote("")} onReaderChange={setReader} onReinforce={() => reinforceFromAsset(selectedReader.asset, selectedReader.feedback?.masteryLevel ?? null)} /> : selectedReader?.asset.type === "tiered_quiz" ? <QuizAnswerPanel reader={selectedReader} /> : selectedReader ? <GenericFeedback apiBase={apiBase} reader={selectedReader} onReaderChange={setReader} onReinforce={() => reinforceFromAsset(selectedReader.asset, selectedReader.feedback?.masteryLevel ?? null)} /> : <div className="flex h-full items-center justify-center px-8 text-center text-sm text-muted-foreground">选择一份资源后，在这里查看笔记、反馈或答案解析。</div>}
       </aside>
     </div>
     {settingsOpen && <SettingsDialog apiBase={apiBase} onClose={() => setSettingsOpen(false)} />}
@@ -554,7 +568,6 @@ function LectureNotes({ apiBase, reader, selectedQuote, onClearQuote, onReaderCh
   const [saved, setSaved] = useState(false);
   const [noteError, setNoteError] = useState("");
   const notes = reader.pageNotes.filter((note) => note.content.trim()).sort((a, b) => b.updatedAt - a.updatedAt);
-  useEffect(() => { setDraft(""); setEditingKey(null); setSaved(false); }, [reader.asset.id]);
   const startNewNote = () => { setEditingKey(null); setDraft(""); setSaved(false); setNoteError(""); };
   const editNote = (note: PageNote) => { setEditingKey(note.pageKey); setDraft(note.content); setSaved(false); setNoteError(""); };
   const insertQuote = () => {
@@ -582,7 +595,7 @@ function LectureNotes({ apiBase, reader, selectedQuote, onClearQuote, onReaderCh
     const response = await fetch(`${apiBase}/api/learning/assets/${encodeURIComponent(reader.asset.id)}/feedback`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ completed: true, masteryLevel: level }) });
     const data = await response.json() as { success?: boolean; error?: string };
     if (!response.ok || !data.success) return;
-    onReaderChange({ ...reader, feedback: { completed: true, mastered: level === "high", masteryLevel: level, updatedAt: Date.now() } });
+    onReaderChange({ ...reader, feedback: { completed: true, mastered: level === "high", masteryLevel: level, updatedAt: currentTimestamp() } });
     notifyEvidenceUpdated();
   };
   const level = reader.feedback?.masteryLevel;
@@ -606,12 +619,12 @@ function QuizReader({ apiBase, reader, onReaderChange }: { apiBase: string; read
   const [showReference, setShowReference] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState("");
-  const startedAt = useRef(Date.now());
-  useEffect(() => { setIndex(0); setAnswerId(""); setShowReference(false); setSubmitError(""); startedAt.current = Date.now(); }, [reader.asset.id]);
+  const startedAt = useRef<number | null>(null);
+  useEffect(() => { startedAt.current = currentTimestamp(); }, []);
   const question = questions[index];
   const questionType: QuizQuestionType = question?.type ?? "choice";
   const latest = reader.quizAttempts.filter((attempt) => attempt.questionId === question?.id).at(-1) ?? null;
-  const jump = (next: number) => { setIndex(next); setAnswerId(""); setShowReference(false); setSubmitError(""); startedAt.current = Date.now(); };
+  const jump = (next: number) => { setIndex(next); setAnswerId(""); setShowReference(false); setSubmitError(""); startedAt.current = currentTimestamp(); };
   const submit = async (selfAssessed?: boolean) => {
     if (!question || submitting) return;
     const answer = questionType === "choice" ? answerId : answerId.trim();
@@ -622,7 +635,7 @@ function QuizReader({ apiBase, reader, onReaderChange }: { apiBase: string; read
     try {
       const response = await fetch(`${apiBase}/api/learning/assets/${encodeURIComponent(reader.asset.id)}/quiz-attempts`, {
         method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ questionId: question.id, answerId: answer, durationMs: Date.now() - startedAt.current, selfAssessed }),
+        body: JSON.stringify({ questionId: question.id, answerId: answer, durationMs: Math.max(0, currentTimestamp() - (startedAt.current ?? currentTimestamp())), selfAssessed }),
       });
       const data = await response.json() as { success?: boolean; attempt?: QuizAttempt; error?: string };
       if (!response.ok || !data.success || !data.attempt) throw new Error(data.error || "作答提交失败");

@@ -1,11 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Bot,
   Download,
   Eraser,
-  FilePlus2,
   ListTree,
   LogOut,
   MessageSquarePlus,
@@ -13,7 +12,6 @@ import {
   Paperclip,
   Send,
   Sparkles,
-  UserRound,
   X,
 } from "lucide-react";
 import type { AuthenticatedUser } from "@/components/auth-entry";
@@ -25,7 +23,6 @@ import { ContextClearDialog } from "@/components/context-clear-dialog";
 import { DagProgress } from "@/components/dag-progress";
 
 type ResourceType = "lecture" | "tiered_quiz" | "presentation" | "concept_map";
-type AgentId = "learning_planning" | "evidence_retrieval" | "domain_expert" | "resource_generation" | "cross_validation" | "privacy_compliance" | "orchestrator";
 type StudyAsset = { id: string; title: string; type: ResourceType; auditStatus: string; persisted: boolean; producer?: "llm" | "rule" | "unknown"; generationNote?: string; failureReason?: string };
 type StudyMessage = {
   id: string;
@@ -46,6 +43,45 @@ const selectedResourceTypeStorageKey = "im-training-agent:selected-resource-type
 
 function isResourceType(value: unknown): value is ResourceType {
   return typeof value === "string" && resourceOptions.some((item) => item.value === value);
+}
+
+function storedResourceType(): ResourceType {
+  if (typeof window === "undefined") return "lecture";
+  try {
+    const value = window.localStorage.getItem(selectedResourceTypeStorageKey);
+    return isResourceType(value) ? value : "lecture";
+  } catch { return "lecture"; }
+}
+
+function persistResourceType(value: ResourceType) {
+  try { window.localStorage.setItem(selectedResourceTypeStorageKey, value); } catch { /* 本地存储不可用时仍保留当前选择 */ }
+}
+
+function currentTimestamp() {
+  return Date.now();
+}
+
+function readRememberedNodeId(graph: PathGraph): string | null {
+  try {
+    const raw = window.localStorage.getItem("im-training-agent:selected-path-node");
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { nodeId?: unknown; createdAt?: unknown };
+    if (typeof parsed.createdAt === "number" && Date.now() - parsed.createdAt > 86_400_000) return null;
+    return typeof parsed.nodeId === "string" && graph.nodes.some((node) => node.id === parsed.nodeId) ? parsed.nodeId : null;
+  } catch { return null; }
+}
+
+function consumeStudyPrefill(graph: PathGraph): { nodeId: string | null; draft: string; resourceType: ResourceType | null } | null {
+  try {
+    const raw = window.localStorage.getItem("im-training-agent:study-prefill");
+    if (!raw) return null;
+    window.localStorage.removeItem("im-training-agent:study-prefill");
+    const parsed = JSON.parse(raw) as { draft?: unknown; knowledgePointId?: unknown; resourceType?: unknown; createdAt?: unknown };
+    if (typeof parsed.draft !== "string" || !parsed.draft.trim()) return null;
+    if (typeof parsed.createdAt === "number" && Date.now() - parsed.createdAt > 120_000) return null;
+    const node = typeof parsed.knowledgePointId === "string" ? graph.nodes.find((item) => item.knowledgePointId === parsed.knowledgePointId) : null;
+    return { nodeId: node?.id ?? null, draft: parsed.draft, resourceType: isResourceType(parsed.resourceType) ? parsed.resourceType : null };
+  } catch { return null; }
 }
 
 type RunNodeState = "running" | "succeeded" | "failed" | "revising";
@@ -122,7 +158,7 @@ export function LearningWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
   const [messages, setMessages] = useState<StudyMessage[]>([]);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
-  const [resourceType, setResourceType] = useState<ResourceType>("lecture");
+  const [resourceType, setResourceType] = useState<ResourceType>(() => storedResourceType());
   const [attachedFile, setAttachedFile] = useState<{ name: string; content: string; allowKnowledgeRetention: boolean } | null>(null);
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
@@ -150,74 +186,7 @@ export function LearningWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
 
   const applyResourceType = (value: ResourceType) => {
     setResourceType(value);
-    try { window.localStorage.setItem(selectedResourceTypeStorageKey, value); } catch { /* 本地存储不可用时仍保留当前选择 */ }
-  };
-
-  const load = useCallback(async () => {
-    const [pathResponse, messageResponse] = await Promise.all([
-      fetch(`${apiBase}/api/learning/path-graph`, { credentials: "include" }),
-      fetch(`${apiBase}/api/learning/chat?surface=study`, { credentials: "include" }),
-    ]);
-    if (!pathResponse.ok || !messageResponse.ok) throw new Error("学习空间读取失败，请重新登录后再试");
-    const pathData = await pathResponse.json() as { path?: PathGraph };
-    const messageData = await messageResponse.json() as { messages?: StudyMessage[]; studyRunning?: boolean };
-    const nextPath = pathData.path ?? { nodes: [], edges: [] };
-    setPath(nextPath);
-    const studyMessages = messageData.messages ?? [];
-    const serverRunRunning = Boolean(messageData.studyRunning);
-    setMessages(studyMessages);
-    setStudyRunning(serverRunRunning);
-    const prefilledNodeId = consumeStudyPrefill(nextPath);
-    const rememberedId = readRememberedNodeId(nextPath);
-    setSelectedNodeId((current) => prefilledNodeId ?? rememberedId ?? (current && nextPath.nodes.some((item) => item.id === current) ? current : nextPath.nodes[0]?.id ?? null));
-    if (!serverRunRunning) {
-      const latestRunId = [...studyMessages].reverse().find((message) => typeof message.metadata.runId === "string")?.metadata.runId;
-      if (latestRunId) {
-        try {
-          const traceResponse = await fetch(`${apiBase}/api/learning/runs/${encodeURIComponent(latestRunId)}/trace`, { credentials: "include" });
-          if (traceResponse.ok) {
-            const trace = await traceResponse.json() as { run?: { status?: string }; nodes?: Array<{ nodeKey?: string; status?: string; resultSummary?: string | null }> };
-            const states = (trace.nodes ?? []).filter((node) => typeof node.nodeKey === "string").map((node) => ({ key: node.nodeKey as string, state: node.status === "failed" ? "failed" as const : node.status === "running" ? "running" as const : "succeeded" as const }));
-            const events = (trace.nodes ?? []).filter((node) => typeof node.nodeKey === "string" && node.resultSummary).map((node, index) => ({ id: `restored-${latestRunId}-${index}`, type: node.status === "failed" ? "node.failed" : "node.succeeded", nodeKey: node.nodeKey as string, summary: node.resultSummary as string }));
-            setFinishedRunId(latestRunId);
-            setNodeStates(states);
-            setLiveEvents(events.slice(-16));
-            setLiveSummary(trace.run?.status === "succeeded" ? "本次任务已完成，处理记录已保留，可继续查看。" : "本次任务已结束，可查看处理记录。");
-          }
-        } catch { /* 历史过程读取失败时仍保留消息记录 */ }
-      }
-    }
-  }, [apiBase]);
-
-  // 消费资源页“针对薄弱点生成练习”带来的预填任务：自动填草稿、切资源类型并关联路径节点。
-  const readRememberedNodeId = (graph: PathGraph): string | null => {
-    try {
-      const raw = window.localStorage.getItem("im-training-agent:selected-path-node");
-      if (!raw) return null;
-      const parsed = JSON.parse(raw) as { nodeId?: unknown; createdAt?: unknown };
-      if (typeof parsed.createdAt === "number" && Date.now() - parsed.createdAt > 86_400_000) return null;
-      return typeof parsed.nodeId === "string" && graph.nodes.some((node) => node.id === parsed.nodeId) ? parsed.nodeId : null;
-    } catch { return null; }
-  };
-
-  const consumeStudyPrefill = (graph: PathGraph): string | null => {
-    try {
-      const raw = window.localStorage.getItem("im-training-agent:study-prefill");
-      if (!raw) return null;
-      window.localStorage.removeItem("im-training-agent:study-prefill");
-      const parsed = JSON.parse(raw) as { draft?: unknown; knowledgePointId?: unknown; resourceType?: unknown; createdAt?: unknown };
-      if (typeof parsed.draft !== "string" || !parsed.draft.trim()) return null;
-      if (typeof parsed.createdAt === "number" && Date.now() - parsed.createdAt > 120_000) return null;
-      setDraft(parsed.draft);
-      if (isResourceType(parsed.resourceType)) {
-        applyResourceType(parsed.resourceType);
-      }
-      if (typeof parsed.knowledgePointId === "string" && parsed.knowledgePointId) {
-        const node = graph.nodes.find((item) => item.knowledgePointId === parsed.knowledgePointId);
-        return node?.id ?? null;
-      }
-      return null;
-    } catch { /* 预填数据损坏时直接忽略 */ return null; }
+    persistResourceType(value);
   };
 
   const refreshMessages = useCallback(async () => {
@@ -326,36 +295,76 @@ export function LearningWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
   }, []);
 
   useEffect(() => {
-    try {
-      const rememberedType = window.localStorage.getItem(selectedResourceTypeStorageKey);
-      if (isResourceType(rememberedType)) setResourceType(rememberedType);
-    } catch { /* 本地存储不可用时使用讲义 */ }
-  }, []);
-
-  useEffect(() => {
     let active = true;
-    void load().catch((error) => {
+    void Promise.all([
+      fetch(`${apiBase}/api/learning/path-graph`, { credentials: "include" }),
+      fetch(`${apiBase}/api/learning/chat?surface=study`, { credentials: "include" }),
+    ]).then(async ([pathResponse, messageResponse]) => {
+      if (!pathResponse.ok || !messageResponse.ok) throw new Error("学习空间读取失败，请重新登录后再试");
+      const [pathData, messageData] = await Promise.all([
+        pathResponse.json() as Promise<{ path?: PathGraph }>,
+        messageResponse.json() as Promise<{ messages?: StudyMessage[]; studyRunning?: boolean }>,
+      ]);
+      if (!active) return;
+      const nextPath = pathData.path ?? { nodes: [], edges: [] };
+      const studyMessages = messageData.messages ?? [];
+      const serverRunRunning = Boolean(messageData.studyRunning);
+      const prefill = consumeStudyPrefill(nextPath);
+      setPath(nextPath);
+      setMessages(studyMessages);
+      setStudyRunning(serverRunRunning);
+      if (prefill) {
+        setDraft(prefill.draft);
+        if (prefill.resourceType) {
+          setResourceType(prefill.resourceType);
+          persistResourceType(prefill.resourceType);
+        }
+      }
+      const rememberedId = readRememberedNodeId(nextPath);
+      setSelectedNodeId((current) => prefill?.nodeId ?? rememberedId ?? (current && nextPath.nodes.some((item) => item.id === current) ? current : nextPath.nodes[0]?.id ?? null));
+      if (serverRunRunning) return;
+      const latestRunId = [...studyMessages].reverse().find((message) => typeof message.metadata.runId === "string")?.metadata.runId;
+      if (!latestRunId) return;
+      return fetch(`${apiBase}/api/learning/runs/${encodeURIComponent(latestRunId)}/trace`, { credentials: "include" })
+        .then(async (traceResponse) => {
+          if (!traceResponse.ok || !active) return;
+          const trace = await traceResponse.json() as { run?: { status?: string }; nodes?: Array<{ nodeKey?: string; status?: string; resultSummary?: string | null }> };
+          if (!active) return;
+          const states = (trace.nodes ?? []).filter((node) => typeof node.nodeKey === "string").map((node) => ({ key: node.nodeKey as string, state: node.status === "failed" ? "failed" as const : node.status === "running" ? "running" as const : "succeeded" as const }));
+          const events = (trace.nodes ?? []).filter((node) => typeof node.nodeKey === "string" && node.resultSummary).map((node, index) => ({ id: `restored-${latestRunId}-${index}`, type: node.status === "failed" ? "node.failed" : "node.succeeded", nodeKey: node.nodeKey as string, summary: node.resultSummary as string }));
+          setFinishedRunId(latestRunId);
+          setNodeStates(states);
+          setLiveEvents(events.slice(-16));
+          setLiveSummary(trace.run?.status === "succeeded" ? "本次任务已完成，处理记录已保留，可继续查看。" : "本次任务已结束，可查看处理记录。");
+        }).catch(() => undefined);
+    }).catch((error) => {
       if (active) setNotice(error instanceof Error ? error.message : "学习空间读取失败");
     }).finally(() => {
       if (active) setLoading(false);
     });
     return () => { active = false; };
-  }, [load]);
+  }, [apiBase]);
 
   // 页面切换或刷新后恢复最近一次协同的公开过程，避免运行记录只在当前挂载周期内可见。
   useEffect(() => {
+    let active = true;
     try {
       const raw = window.localStorage.getItem(progressStorageKey);
       if (!raw) return;
       const snapshot = JSON.parse(raw) as { runId?: unknown; summary?: unknown; states?: unknown; events?: unknown; completed?: unknown };
       if (typeof snapshot.runId !== "string" || snapshot.completed !== true) return;
+      const restoredRunId = snapshot.runId;
       const states = Array.isArray(snapshot.states) ? snapshot.states.filter((item): item is { key: string; state: RunNodeState } => Boolean(item) && typeof item === "object" && typeof (item as { key?: unknown }).key === "string" && ["running", "succeeded", "failed", "revising"].includes(String((item as { state?: unknown }).state))) : [];
       const events = Array.isArray(snapshot.events) ? snapshot.events.filter((item): item is { id: string; type: string; nodeKey: string | null; summary: string } => Boolean(item) && typeof item === "object" && typeof (item as { id?: unknown }).id === "string" && typeof (item as { summary?: unknown }).summary === "string") : [];
-      setFinishedRunId(snapshot.runId);
-      setNodeStates(states);
-      setLiveEvents(events);
-      setLiveSummary(typeof snapshot.summary === "string" ? snapshot.summary : "");
+      queueMicrotask(() => {
+        if (!active) return;
+        setFinishedRunId(restoredRunId);
+        setNodeStates(states);
+        setLiveEvents(events);
+        setLiveSummary(typeof snapshot.summary === "string" ? snapshot.summary : "");
+      });
     } catch { /* 本地快照损坏时不影响学习记录读取 */ }
+    return () => { active = false; };
   }, [progressStorageKey]);
 
   useEffect(() => {
@@ -391,20 +400,16 @@ export function LearningWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
     return () => { window.removeEventListener("mousemove", move); window.removeEventListener("mouseup", release); };
   }, [resizing]);
 
-  const selectedNode = path.nodes.find((node) => node.id === selectedNodeId) ?? null;
+  const mentionedNode = path.nodes.find((node) => draft.includes(`@${node.title}`)) ?? null;
+  const focusedNodeId = mentionedNode?.id ?? selectedNodeId;
+  const selectedNode = path.nodes.find((node) => node.id === focusedNodeId) ?? null;
 
   const selectNode = (node: PathNode) => {
     setSelectedNodeId(node.id);
     try {
-      window.localStorage.setItem("im-training-agent:selected-path-node", JSON.stringify({ nodeId: node.id, knowledgePointId: node.knowledgePointId, createdAt: Date.now() }));
+      window.localStorage.setItem("im-training-agent:selected-path-node", JSON.stringify({ nodeId: node.id, knowledgePointId: node.knowledgePointId, createdAt: currentTimestamp() }));
     } catch { /* 本地存储不可用时仍保留当前页面的选择 */ }
   };
-
-  // 手动输入 @节点名称 时也立即同步左右两侧焦点，避免必须从菜单选择。
-  useEffect(() => {
-    const mentioned = path.nodes.find((node) => draft.includes(`@${node.title}`));
-    if (mentioned && mentioned.id !== selectedNodeId) setSelectedNodeId(mentioned.id);
-  }, [draft, path.nodes, selectedNodeId]);
 
   const addMention = (node: PathNode) => {
     const mention = `@${node.title}`;
@@ -420,7 +425,7 @@ export function LearningWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
       window.localStorage.setItem("im-training-agent:path-prefill", JSON.stringify({
         draft: `@${selectedNode.title} 请添加一个${kind}节点：`,
         nodeId: selectedNode.id,
-        createdAt: Date.now(),
+        createdAt: currentTimestamp(),
       }));
     } catch { /* 存储不可用时仍可进入路径页继续调整 */ }
     onNavigate("path");
@@ -441,7 +446,7 @@ export function LearningWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
     try {
       const response = await fetch(`${apiBase}/api/learning/runs`, {
         method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ task: content, pathNodeId: selectedNodeId, resourceType, temporaryReference: attachedFile }),
+        body: JSON.stringify({ task: content, pathNodeId: focusedNodeId, resourceType, temporaryReference: attachedFile }),
       });
       const data = await response.json() as { success?: boolean; error?: string; runId?: string };
       if (!response.ok || !data.success || !data.runId) throw new Error(data.error || "学习任务启动失败");
@@ -548,7 +553,7 @@ export function LearningWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
       </section>
 
       <div role="separator" aria-orientation="vertical" onMouseDown={() => setResizing("right")} className="w-1.5 shrink-0 cursor-col-resize bg-border/60 transition-colors hover:bg-foreground/30" />
-      <aside style={{ width: rightWidth }} className="flex shrink-0 flex-col bg-muted/15" aria-label="当前学习路径"><div className="workspace-pane-titlebar flex shrink-0 items-center border-b bg-background px-4 py-3.5"><div className="flex items-center gap-2"><Network className="h-4 w-4" /><h2 className="text-sm font-semibold">学习路径</h2></div></div><div className="min-h-0 flex-1 p-3">{path.nodes.length ? <TreeCanvas graph={path} selectedNodeId={selectedNodeId} onSelect={selectNode} /> : <div className="flex h-full items-center justify-center rounded-xl border border-dashed text-xs text-muted-foreground">尚未建立学习路径</div>}</div></aside>
+      <aside style={{ width: rightWidth }} className="flex shrink-0 flex-col bg-muted/15" aria-label="当前学习路径"><div className="workspace-pane-titlebar flex shrink-0 items-center border-b bg-background px-4 py-3.5"><div className="flex items-center gap-2"><Network className="h-4 w-4" /><h2 className="text-sm font-semibold">学习路径</h2></div></div><div className="min-h-0 flex-1 p-3">{path.nodes.length ? <TreeCanvas graph={path} selectedNodeId={focusedNodeId} onSelect={selectNode} /> : <div className="flex h-full items-center justify-center rounded-xl border border-dashed text-xs text-muted-foreground">尚未建立学习路径</div>}</div></aside>
     </div>
 
     {profileOpen && <ProfileDialog apiBase={apiBase} user={user} onUserChange={onUserChange} onClose={() => setProfileOpen(false)} />}

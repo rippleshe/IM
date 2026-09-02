@@ -19,8 +19,6 @@ import type { AuthenticatedUser } from "@/components/auth-entry";
 import { AvatarBubble, ProfileDialog } from "@/components/profile-dialog";
 import { SettingsDialog } from "@/components/settings-dialog";
 
-type ResourceType = "lecture" | "tiered_quiz" | "presentation" | "concept_map";
-
 type RunSummary = {
   id: string;
   status: string;
@@ -128,10 +126,6 @@ const RESOURCE_LABELS: Record<string, string> = {
   lecture: "讲义", tiered_quiz: "分层习题", presentation: "PPT", concept_map: "知识脉络",
 };
 
-function rateText(rate: number | null): string {
-  return rate === null ? "暂无数据" : `${(rate * 100).toFixed(1)}%`;
-}
-
 function readableAuditText(text: string): string {
   return text
     .replace(/manual_review_required/g, "自动检查未通过")
@@ -231,23 +225,47 @@ export function ValidationWorkbench({ apiBase, user, onLogout, onNavigate, onUse
     setSelectedRunId((current) => current ?? list[0]?.id ?? null);
   }, [apiBase]);
 
-  const loadTrace = useCallback(async (runId: string) => {
-    setTrace(null);
-    setVerify(null);
-    const response = await fetch(`${apiBase}/api/learning/runs/${encodeURIComponent(runId)}/trace`, { credentials: "include" });
-    if (!response.ok) {
-      setNotice("验证记录读取失败：该运行可能尚无产物链");
-      return;
-    }
-    setNotice("");
-    const data = await response.json() as TraceData;
-    setTrace(data);
-  }, [apiBase]);
-
-  useEffect(() => { void loadRuns(); }, [loadRuns]);
   useEffect(() => {
-    if (selectedRunId) void loadTrace(selectedRunId);
-  }, [selectedRunId, loadTrace]);
+    let active = true;
+    void fetch(`${apiBase}/api/learning/runs`, { credentials: "include" })
+      .then(async (response) => {
+        const data = await response.json() as { runs?: RunSummary[] };
+        if (!response.ok) throw new Error("任务记录读取失败");
+        if (!active) return;
+        const list = data.runs ?? [];
+        setRuns(list);
+        try {
+          const raw = window.localStorage.getItem("im-training-agent:validation-prefill");
+          if (raw) {
+            window.localStorage.removeItem("im-training-agent:validation-prefill");
+            const parsed = JSON.parse(raw) as { runId?: unknown };
+            if (typeof parsed.runId === "string" && list.some((run) => run.id === parsed.runId)) {
+              setSelectedRunId(parsed.runId);
+              return;
+            }
+          }
+        } catch { /* 预填损坏忽略 */ }
+        setSelectedRunId((current) => current ?? list[0]?.id ?? null);
+      })
+      .catch((error) => { if (active) setNotice(error instanceof Error ? error.message : "任务记录读取失败"); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [apiBase]);
+  useEffect(() => {
+    if (!selectedRunId) return;
+    let active = true;
+    void fetch(`${apiBase}/api/learning/runs/${encodeURIComponent(selectedRunId)}/trace`, { credentials: "include" })
+      .then(async (response) => {
+        if (!response.ok) throw new Error("验证记录读取失败：该运行可能尚无产物链");
+        const data = await response.json() as TraceData;
+        if (!active) return;
+        setNotice("");
+        setTrace(data);
+        setVerify(null);
+      })
+      .catch((error) => { if (active) { setTrace(null); setVerify(null); setNotice(error instanceof Error ? error.message : "验证记录读取失败"); } });
+    return () => { active = false; };
+  }, [apiBase, selectedRunId]);
 
   const runVerify = async () => {
     if (!selectedRunId) return;

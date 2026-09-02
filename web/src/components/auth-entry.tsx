@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { ArrowRight, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -36,10 +36,6 @@ export function AuthEntry({ apiBase, user, onAuthenticated }: AuthEntryProps) {
   const [selfDescription, setSelfDescription] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-
-  useEffect(() => {
-    if (user && !user.onboardingCompleted) setDisplayName(user.displayName);
-  }, [user]);
 
   const submitCredentials = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();

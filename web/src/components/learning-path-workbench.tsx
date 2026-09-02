@@ -172,26 +172,23 @@ function pathProducerLabel(producer: ChatMessage["metadata"]["producer"]): strin
 
 /** 里程碑 G（路径页小改）：节点建议的“依据”——最近一次持久化学习决策与 BKT 前后值 */
 function NodeDecisionBasis({ apiBase, knowledgePointId }: { apiBase: string; knowledgePointId: string }) {
-  const [decision, setDecision] = useState<LearningDecisionSummary | null>(null);
-  const [loaded, setLoaded] = useState(false);
+  const [result, setResult] = useState<{ knowledgePointId: string; decision: LearningDecisionSummary | null; loaded: boolean }>({ knowledgePointId, decision: null, loaded: false });
 
   useEffect(() => {
     let active = true;
-    setLoaded(false);
-    setDecision(null);
     void fetch(`${apiBase}/api/learning/decisions?limit=30`, { credentials: "include" })
       .then(async (response) => {
         const data = await response.json() as { decisions?: LearningDecisionSummary[] };
         if (!active) return;
         const match = (data.decisions ?? []).find((item) => item.knowledgePointId === knowledgePointId);
-        setDecision(match ?? null);
-        setLoaded(true);
+        setResult({ knowledgePointId, decision: match ?? null, loaded: true });
       })
-      .catch(() => { if (active) setLoaded(true); });
+      .catch(() => { if (active) setResult({ knowledgePointId, decision: null, loaded: true }); });
     return () => { active = false; };
   }, [apiBase, knowledgePointId]);
 
-  if (!loaded) return null;
+  if (!result.loaded || result.knowledgePointId !== knowledgePointId) return null;
+  const decision = result.decision;
   if (!decision) return null;
   const resourceLabel = decision.recommendedResourceType === "lecture" ? "讲义"
     : decision.recommendedResourceType === "tiered_quiz" ? "分层习题"
@@ -246,7 +243,7 @@ export function PathNodeDetails({
       <div className="path-node-section-label">这一节点要学会</div>
       <DescriptionList text={node.description} compact={compact} />
     </div>
-    <NodeDecisionBasis apiBase={apiBase} knowledgePointId={node.knowledgePointId} />
+    <NodeDecisionBasis key={node.knowledgePointId} apiBase={apiBase} knowledgePointId={node.knowledgePointId} />
     <div className="path-node-actions mt-4">
       <button type="button" onClick={onPrimary} className="path-node-primary inline-flex h-8 items-center justify-center gap-1.5 rounded-lg px-3 text-xs font-medium">{primaryLabel}</button>
       {onRequestNodeAddition ? <div className="flex flex-wrap gap-1.5">
@@ -259,13 +256,6 @@ export function PathNodeDetails({
     </div>
   </div>;
 }
-
-const relationLabels: Record<PathRelation, string> = {
-  prerequisite: "前置",
-  branch: "分支",
-  application: "应用",
-  review: "复习",
-};
 
 function statusDot(node: PathNode) {
   if (node.mastered) return "bg-emerald-600";
@@ -280,24 +270,6 @@ function nodeClassName(node: PathNode, selected: boolean, next = false) {
   if (node.userStatus === "completed") return `border-blue-300 bg-blue-50/60 hover:border-blue-500 ${ring}`;
   if (node.userStatus === "learning") return `border-amber-300 bg-amber-50/70 hover:border-amber-500 ${ring}`;
   return `border-border bg-card hover:border-foreground/40 ${ring}`;
-}
-
-function ProfileRadar({ items }: { items: ProfileMetric["radar"] }) {
-  const points = items.slice(0, 5);
-  if (points.length < 3) return <div className="rounded-xl border border-dashed px-3 py-7 text-center text-xs text-muted-foreground">积累更多学习记录后生成能力概览</div>;
-  const center = 50;
-  const radius = 30;
-  const angle = (index: number) => -Math.PI / 2 + (index * Math.PI * 2) / points.length;
-  const point = (index: number, scale: number) => `${center + Math.cos(angle(index)) * radius * scale},${center + Math.sin(angle(index)) * radius * scale}`;
-  return <div className="flex items-center gap-3">
-    <svg viewBox="0 0 100 100" className="h-32 w-32 shrink-0" aria-label="学习能力概览">
-      <polygon points={points.map((_, index) => point(index, 1)).join(" ")} fill="none" stroke="currentColor" strokeWidth="0.7" className="text-border" />
-      <polygon points={points.map((_, index) => point(index, 0.5)).join(" ")} fill="none" stroke="currentColor" strokeWidth="0.55" className="text-border" />
-      <polygon points={points.map((item, index) => point(index, Math.max(0.08, Math.min(1, item.score)))).join(" ")} fill="currentColor" fillOpacity="0.15" stroke="currentColor" strokeWidth="1.2" className="text-foreground" />
-      {points.map((item, index) => <text key={item.name} x={center + Math.cos(angle(index)) * 43} y={center + Math.sin(angle(index)) * 43} textAnchor="middle" dominantBaseline="middle" className="fill-muted-foreground text-[4.7px]">{item.name.slice(0, 5)}</text>)}
-    </svg>
-    <div className="min-w-0 flex-1 space-y-1.5">{points.map((item) => <div className="flex items-center justify-between gap-2 text-[11px]" key={item.name}><span className="truncate text-muted-foreground">{item.name}</span><span className="font-medium">{Math.round(item.score * 100)}%</span></div>)}</div>
-  </div>;
 }
 
 type TreeLayout = {
@@ -386,7 +358,13 @@ function getPathSequence(graph: PathGraph): PathNode[] {
 }
 
 export function TreeCanvas({ graph, selectedNodeId, onSelect }: { graph: PathGraph; selectedNodeId: string | null; onSelect: (node: PathNode) => void }) {
-  const [direction, setDirection] = useState<TreeDirection>("horizontal");
+  const [direction, setDirection] = useState<TreeDirection>(() => {
+    if (typeof window === "undefined") return "horizontal";
+    try {
+      const saved = window.localStorage.getItem("im-training-agent:path-direction");
+      return saved === "vertical" ? "vertical" : "horizontal";
+    } catch { return "horizontal"; }
+  });
   const layout = useMemo(() => getTreeLayout(graph, direction), [direction, graph]);
   const sequence = useMemo(() => getPathSequence(graph), [graph]);
   const nextNode = sequence.find((node) => node.userStatus !== "completed" && !node.mastered) ?? null;
@@ -395,14 +373,8 @@ export function TreeCanvas({ graph, selectedNodeId, onSelect }: { graph: PathGra
   const pinchRef = useRef<{ distance: number; zoom: number } | null>(null);
   const panRef = useRef<{ x: number; y: number; left: number; top: number } | null>(null);
   const [fitZoom, setFitZoom] = useState(1);
-  const [zoom, setZoom] = useState(1);
+  const [zoomOffset, setZoomOffset] = useState(0);
   const canvasPadding = 180;
-  useEffect(() => {
-    try {
-      const saved = window.localStorage.getItem("im-training-agent:path-direction");
-      if (saved === "horizontal" || saved === "vertical") setDirection(saved);
-    } catch { /* 本地存储不可用时使用横向布局 */ }
-  }, []);
   const clampZoom = (value: number) => Math.max(0.45, Math.min(1.8, Number(value.toFixed(2))));
   useEffect(() => {
     const viewport = viewportRef.current;
@@ -417,7 +389,7 @@ export function TreeCanvas({ graph, selectedNodeId, onSelect }: { graph: PathGra
     observer.observe(viewport);
     return () => observer.disconnect();
   }, [layout.height, layout.width]);
-  useEffect(() => setZoom(fitZoom), [fitZoom]);
+  const zoom = clampZoom(fitZoom + zoomOffset);
   useEffect(() => {
     const viewport = viewportRef.current;
     if (!viewport) return;
@@ -444,7 +416,7 @@ export function TreeCanvas({ graph, selectedNodeId, onSelect }: { graph: PathGra
     pointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
     if (pointersRef.current.size >= 2 && pinchRef.current?.distance) {
       event.preventDefault();
-      setZoom(clampZoom(pinchRef.current.zoom * (distanceOfTouches() / pinchRef.current.distance)));
+      setZoomOffset(clampZoom(pinchRef.current.zoom * (distanceOfTouches() / pinchRef.current.distance)) - fitZoom);
       return;
     }
     if (pointersRef.current.size === 1 && panRef.current) {
@@ -464,7 +436,7 @@ export function TreeCanvas({ graph, selectedNodeId, onSelect }: { graph: PathGra
     return next;
   });
   const resetViewport = () => {
-    setZoom(fitZoom);
+    setZoomOffset(0);
     const viewport = viewportRef.current;
     if (viewport) viewport.scrollTo({ left: Math.max(0, (layout.width * fitZoom + canvasPadding * 2 - viewport.clientWidth) / 2), top: Math.max(0, (layout.height * fitZoom + canvasPadding * 2 - viewport.clientHeight) / 2) });
   };
@@ -484,7 +456,7 @@ export function TreeCanvas({ graph, selectedNodeId, onSelect }: { graph: PathGra
         })}
       </div>
     </div>
-    <div ref={viewportRef} aria-label="可拖动学习路径画布" onWheel={(event) => { event.preventDefault(); setZoom((value) => clampZoom(value * (event.deltaY > 0 ? 0.9 : 1.1))); }} onPointerDown={(event) => { if ((event.target as HTMLElement).closest("button")) return; handlePointerDown(event); }} onPointerMove={handlePointerMove} onPointerUp={releasePointer} onPointerCancel={releasePointer} className="min-h-0 flex-1 cursor-grab select-none overflow-auto active:cursor-grabbing" style={{ touchAction: "none", overscrollBehavior: "contain" }}>
+    <div ref={viewportRef} aria-label="可拖动学习路径画布" onWheel={(event) => { event.preventDefault(); setZoomOffset(clampZoom(zoom * (event.deltaY > 0 ? 0.9 : 1.1)) - fitZoom); }} onPointerDown={(event) => { if ((event.target as HTMLElement).closest("button")) return; handlePointerDown(event); }} onPointerMove={handlePointerMove} onPointerUp={releasePointer} onPointerCancel={releasePointer} className="min-h-0 flex-1 cursor-grab select-none overflow-auto active:cursor-grabbing" style={{ touchAction: "none", overscrollBehavior: "contain" }}>
       <div className="relative shrink-0" style={{ width: layout.width * zoom + canvasPadding * 2, height: layout.height * zoom + canvasPadding * 2 }}>
         <div className="absolute origin-top-left" style={{ left: canvasPadding, top: canvasPadding, width: layout.width, height: layout.height, transform: `scale(${zoom})` }}>
           <svg className="pointer-events-none absolute inset-0" width={layout.width} height={layout.height} aria-hidden="true">
@@ -510,10 +482,6 @@ export function TreeCanvas({ graph, selectedNodeId, onSelect }: { graph: PathGra
       </div>
     </div>
   </div>;
-}
-
-function Metric({ label, value }: { label: string; value: string | number }) {
-  return <div className="rounded-lg bg-muted/60 p-2.5"><div className="text-muted-foreground">{label}</div><div className="mt-1 text-base font-semibold">{value}</div></div>;
 }
 
 export function LearningPathWorkbench({ apiBase, user, onLogout, onNavigate, onUserChange }: LearningPathWorkbenchProps) {
@@ -562,29 +530,29 @@ export function LearningPathWorkbench({ apiBase, user, onLogout, onNavigate, onU
     } catch { return null; }
   };
 
-  const loadWorkbench = useCallback(async () => {
-    const [pathResponse, profileResponse, chatResponse] = await Promise.all([
+  useEffect(() => {
+    let alive = true;
+    void Promise.all([
       fetch(`${apiBase}/api/learning/path-graph`, { credentials: "include" }),
       fetch(`${apiBase}/api/learning/profile`, { credentials: "include" }),
       fetch(`${apiBase}/api/learning/chat`, { credentials: "include" }),
-    ]);
-    if (!pathResponse.ok || !profileResponse.ok || !chatResponse.ok) throw new Error("学习路径读取失败，请重新登录后再试");
-    const pathData = await pathResponse.json() as { path?: PathGraph };
-    const profileData = await profileResponse.json() as { profile?: ProfileMetric };
-    const chatData = await chatResponse.json() as { messages?: ChatMessage[] };
-    const nextPath = pathData.path ?? { nodes: [], edges: [] };
-    const preferredNodeId = consumePathPrefill(nextPath) ?? rememberedNodeId(nextPath);
-    setPath(nextPath);
-    setProfile(profileData.profile ?? null);
-    setMessages(chatData.messages ?? []);
-    setSelectedNodeId((current) => preferredNodeId ?? (current && nextPath.nodes.some((node) => node.id === current) ? current : nextPath.nodes[0]?.id ?? null));
-  }, [apiBase, consumePathPrefill]);
-
-  useEffect(() => {
-    let alive = true;
-    void loadWorkbench().catch((error) => { if (alive) setNotice(error instanceof Error ? error.message : "学习路径读取失败"); }).finally(() => { if (alive) setLoading(false); });
+    ]).then(async ([pathResponse, profileResponse, chatResponse]) => {
+      if (!pathResponse.ok || !profileResponse.ok || !chatResponse.ok) throw new Error("学习路径读取失败，请重新登录后再试");
+      const [pathData, profileData, chatData] = await Promise.all([
+        pathResponse.json() as Promise<{ path?: PathGraph }>,
+        profileResponse.json() as Promise<{ profile?: ProfileMetric }>,
+        chatResponse.json() as Promise<{ messages?: ChatMessage[] }>,
+      ]);
+      if (!alive) return;
+      const nextPath = pathData.path ?? { nodes: [], edges: [] };
+      const preferredNodeId = consumePathPrefill(nextPath) ?? rememberedNodeId(nextPath);
+      setPath(nextPath);
+      setProfile(profileData.profile ?? null);
+      setMessages(chatData.messages ?? []);
+      setSelectedNodeId((current) => preferredNodeId ?? (current && nextPath.nodes.some((node) => node.id === current) ? current : nextPath.nodes[0]?.id ?? null));
+    }).catch((error) => { if (alive) setNotice(error instanceof Error ? error.message : "学习路径读取失败"); }).finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
-  }, [loadWorkbench]);
+  }, [apiBase, consumePathPrefill]);
 
   useEffect(() => {
     if (loading) return;

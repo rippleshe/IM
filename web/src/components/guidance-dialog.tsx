@@ -2,8 +2,6 @@
 
 import { useEffect, useRef, useState } from "react";
 import { ArrowRight, Lightbulb, Loader2, Send, X } from "lucide-react";
-import type { AuthenticatedUser } from "@/components/auth-entry";
-
 type SessionView = {
   sessionId: string;
   knowledgePointId: string;
@@ -31,10 +29,9 @@ type TurnView = {
 type GuidanceDialogProps = {
   apiBase: string;
   pathNodeId: string | null;
-  user: AuthenticatedUser;
   onClose: () => void;
   /** 终态决策：带知识点跳到学习页生成对应资源 */
-  onGenerateResource: (knowledgePointId: string, resourceType: "lecture" | "challenge_task") => void;
+  onGenerateResource: (knowledgePointId: string, resourceType: "lecture" | "tiered_quiz") => void;
 };
 
 const VERDICT_LABELS: Record<AnswerOutcome["evaluation"]["verdict"], string> = {
@@ -50,7 +47,7 @@ function confidenceText(value: number): string {
 }
 
 /** 苏格拉底启发式追问弹窗（总规 §7.4）：每轮一个问题，最多 5 轮，回答驱动 BKT 更新。 */
-export function GuidanceDialog({ apiBase, pathNodeId, user, onClose, onGenerateResource }: GuidanceDialogProps) {
+export function GuidanceDialog({ apiBase, pathNodeId, onClose, onGenerateResource }: GuidanceDialogProps) {
   const [session, setSession] = useState<SessionView | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -131,7 +128,8 @@ export function GuidanceDialog({ apiBase, pathNodeId, user, onClose, onGenerateR
   };
 
   const decisionType = finished ? String(finished["type"] ?? "") : "";
-  const suggestedType = decisionType === "generate_resource" ? "challenge_task" as const : "lecture" as const;
+  // 追问结论必须映射到已发布的四类资源；历史 challenge_task 从未有生成器或入库类型。
+  const suggestedType = decisionType === "generate_resource" ? "tiered_quiz" as const : "lecture" as const;
 
   return <div className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/25 p-6" role="dialog" aria-modal="true" aria-label="学习追问">
     <section className="flex h-[min(680px,calc(100vh-4rem))] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border bg-card shadow-2xl">
@@ -169,7 +167,7 @@ export function GuidanceDialog({ apiBase, pathNodeId, user, onClose, onGenerateR
                 <p className="font-semibold">{decisionType === "generate_resource" ? "追问完成：可以进阶了" : "追问完成：建议补强"}</p>
                 <p className="mt-1.5 leading-5 text-muted-foreground">我们已经根据这次回答安排了下一步学习，你可以继续学习或尝试新的挑战。</p>
                 <button type="button" onClick={() => onGenerateResource(String(finished!["knowledgePointId"] ?? session?.knowledgePointId ?? ""), suggestedType)} className="mt-3 inline-flex h-9 items-center gap-1.5 rounded-lg border border-foreground/25 bg-background px-3.5 text-xs font-medium hover:bg-muted">
-                  按这个知识点生成{suggestedType === "challenge_task" ? "挑战任务" : "补强讲义"} <ArrowRight className="h-3.5 w-3.5" />
+                  按这个知识点生成{suggestedType === "tiered_quiz" ? "分层习题" : "补强讲义"} <ArrowRight className="h-3.5 w-3.5" />
                 </button>
               </div>
             ) : null}

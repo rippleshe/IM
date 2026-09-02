@@ -68,7 +68,27 @@ function PrivacyPanel({ apiBase }: { apiBase: string }) {
       setEvents(eventsData.events ?? []);
     } catch { setOverview(null); setEvents([]); }
   }, [apiBase]);
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    let active = true;
+    void Promise.all([
+      fetch(`${apiBase}/api/settings/data-privacy`, { credentials: "include" }),
+      fetch(`${apiBase}/api/settings/privacy-audit?limit=8`, { credentials: "include" }),
+    ]).then(async ([overviewResponse, eventsResponse]) => {
+      const [overviewData, eventsData] = await Promise.all([
+        overviewResponse.json() as Promise<DataPrivacyOverview & { success?: boolean }>,
+        eventsResponse.json() as Promise<{ events?: PrivacyEvent[] }>,
+      ]);
+      if (!overviewResponse.ok || !overviewData.success) throw new Error("数据状态读取失败");
+      if (!active) return;
+      setOverview(overviewData);
+      setEvents(eventsData.events ?? []);
+    }).catch(() => {
+      if (!active) return;
+      setOverview(null);
+      setEvents([]);
+    });
+    return () => { active = false; };
+  }, [apiBase]);
   const clear = async () => {
     if (!window.confirm("清除全部隐私审计记录？审计记录本身不包含资料原文。")) return;
     setClearing(true);
@@ -134,7 +154,18 @@ export function SettingsDialog({ apiBase, onClose }: { apiBase: string; onClose:
     }
   }, [apiBase]);
 
-  useEffect(() => { void loadSettings(); }, [loadSettings]);
+  useEffect(() => {
+    let active = true;
+    void fetch(`${apiBase}/api/settings`, { credentials: "include" })
+      .then(async (response) => {
+        const data = await response.json() as RuntimeSettings & { success?: boolean };
+        if (!response.ok || !data.success) throw new Error("设置读取失败");
+        if (active) setSettings(data);
+      })
+      .catch((reason) => { if (active) setError(readableError(reason, "设置读取失败")); })
+      .finally(() => { if (active) setLoadingSettings(false); });
+    return () => { active = false; };
+  }, [apiBase]);
 
   const saveDefault = async (patch: Partial<Pick<RuntimeSettings, "activeModel" | "defaultThinkingDepth">>) => {
     if (!settings) return;
