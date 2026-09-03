@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Bot,
+  CheckCircle2,
   Download,
   Eraser,
   ListTree,
@@ -115,7 +116,7 @@ function readableProcessText(text: string): string {
     .replace(/资源生成/g, "制作学习材料")
     .replace(/隐私合规/g, "隐私检查")
     .replace(/发布收尾/g, "整理并保存结果")
-    .replace(/反方质询/g, "复核疑点")
+    .replace(/反方质询/g, "检查疑点")
     .replace(/证据裁决/g, "判断证据是否足够")
     .replace(/修订预算/g, "修改次数")
     .replace(/修订/g, "修改")
@@ -127,8 +128,13 @@ function readableProcessText(text: string): string {
     .replace(/检查等级\s+low\b/gi, "检查等级：低")
     .replace(/检查等级\s+medium\b/gi, "检查等级：中等")
     .replace(/检查等级\s+high\b/gi, "检查等级：高")
-    .replace(/manual_review_required/g, "自动检查未通过")
-    .replace(/进入人工复核/g, "等待智能体补充核验")
+    .replace(/manual_review_required/g, "系统已收起")
+    .replace(/进入人工复核/g, "系统留档")
+    .replace(/未通过自动检查，已保存待复核版本，可前往「资源」页查看并根据提示补充证据。?/g, "暂未交付学习材料，系统已收起未达标草稿。")
+    .replace(/自动检查未通过，已保存待复核版本，可先查看并根据审核提示修订。?/g, "暂未交付学习材料，系统已收起未达标草稿。")
+    .replace(/待复核资源/g, "未达标草稿")
+    .replace(/待复核/g, "需更多依据")
+    .replace(/复核疑点/g, "检查疑点")
     .replace(/revision budget/gi, "修改次数")
     .replace(/revised|revision/gi, "需要修改")
     .replace(/rejected/gi, "未通过")
@@ -136,7 +142,7 @@ function readableProcessText(text: string): string {
     .replace(/unsupported/gi, "缺少依据")
     .replace(/partial/gi, "部分支持")
     .replace(/conflict/gi, "相互矛盾")
-    .replace(/review/gi, "待复核")
+    .replace(/review/gi, "需更多依据")
     .replace(/strict/gi, "从严检查")
     .replace(/standard/gi, "标准检查")
     .replace(/DAG/g, "处理流程")
@@ -523,7 +529,7 @@ export function LearningWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
                 <button type="button" onClick={() => {
                   try { window.localStorage.setItem("im-training-agent:validation-prefill", JSON.stringify({ runId: finishedRunId })); } catch { /* 忽略 */ }
                   onNavigate("validation");
-                }} className="rounded-lg border px-2.5 py-1.5 text-[11px] font-medium hover:bg-muted">查看验证记录</button>
+                }} className="rounded-lg border px-2.5 py-1.5 text-[11px] font-medium hover:bg-muted">查看处理记录</button>
               </div>
             )}
           </div>
@@ -569,7 +575,8 @@ function MessageCard({ message, onExport }: { message: StudyMessage; onExport: (
     return <article className="ml-auto max-w-[84%] border-r border-blue-200 pr-3 text-right text-[13px] leading-6 text-blue-950"><MessageRichText text={message.content} /><div className="mt-1 text-[10px] text-muted-foreground">{new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit" }).format(message.createdAt)}</div></article>;
   }
   if (kind === "asset" && asset) {
-    return <article className="max-w-[94%]"><div className="rounded-2xl rounded-tl-md border bg-muted/20 px-4 py-3"><div className="mb-2 flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground"><Download className="h-3.5 w-3.5" />已生成资源</div><AssetCard asset={asset} onExport={onExport} /></div><div className="mt-1 text-[10px] text-muted-foreground">{new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit" }).format(message.createdAt)}</div></article>;
+    const delivered = asset.auditStatus === "passed";
+    return <article className="max-w-[94%]"><div className="rounded-2xl rounded-tl-md border bg-muted/20 px-4 py-3"><div className="mb-2 flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">{delivered ? <Download className="h-3.5 w-3.5" /> : <CheckCircle2 className="h-3.5 w-3.5" />} {delivered ? "已生成资源" : "任务已处理"}</div><AssetCard asset={asset} onExport={onExport} /></div><div className="mt-1 text-[10px] text-muted-foreground">{new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit" }).format(message.createdAt)}</div></article>;
   }
   const agentId = message.metadata.agentId;
   const agentName = readableProcessText(message.metadata.agentName ?? "任务协调员");
@@ -591,6 +598,9 @@ function MessageRichText({ text, invert = false }: { text: string; invert?: bool
 }
 
 function AssetCard({ asset, onExport }: { asset: StudyAsset; onExport: (asset: StudyAsset, format: "md" | "txt" | "json" | "ppt") => void }) {
+  if (asset.auditStatus !== "passed") {
+    return <div className="study-delivery-note"><div className="study-delivery-title"><CheckCircle2 className="h-3.5 w-3.5" />这次暂未交付学习材料</div><p>系统已自动收起未达到可用标准的草稿。调整任务目标后，可以继续生成。</p></div>;
+  }
   const producerLabel = asset.producer === "llm" ? "AI 生成" : asset.producer === "rule" ? "模板兜底" : "来源已记录";
-  return <div className="rounded-xl border bg-muted/25 p-3"><div className="flex items-start justify-between gap-3"><div><div className="text-[10px] text-muted-foreground">{resourceLabel(asset.type)} · {producerLabel}</div><div className="mt-1 text-xs font-semibold">{asset.title}</div></div><span className={`rounded-full px-2 py-1 text-[10px] ${asset.persisted ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>{asset.persisted ? "已保存" : "未发布"}</span></div>{asset.generationNote ? <p className="mt-2 text-[11px] leading-5 text-muted-foreground">{asset.generationNote}</p> : null}{asset.failureReason ? <p className="mt-1 text-[11px] leading-5 text-amber-700">{asset.failureReason}</p> : null}{asset.persisted && <div className="mt-3 flex gap-2"><button type="button" onClick={() => onExport(asset, "md")} className="h-7 rounded-lg border px-2.5 text-[11px] hover:bg-background">下载 Markdown</button>{asset.type === "presentation" && <button type="button" onClick={() => onExport(asset, "ppt")} className="h-7 rounded-lg border px-2.5 text-[11px] hover:bg-background">下载 PPT</button>}<button type="button" onClick={() => onExport(asset, "txt")} className="h-7 rounded-lg border px-2.5 text-[11px] hover:bg-background">下载文本</button><button type="button" onClick={() => onExport(asset, "json")} className="h-7 rounded-lg border px-2.5 text-[11px] hover:bg-background">下载数据</button></div>}</div>;
+  return <div className="rounded-xl border bg-muted/25 p-3"><div className="flex items-start justify-between gap-3"><div><div className="text-[10px] text-muted-foreground">{resourceLabel(asset.type)} · {producerLabel}</div><div className="mt-1 text-xs font-semibold">{asset.title}</div></div><span className="rounded-full bg-emerald-100 px-2 py-1 text-[10px] text-emerald-800">已保存</span></div>{asset.persisted && <div className="mt-3 flex gap-2"><button type="button" onClick={() => onExport(asset, "md")} className="h-7 rounded-lg border px-2.5 text-[11px] hover:bg-background">下载 Markdown</button>{asset.type === "presentation" && <button type="button" onClick={() => onExport(asset, "ppt")} className="h-7 rounded-lg border px-2.5 text-[11px] hover:bg-background">下载 PPT</button>}<button type="button" onClick={() => onExport(asset, "txt")} className="h-7 rounded-lg border px-2.5 text-[11px] hover:bg-background">下载文本</button><button type="button" onClick={() => onExport(asset, "json")} className="h-7 rounded-lg border px-2.5 text-[11px] hover:bg-background">下载数据</button></div>}</div>;
 }

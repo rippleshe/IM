@@ -22,7 +22,7 @@ const labels: Record<string, string> = {
   "analyze.domain": "分析内容",
   "generate.resource": "制作材料",
   "audit.claims": "检查内容",
-  "debate.challenge": "复核疑点",
+  "debate.challenge": "检查疑点",
   "adjudicate.verdict": "判断依据",
   "privacy.compliance": "隐私检查",
   "finalize.publish": "保存结果",

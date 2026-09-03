@@ -3056,3 +3056,140 @@ summary:focus-visible {
     font-size: 1.75rem;
   }
 }
+
+/* 资源页收口：信息只保留会影响阅读与行动的部分。 */
+.resource-frontmatter {
+  margin: 12px 20px 0;
+  padding: 14px 18px 12px;
+}
+
+.resource-frontmatter-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.resource-frontmatter-heading h1 {
+  min-width: 0;
+  margin: 0;
+  color: #334155;
+  font-size: 18px;
+  font-weight: 650;
+  letter-spacing: -.025em;
+  line-height: 1.35;
+}
+
+.resource-frontmatter-meta {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px 0;
+  color: #6f8297;
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.resource-frontmatter-meta span {
+  display: inline-flex;
+  align-items: center;
+}
+
+.resource-frontmatter-meta span + span::before {
+  margin: 0 9px;
+  color: #b1bdc9;
+  content: "·";
+}
+
+.resource-frontmatter-meta .resource-frontmatter-type {
+  color: #3f6093;
+  font-weight: 650;
+}
+
+.resource-frontmatter-tags {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #e5edf4;
+}
+
+.resource-frontmatter-tag-list {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.resource-frontmatter-tags dd {
+  margin: 0;
+}
+
+.resource-frontmatter-tags dd span,
+.resource-tag-chip {
+  font-size: 11px;
+}
+
+.resource-frontmatter-edit {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.resource-file-row {
+  padding: 7px;
+}
+
+.resource-file-row > button:first-child {
+  min-height: 28px;
+}
+
+.study-delivery-note {
+  padding: 2px 0;
+  color: #5f7184;
+}
+
+.study-delivery-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #526b87;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.study-delivery-title svg {
+  color: #7897ba;
+}
+
+.study-delivery-note p {
+  margin-top: 4px;
+  color: #7a8b9c;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+@media (max-width: 720px) {
+  .resource-frontmatter {
+    margin: 10px 12px 0;
+    padding: 12px 14px;
+  }
+
+  .resource-frontmatter-heading {
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .resource-frontmatter-meta {
+    justify-content: flex-start;
+    white-space: normal;
+  }
+}

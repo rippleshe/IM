@@ -244,7 +244,8 @@ export class PgLearningStore {
     const rows = (await this.pool.query(
       'SELECT content_json AS "contentJson" FROM learning_assets WHERE learner_id = $1 ORDER BY created_at DESC', [learnerId],
     )).rows as Array<{ contentJson: ResourceDocument }>;
-    return rows.map((row) => normalizeResourceDocument(row.contentJson));
+    // 普通学习者只看到已通过内容检查的成品；未达标草稿留在运行/验证记录中，由系统内部处理。
+    return rows.map((row) => normalizeResourceDocument(row.contentJson)).filter((asset) => asset.auditStatus === 'passed');
   }
 
   async getAsset(learnerId: string, assetId: string): Promise<ResourceDocument | null> {
@@ -253,7 +254,8 @@ export class PgLearningStore {
     )).rows[0] as { contentJson: ResourceDocument } | undefined;
     if (!row?.contentJson) return null;
     try {
-      return normalizeResourceDocument(row.contentJson);
+      const asset = normalizeResourceDocument(row.contentJson);
+      return asset.auditStatus === 'passed' ? asset : null;
     } catch {
       return null;
     }

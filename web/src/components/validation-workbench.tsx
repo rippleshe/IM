@@ -37,7 +37,7 @@ function runDisplayState(run: RunSummary): { status: string; publication: string
   if (run.status === "cancelled") return { status: "已取消", publication: "本次未生成资源", tone: "bg-muted text-muted-foreground" };
   if (run.status === "failed") return { status: "处理失败", publication: "未生成资源", tone: "bg-destructive/10 text-destructive" };
   if (run.finalAssetId) return { status: "已发布", publication: "资源已入库", tone: "bg-emerald-100 text-emerald-700" };
-  return { status: "未发布", publication: "未通过自动发布检查", tone: "bg-amber-100 text-amber-700" };
+  return { status: "已收起", publication: "系统已收起未达标草稿", tone: "bg-slate-100 text-slate-700" };
 }
 
 type TraceArtifact = {
@@ -104,7 +104,7 @@ const NODE_LABELS: Record<string, string> = {
   "analyze.domain": "领域分析",
   "generate.resource": "资源生成",
   "audit.claims": "逐条检查内容",
-  "debate.challenge": "复核疑点",
+  "debate.challenge": "检查疑点",
   "adjudicate.verdict": "判断证据是否足够",
   "privacy.compliance": "隐私检查",
   "finalize.publish": "整理并保存结果",
@@ -116,7 +116,7 @@ const ARTIFACT_LABELS: Record<string, string> = {
   domain_brief: "领域分析",
   resource_draft: "资源初稿",
   claim_audit: "内容检查",
-  challenge_set: "疑点复核",
+  challenge_set: "疑点检查",
   adjudication: "证据判断",
   privacy_decision: "隐私检查",
   publication_decision: "发布决定",
@@ -128,7 +128,7 @@ const RESOURCE_LABELS: Record<string, string> = {
 
 function readableAuditText(text: string): string {
   return text
-    .replace(/manual_review_required/g, "自动检查未通过")
+    .replace(/manual_review_required/g, "系统已收起")
     .replace(/revision budget/gi, "修改次数")
     .replace(/revised|revision/gi, "需要修改")
     .replace(/rejected/gi, "未通过")
@@ -136,13 +136,15 @@ function readableAuditText(text: string): string {
     .replace(/unsupported/gi, "缺少依据")
     .replace(/partial/gi, "部分支持")
     .replace(/conflict/gi, "相互矛盾")
-    .replace(/review/gi, "待复核")
+    .replace(/review/gi, "需更多依据")
     .replace(/strict/gi, "从严检查")
     .replace(/standard/gi, "标准检查")
     .replace(/DAG/g, "处理流程")
     .replace(/Claim/g, "内容")
     .replace(/Agent/g, "智能体")
-    .replace(/反方质询/g, "疑点复核")
+    .replace(/反方质询/g, "疑点检查")
+    .replace(/待复核/g, "需更多依据")
+    .replace(/复核疑点/g, "检查疑点")
     .replace(/证据裁决/g, "证据判断")
     .replace(/发布收尾/g, "整理并保存结果")
     .replace(/修订预算/g, "修改次数")
@@ -333,7 +335,7 @@ export function ValidationWorkbench({ apiBase, user, onLogout, onNavigate, onUse
               <Metric label="证据条数" value={evidenceCount} />
               <Metric label="可核对内容" value={auditableClaims.length} />
               <Metric label="最终稿缺少依据" value={unsupportedFinal} tone={unsupportedFinal > 0 ? "warn" : "ok"} />
-              <Metric label="待复核" value={conflictClaims} />
+              <Metric label="需更多依据" value={conflictClaims} />
               <Metric label="修改次数" value={revisionCount} />
               <Metric label="发布结论" value={released ? "已放行" : published ? "异常" : "未放行"} tone={released ? "ok" : "warn"} />
             </div>
@@ -460,7 +462,7 @@ export function ValidationWorkbench({ apiBase, user, onLogout, onNavigate, onUse
              <div className="flex min-w-0 items-center gap-2"><FileJson className="h-4 w-4 shrink-0" /><div className="min-w-0"><h2 className="text-sm font-semibold">记录操作</h2><p className="mt-0.5 text-[11px] text-muted-foreground">保留本次任务的可追溯结果</p></div></div>
             <div className="flex shrink-0 items-center gap-1.5">
               <button type="button" onClick={() => window.open(`${apiBase}/api/learning/runs/${encodeURIComponent(trace.run.id)}/export`, "_blank", "noopener,noreferrer")} className="validation-record-action inline-flex h-8 items-center gap-1.5 px-2.5 text-[11px] font-medium"><Download className="h-3.5 w-3.5" />下载</button>
-              <button type="button" onClick={() => onNavigate("resources")} className="validation-record-action validation-record-action-quiet inline-flex h-8 items-center gap-1 px-2 text-[11px]"><span>查看资源</span><ArrowRight className="h-3.5 w-3.5" /></button>
+              {published ? <button type="button" onClick={() => onNavigate("resources")} className="validation-record-action validation-record-action-quiet inline-flex h-8 items-center gap-1 px-2 text-[11px]"><span>查看资源</span><ArrowRight className="h-3.5 w-3.5" /></button> : null}
             </div>
           </section>
         </>}
@@ -501,7 +503,7 @@ function claimTypeLabel(claimType: string | null): string {
 function verdictLabel(verdict: string | undefined): string {
   switch (verdict) {
     case "supported": return "支持";
-    case "review": return "待复核";
+    case "review": return "需更多依据";
     case "partial": return "部分支持";
     case "conflict": return "冲突";
     case "unsupported": return "无证据";

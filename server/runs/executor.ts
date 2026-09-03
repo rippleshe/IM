@@ -1128,19 +1128,16 @@ async function runFinalizePublish(run: StudyRunRow, node: RunNodeSpec, attempt: 
     await learningStore.saveAsset(run.learnerId, undefined, audited);
     finalAssetId = audited.id;
   } else if (draft && producerKind === 'llm' && merged) {
-    // 模型已经交付完整成品但审核未通过时，保留成品供学习者查看和复核。
-    // 之前这里无条件替换为短模板，导致讲义/PPT/习题/知识脉络都可能“生成成功”
-    // 却只剩几块兜底内容；待复核状态已经足够表达风险，不应丢失教学内容。
+    // 不达标成品只保留在本次运行的生成与验证产物中，不写入学习资源库。
+    // 学习者只接收通过发布门禁的成品，失败结果由系统自动收起。
     fallbackAsset = {
       ...draft,
       evidencePackId: merged.id,
       auditSummary: ctx.audit?.summary,
       auditStatus: 'revise',
     };
-    await learningStore.saveAsset(run.learnerId, undefined, fallbackAsset);
   } else {
-    // 门禁拒绝不再让学习者得到一个“什么都没有”的结果：保存保守模板，
-    // 但明确标记为待复核，不能冒充已通过审核的正式资源。
+    // 门禁拒绝时构造一个仅用于运行摘要的标题，不把保守模板伪装成可用资源。
     const evidencePack = merged ?? await mergeEvidencePacks(ctx, run.request.task);
     const pathNode = await pathNodeOf(run);
     const calibration = await calibrateForLearner(run, pathNode, run.request.resourceType);
@@ -1158,14 +1155,13 @@ async function runFinalizePublish(run: StudyRunRow, node: RunNodeSpec, attempt: 
       auditSummary: ctx.audit?.summary,
       auditStatus: 'revise',
     };
-    await learningStore.saveAsset(run.learnerId, undefined, fallbackAsset);
   }
-  const persistedAsset = finalAssetId ? draft : fallbackAsset;
-  const persistedTitle = persistedAsset?.title ?? draft?.title ?? '资源';
+  const summaryAsset = finalAssetId ? draft : fallbackAsset;
+  const persistedTitle = summaryAsset?.title ?? draft?.title ?? '资源';
   await persistNodeArtifact(run, node, attempt, 'publication_decision', {
     released,
     finalAssetId,
-    fallbackAssetId: fallbackAsset?.id ?? null,
+    fallbackAssetId: null,
     verdict: adjudication?.verdict ?? 'unsupported',
     revisionRound: attempt,
     evidenceCount: merged?.items.length ?? 0,
@@ -1179,9 +1175,9 @@ async function runFinalizePublish(run: StudyRunRow, node: RunNodeSpec, attempt: 
       artifactIdOf(run.id, 'adjudicate.verdict', attempt, 'adjudication'),
       artifactIdOf(run.id, 'privacy.compliance', attempt, 'privacy_decision'),
     ],
-    decision: finalAssetId ? `《${draft!.title}》已通过全部门禁并入库` : `《${persistedTitle}》已保存为待复核资源`,
-    uncertainty: finalAssetId ? [] : ['发布门禁未通过：资源已保存为待复核版本，不能视为已审核通过'],
-    nextAction: finalAssetId ? '等待学习者阅读与作答反馈' : '打开资源查看具体问题，补充证据或降低事实表述强度后再复核',
+    decision: finalAssetId ? `《${draft!.title}》已通过全部门禁并入库` : `《${persistedTitle}》未达到交付标准，系统已收起草稿`,
+    uncertainty: finalAssetId ? [] : ['发布门禁未通过：草稿仅保留在运行与验证记录中'],
+    nextAction: finalAssetId ? '等待学习者阅读与作答反馈' : '下一次任务继续补充依据并重新生成',
   }, ['adjudicate.verdict', 'privacy.compliance', 'generate.resource'], RULE_PRODUCER);
   // VACP：运行收尾固化全部产物散列清单与 generation_end 学情快照
   await setRunExecutionManifestHash(run.id, await computeExecutionManifestHash(run.id));
@@ -1191,27 +1187,27 @@ async function runFinalizePublish(run: StudyRunRow, node: RunNodeSpec, attempt: 
     snapshotType: 'generation_end',
     pathNodeId: run.request.pathNodeId,
   });
-  await learningStore.saveChatMessage(run.learnerId, 'assistant', finalAssetId ? `已生成《${draft!.title}》` : `《${persistedTitle}》已保存，当前待复核`, {
+  await learningStore.saveChatMessage(run.learnerId, 'assistant', finalAssetId ? `已生成《${draft!.title}》` : `《${persistedTitle}》暂未交付，系统已收起未达标草稿`, {
     surface: 'study', kind: 'asset', runId: run.id,
     pathNodeId: run.request.pathNodeId, resourceType: run.request.resourceType,
     asset: finalAssetId
       ? { id: draft!.id, title: draft!.title, type: draft!.type, auditStatus: 'passed', persisted: true, producer: producerKind, generationNote }
-      : { id: fallbackAsset?.id ?? '', title: persistedTitle, type: run.request.resourceType, auditStatus: 'revise', persisted: Boolean(fallbackAsset), producer: producerKind === 'llm' ? 'llm' : 'rule', generationNote: producerKind === 'llm' ? '模型已生成完整成品，但自动检查未通过，已保存为待复核版本，可先查看并根据审核提示修订。' : '自动检查未通过，已保存保守模板，可在资源页继续查看并反馈。', failureReason: producerKind === 'llm' ? '自动检查未通过，保留模型成品供复核；未标记为已通过资源。' : '自动检查未通过，资源已保存为待复核版本。' },
+      : { id: fallbackAsset?.id ?? '', title: persistedTitle, type: run.request.resourceType, auditStatus: 'revise', persisted: false, producer: producerKind === 'llm' ? 'llm' : 'rule', generationNote: '系统已完成检查，未达标草稿仅保留在处理记录中。', failureReason: '未达到发布标准，未进入学习资源库。' },
     evidence: { count: merged?.items.length ?? 0, score: merged?.coverageScore ?? 0, crossValidation: ctx.audit?.summary.status ?? 'unsupported' },
   });
   await learningStore.recordLearningEvent(run.learnerId, 'study_run_completed', {
     runId: run.id, pathNodeId: run.request.pathNodeId, resourceType: run.request.resourceType,
-    persisted: Boolean(finalAssetId || fallbackAsset), fallbackPersisted: Boolean(fallbackAsset), evidenceCount: merged?.items.length ?? 0,
+    persisted: Boolean(finalAssetId), fallbackPersisted: false, evidenceCount: merged?.items.length ?? 0,
     claims: ctx.audit?.claims.length ?? 0, verdict: adjudication?.verdict ?? 'unsupported',
   });
   await bubble(run, 'cross_validation', finalAssetId
     ? '发布门禁通过，资源已入库，可前往「资源」页阅读。'
-    : `本次${RESOURCE_TYPE_LABELS[run.request.resourceType] ?? '学习资源'}未通过自动检查，已保存待复核版本，可前往「资源」页查看并根据提示补充证据。`);
+    : `本次${RESOURCE_TYPE_LABELS[run.request.resourceType] ?? '学习资源'}暂未交付，系统已收起未达标草稿。`);
   await finishRun(run.id, 'succeeded', finalAssetId ? { finalAssetId } : {});
   await emitEvent(run, null, 'run.succeeded', finalAssetId
     ? `协同完成：《${draft!.title}》已通过全部门禁并入库。`
-    : `协同完成：《${persistedTitle}》已保存为待复核资源。`, { finalAssetId, fallbackAssetId: fallbackAsset?.id ?? null, verdict: adjudication?.verdict });
-  return finalAssetId ? `已发布《${draft!.title}》` : `已保存待复核资源《${persistedTitle}》`;
+    : `协同完成：《${persistedTitle}》暂未交付，未达标草稿已收起。`, { finalAssetId, fallbackAssetId: null, verdict: adjudication?.verdict });
+  return finalAssetId ? `已发布《${draft!.title}》` : `暂未交付《${persistedTitle}》`;
 }
 
 async function executeNode(run: StudyRunRow, node: RunNodeSpec, attempt: number): Promise<string> {
@@ -1360,11 +1356,11 @@ export async function processStudyRunNode(job: Job<{ runId: string; nodeKey: str
       }
       await enqueueRunNode(runId, 'privacy.compliance', attempt);
     } else {
-      // 修订预算用尽仍走统一收尾，保存一个明确标记为“待复核”的保守资源，
-      // 避免用户只看到退回结论，却无法继续查看或处理结果。
+      // 修订预算用尽仍走统一收尾，留下完整运行与验证记录，
+      // 让系统自动收起未达标草稿，不把处理责任交给学习者。
       const fallbackSummary = await runFinalizePublish(fresh, planNodeOf(fresh.plan, 'finalize.publish'), attempt);
       await setNodeStatus(runId, 'finalize.publish', attempt, 'succeeded', { resultSummary: fallbackSummary.slice(0, 500) });
-      await skipRemaining(fresh, '修订预算已用尽，已保存待复核资源');
+      await skipRemaining(fresh, '修订次数已用尽，未达标草稿已收起');
     }
     return;
   }
