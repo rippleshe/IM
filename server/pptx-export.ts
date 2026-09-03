@@ -61,7 +61,9 @@ function shortText(value: string, max = 54): string {
 
 function learnerFacingText(value: string): string {
   return value
-    .replace(/这一页先让学习者复述重点，再完成页面底部的小动作。/gu, '本页先看清重点，再完成页面底部的小动作。')
+    .replace(/这一页先让学习者复述重点，再完成页面底部的小动作。/gu, '')
+    .replace(/本页先看清重点，再完成页面底部的小动作。/gu, '')
+    .replace(/本页聚焦“[^”]+”。先看页面中的关键依据，用自己的话概括一个结论，再继续下一页。/gu, '')
     .replace(/让学习者/gu, '帮助你')
     .replace(/学习者/gu, '你')
     .replace(/讲解词/gu, '本页说明')
@@ -162,7 +164,7 @@ function addCoverSlide(pptx: pptxgen, resource: ResourceDocument, slide: Present
   addNotes(output, lead, '开场先告诉学习者：这套内容不要求先背字段表，而是沿着一个问题逐步看懂证据、做出判断。');
 }
 
-function addAgendaSlide(pptx: pptxgen, titles: string[], index: number, total: number): void {
+function addAgendaSlide(pptx: pptxgen, index: number, total: number): void {
   const slide = pptx.addSlide();
   addPageChrome(slide, '今天走一条清晰的线', index, total);
   addText(slide, '整套演示按“先看懂，再判断，最后行动”的节奏展开。你可以把它当作一张路线图。', { x: 0.72, y: 1.76, w: 9.8, h: 0.4, fontSize: 14, color: COLORS.muted, breakLine: true });
@@ -181,7 +183,6 @@ function addAgendaSlide(pptx: pptxgen, titles: string[], index: number, total: n
     addText(slide, heading, { x: x + 1.02, y: y + 0.25, w: 3.5, h: 0.24, fontSize: 15, bold: true, color: COLORS.ink });
     addText(slide, detail, { x: x + 1.02, y: y + 0.61, w: 3.9, h: 0.22, fontSize: 11, color: COLORS.muted });
   });
-  if (titles.length > 0) addText(slide, `后面会落到：${titles.slice(0, 4).map(plainText).join(' · ')}`, { x: 0.78, y: 6.05, w: 11.3, h: 0.32, fontSize: 10, color: COLORS.muted, breakLine: true });
   addNotes(slide, '', '这一页是路线图。先把问题说清楚，再只认识完成任务所需的少量字段，随后回到实际样本，最后练习如何表达判断和边界。');
 }
 
@@ -211,7 +212,6 @@ function addProcessSlide(slide: pptxgen.Slide, data: PresentationSlide): void {
     addRoundedCard(slide, x, y + 1.15, 2.48, 1.55, COLORS.white, COLORS.line);
     addText(slide, shortText(item, 74), { x: x + 0.2, y: y + 1.45, w: 2.08, h: 0.78, fontSize: 12, bold: itemIndex === 0, color: COLORS.ink, breakLine: true, valign: 'middle' });
   });
-  addText(slide, '跟着做：每完成一步，先说出“我看到了什么”，再决定下一步动作。', { x: 0.82, y: 5.35, w: 10.8, h: 0.32, fontSize: 13, color: COLORS.teal, bold: true });
 }
 
 function tableRows(content: TableContent): Array<Array<string | number>> {
@@ -259,7 +259,6 @@ function addPracticeSlide(slide: pptxgen.Slide, data: PresentationSlide): void {
     addText(slide, String(index + 1), { x: 8.75, y: 2.19 + index * 1.1, w: 0.48, h: 0.16, fontSize: 9, bold: true, color: COLORS.white, align: 'center' });
     addText(slide, shortText(task, 82), { x: 9.5, y: 2.12 + index * 1.1, w: 2.85, h: 0.38, fontSize: 12, color: COLORS.ink, breakLine: true });
   });
-  addText(slide, '完成后对照本页说明，先保留自己的判断。', { x: 1.2, y: 4.78, w: 5.8, h: 0.24, fontSize: 11, color: COLORS.muted });
 }
 
 function addConceptSlide(slide: pptxgen.Slide, data: PresentationSlide): void {
@@ -297,7 +296,7 @@ export async function resourceToPptx(resource: ResourceDocument): Promise<Buffer
 
   const cover = slides[0]!;
   addCoverSlide(pptx, resource, cover, total);
-  addAgendaSlide(pptx, slides.slice(1).map((slide) => slide.title), 2, total);
+  addAgendaSlide(pptx, 2, total);
   slides.slice(1).forEach((data, index) => {
     const slide = pptx.addSlide();
     const page = index + 3;

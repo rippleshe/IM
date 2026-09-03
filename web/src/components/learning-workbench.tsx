@@ -85,7 +85,7 @@ function consumeStudyPrefill(graph: PathGraph): { nodeId: string | null; draft: 
   } catch { return null; }
 }
 
-type RunNodeState = "running" | "succeeded" | "failed" | "revising";
+type RunNodeState = "running" | "succeeded" | "failed" | "revising" | "skipped";
 type RunStatus = "idle" | "queued" | "running" | "succeeded" | "failed" | "cancelled";
 
 function isTerminalRunStatus(status: RunStatus): status is "succeeded" | "failed" | "cancelled" {
@@ -101,6 +101,7 @@ function runNodeStateFromServer(status: string | undefined): RunNodeState | null
   if (status === "running") return "running";
   if (status === "succeeded") return "succeeded";
   if (status === "failed") return "failed";
+  if (status === "skipped") return "skipped";
   return null;
 }
 
@@ -408,7 +409,7 @@ export function LearningWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
             const state = runNodeStateFromServer(node.status);
             return typeof node.nodeKey === "string" && state ? [{ key: node.nodeKey, state }] : [];
           });
-          const events = (trace.nodes ?? []).filter((node) => typeof node.nodeKey === "string" && node.resultSummary && runNodeStateFromServer(node.status)).map((node, index) => ({ id: `restored-${latestRunId}-${index}`, type: node.status === "failed" ? "node.failed" : "node.succeeded", nodeKey: node.nodeKey as string, summary: node.resultSummary as string }));
+          const events = (trace.nodes ?? []).filter((node) => typeof node.nodeKey === "string" && node.resultSummary && runNodeStateFromServer(node.status)).map((node, index) => ({ id: `restored-${latestRunId}-${index}`, type: node.status === "failed" ? "node.failed" : node.status === "skipped" ? "node.skipped" : "node.succeeded", nodeKey: node.nodeKey as string, summary: node.resultSummary as string }));
           setRunStatus(status);
           setNodeStates(states);
           setLiveEvents(events.slice(-16));

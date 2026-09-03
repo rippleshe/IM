@@ -265,12 +265,25 @@ function presentationShortText(value: string, max = 90): string {
 
 function learnerFacingPresentationText(value: string): string {
   return value
-    .replace(/这一页先让学习者复述重点，再完成页面底部的小动作。/gu, "本页先看清重点，再完成页面底部的小动作。")
+    .replace(/这一页先让学习者复述重点，再完成页面底部的小动作。/gu, "")
+    .replace(/本页先看清重点，再完成页面底部的小动作。/gu, "")
+    .replace(/本页聚焦“[^”]+”。先看页面中的关键依据，用自己的话概括一个结论，再继续下一页。/gu, "")
     .replace(/让学习者/gu, "帮助你")
     .replace(/学习者/gu, "你")
     .replace(/讲解词/gu, "本页说明")
     .replace(/讲解时/gu, "阅读时")
     .trim();
+}
+
+function defaultPresentationExplanation(slide: PresentationSlide): string {
+  if (slide.kind === "cover") return `这份演示围绕“${slide.title}”展开，从问题、依据到判断边界，帮助你建立一条完整的理解路径。`;
+  if (slide.kind === "agenda") return "这页把整套内容分成四步：明确问题、认识必要字段、回到真实样本、形成有边界的判断。后面的页面会依次展开，方便你随时知道正在解决什么。";
+  if (slide.kind === "evidence") return "这页把真实样本放在前面，让你先区分记录本身与对记录的解释。表格可以支持观察，但单个读数不能直接推出设备结论。";
+  if (slide.kind === "process") return `这页把“${slide.title}”拆成连续步骤，重点是理解每一步的输入、产出和判断依据。`;
+  if (slide.kind === "practice") return `这页把前面的内容转成一个小练习，检验你能否根据页面信息形成判断，并说清判断的依据。`;
+  if (slide.kind === "summary") return `这页收束“${slide.title}”的核心结论，同时保留结论成立所需的边界和下一步方向。`;
+  const keyPoint = slide.bullets[0] ? `核心是“${presentationShortText(slide.bullets[0], 48)}”。` : "";
+  return `这页解释“${slide.title}”，帮助你把概念和当前任务中的实际信息对应起来。${keyPoint}`;
 }
 
 function presentationSlideKind(title: string, hasTable: boolean, hasCode: boolean): PresentationSlide["kind"] {
@@ -330,19 +343,19 @@ function PresentationTableView({ table }: { table?: PresentationTable }) {
 
 function PresentationSlideCanvas({ slide, asset, index, total }: { slide: PresentationSlide; asset: ResourceAsset; index: number; total: number }) {
   if (slide.kind === "cover") {
-    return <div className="presentation-slide presentation-slide-cover"><div className="presentation-cover-orbit presentation-cover-orbit-one" /><div className="presentation-cover-orbit presentation-cover-orbit-two" /><div className="presentation-cover-kicker">设备数据诊断  /  学习演示</div><h2>{presentationDisplayTitle(asset.title)}</h2><p className="presentation-cover-lead">{presentationShortText(slide.paragraphs[0] ?? "从一个真实问题出发，先看懂，再观察，最后做出可复查的判断。", 180)}</p><div className="presentation-cover-method"><span>这套演示怎么用</span><strong>每页只抓一个重点，再完成一个小动作。</strong><small>遇到不懂的字段，回到中文解释，不靠猜。</small></div><div className="presentation-cover-footer"><span>{asset.learningObjectives[0] ?? "理解主题，沿着证据完成一次基础判断"}</span><span>01 / {String(total).padStart(2, "0")}</span></div></div>;
+    return <div className="presentation-slide presentation-slide-cover"><div className="presentation-cover-orbit presentation-cover-orbit-one" /><div className="presentation-cover-orbit presentation-cover-orbit-two" /><div className="presentation-cover-kicker">设备数据诊断  /  学习演示</div><h2>{presentationDisplayTitle(asset.title)}</h2><p className="presentation-cover-lead">{presentationShortText(slide.paragraphs[0] ?? "从一个真实问题出发，先看懂，再观察，最后做出可复查的判断。", 180)}</p><div className="presentation-cover-method"><span>这套演示怎么用</span><strong>每页只呈现一个关键判断，沿着依据逐步看懂。</strong></div><div className="presentation-cover-footer"><span>{asset.learningObjectives[0] ?? "理解主题，沿着证据完成一次基础判断"}</span><span>01 / {String(total).padStart(2, "0")}</span></div></div>;
   }
   if (slide.kind === "agenda") {
     const phases = [["先定义问题", "知道这一页要解决什么"], ["读懂最少字段", "只认识完成任务所需的词"], ["跟着看证据", "从样本、步骤和现象开始"], ["做判断与练习", "说清能得出什么、还缺什么"]];
-    return <div className="presentation-slide presentation-slide-light"><PresentationSlideHeader title={slide.title} index={index} total={total} /><p className="presentation-slide-intro">整套演示按“先看懂，再判断，最后行动”的节奏展开。你可以把它当作一张路线图。</p><div className="presentation-agenda-grid">{phases.map(([title, detail], phaseIndex) => <div key={title} className={`presentation-agenda-item ${phaseIndex % 2 ? "is-teal" : ""}`}><span>{phaseIndex + 1}</span><div><strong>{title}</strong><small>{detail}</small></div></div>)}</div><p className="presentation-slide-footnote">后面会落到：{slide.bullets.join(" · ")}</p></div>;
+    return <div className="presentation-slide presentation-slide-light"><PresentationSlideHeader title={slide.title} index={index} total={total} /><p className="presentation-slide-intro">整套演示按“先看懂，再判断，最后行动”的节奏展开。你可以把它当作一张路线图。</p><div className="presentation-agenda-grid">{phases.map(([title, detail], phaseIndex) => <div key={title} className={`presentation-agenda-item ${phaseIndex % 2 ? "is-teal" : ""}`}><span>{phaseIndex + 1}</span><div><strong>{title}</strong><small>{detail}</small></div></div>)}</div></div>;
   }
   return <div className="presentation-slide presentation-slide-light"><PresentationSlideHeader title={slide.title} index={index} total={total} /><div className={`presentation-slide-content presentation-kind-${slide.kind}`}>
     {slide.kind === "glossary" ? <div className="presentation-glossary-grid">{slide.bullets.slice(0, 4).map((item, itemIndex) => { const [term, ...rest] = item.split(/[:：]/); return <div key={itemIndex} className={`presentation-glossary-card ${itemIndex % 2 ? "is-teal" : ""}`}><strong>{term}</strong><p>{presentationShortText(rest.join("：") || item, 108)}</p></div>; })}</div>
       : slide.kind === "evidence" ? <div className="presentation-evidence-layout"><div><div className="presentation-visual-label">当前样本 · 先描述再判断</div><PresentationTableView table={slide.table} />{slide.table?.sources?.[0] ? <p className="presentation-source">来源：{presentationShortText(slide.table.sources[0], 70)}</p> : null}</div><PresentationMiniChart table={slide.table} /></div>
         : slide.kind === "process" ? <div className="presentation-process-row">{slide.bullets.slice(0, 4).map((item, itemIndex) => <div key={itemIndex} className="presentation-process-step"><span>{itemIndex + 1}</span><strong>{presentationShortText(item, 64)}</strong></div>)}</div>
-            : slide.kind === "practice" ? <div className="presentation-practice-layout"><div className="presentation-practice-question"><span>现在只做一件事</span><strong>{presentationShortText(slide.paragraphs[0] ?? slide.bullets[0] ?? "请用自己的话说出这一页的关键判断。", 170)}</strong><small>完成后对照本页说明，先保留自己的判断。</small></div><div className="presentation-practice-steps">{slide.bullets.slice(0, 3).map((item, itemIndex) => <div key={itemIndex}><span>{itemIndex + 1}</span><p>{presentationShortText(item, 80)}</p></div>)}</div></div>
-            : <div className="presentation-concept-layout"><div className="presentation-focus-panel"><span>这一页只记住</span><strong>{presentationShortText(slide.bullets[0] ?? slide.paragraphs[0] ?? "先用一句话说清这一页的核心意思。", 105)}</strong><small>{slide.kind === "summary" ? "把结论和边界一起说" : "先观察，再解释"}</small></div><div className="presentation-bullet-list">{slide.bullets.slice(1, 5).map((item, itemIndex) => <div key={itemIndex}><span>{itemIndex + 2}</span><p>{presentationShortText(item, 110)}</p></div>)}</div></div>}
-  </div><div className="presentation-slide-action">{slide.kind === "evidence" ? "读图提醒：表格告诉你“记录是什么样”，不能单独证明设备已经故障。" : slide.kind === "process" ? "下一步：先说出看到的变化，再决定是否需要补充证据。" : "下一步：用自己的话概括重点，再回到样本找对应依据。"}</div></div>;
+            : slide.kind === "practice" ? <div className="presentation-practice-layout"><div className="presentation-practice-question"><span>现在只做一件事</span><strong>{presentationShortText(slide.paragraphs[0] ?? slide.bullets[0] ?? "请用自己的话说出这一页的关键判断。", 170)}</strong></div><div className="presentation-practice-steps">{slide.bullets.slice(0, 3).map((item, itemIndex) => <div key={itemIndex}><span>{itemIndex + 1}</span><p>{presentationShortText(item, 80)}</p></div>)}</div></div>
+            : <div className="presentation-concept-layout"><div className="presentation-focus-panel"><span>这一页只记住</span><strong>{presentationShortText(slide.bullets[0] ?? slide.paragraphs[0] ?? "先用一句话说清这一页的核心意思。", 105)}</strong></div><div className="presentation-bullet-list">{slide.bullets.slice(1, 5).map((item, itemIndex) => <div key={itemIndex}><span>{itemIndex + 2}</span><p>{presentationShortText(item, 110)}</p></div>)}</div></div>}
+  </div></div>;
 }
 
 function PresentationSlideHeader({ title, index, total }: { title: string; index: number; total: number }) {
@@ -591,9 +604,9 @@ function PresentationReader({ reader, onExport }: { reader: ReaderData; onExport
   };
   const slide = slides[index] ?? slides[0];
   return <div ref={presentationRef} className={`resource-presentation-reader flex min-h-0 flex-1 flex-col bg-[#eef3f7] ${isPresenting ? "is-presenting" : ""}`}>
-    <div className="resource-reading-toolbar flex shrink-0 items-center justify-between border-b bg-background px-5 py-3.5"><div className="resource-reading-title"><Presentation className="h-4 w-4" /><span>演示阅读</span><span className="presentation-reader-hint">每页一个重点 · 方向键可翻页</span></div><div className="flex items-center gap-2">{presentationNotice ? <span role="alert" className="text-[11px] text-rose-600">{presentationNotice}</span> : null}<button type="button" onClick={() => void togglePresentation()} className="resource-toolbar-button" title={isPresenting ? "退出放映" : "开始放映"}>{isPresenting ? <Minimize2 className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}{isPresenting ? "退出放映" : "放映"}</button><ResourceExportMenu assetType={reader.asset.type} onExport={onExport} /></div></div>
+    <div className="resource-reading-toolbar flex shrink-0 items-center justify-between border-b bg-background px-5 py-3.5"><div className="resource-reading-title"><Presentation className="h-4 w-4" /><span>演示阅读</span></div><div className="flex items-center gap-2">{presentationNotice ? <span role="alert" className="text-[11px] text-rose-600">{presentationNotice}</span> : null}<button type="button" onClick={() => void togglePresentation()} className="resource-toolbar-button" title={isPresenting ? "退出放映" : "开始放映"}>{isPresenting ? <Minimize2 className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}{isPresenting ? "退出放映" : "放映"}</button><ResourceExportMenu assetType={reader.asset.type} onExport={onExport} /></div></div>
     <div className="presentation-reading-body min-h-0 flex-1 overflow-y-auto px-4 py-6 sm:px-6 sm:py-7">
-      <div className="mx-auto w-full max-w-5xl"><div className="presentation-stage"><PresentationSlideCanvas slide={slide} asset={reader.asset} index={index + 1} total={slides.length} /></div><details className="presentation-page-explanation"><summary><span>本页说明</span><span>打开查看本页说明</span></summary><div>{slide.paragraphs.length > 0 ? slide.paragraphs.map((paragraph, paragraphIndex) => <RichText key={paragraphIndex} text={paragraph} />) : <p>本页聚焦“{slide.title}”。先看页面中的关键依据，用自己的话概括一个结论，再继续下一页。</p>}</div></details></div>
+      <div className="mx-auto w-full max-w-5xl"><div className="presentation-stage"><PresentationSlideCanvas slide={slide} asset={reader.asset} index={index + 1} total={slides.length} /></div><details className="presentation-page-explanation" open><summary><span>本页说明</span><span>查看这一页解决什么问题</span></summary><div>{slide.paragraphs.length > 0 ? slide.paragraphs.map((paragraph, paragraphIndex) => <RichText key={paragraphIndex} text={paragraph} />) : <p>{defaultPresentationExplanation(slide)}</p>}</div></details></div>
     </div>
     <div className="presentation-pagination border-t bg-background px-4 py-3"><div className="presentation-pager"><button type="button" disabled={index === 0} onClick={() => setIndex((value) => Math.max(0, value - 1))} aria-label="上一页" className="presentation-pager-button"><ChevronLeft className="h-4 w-4" /></button><div className="presentation-slide-strip" role="tablist" aria-label="演示页码">{slides.map((item, itemIndex) => <button key={`${item.title}-${itemIndex}`} type="button" role="tab" aria-selected={index === itemIndex} onClick={() => setIndex(itemIndex)} className={`presentation-slide-tab ${index === itemIndex ? "is-active" : ""}`}><span>{String(itemIndex + 1).padStart(2, "0")}</span><strong>{presentationShortText(item.title, 16)}</strong></button>)}</div><button type="button" disabled={index === slides.length - 1} onClick={() => setIndex((value) => Math.min(slides.length - 1, value + 1))} aria-label="下一页" className="presentation-pager-button"><ChevronRight className="h-4 w-4" /></button></div></div>
   </div>;

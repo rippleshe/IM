@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { AlertCircle, CheckCircle2, Circle, LoaderCircle, RotateCcw } from "lucide-react";
 
-export type DagNodeState = "pending" | "running" | "succeeded" | "failed" | "revising";
+export type DagNodeState = "pending" | "running" | "succeeded" | "failed" | "revising" | "skipped";
 
 type DagEvent = { id: string; type: string; nodeKey: string | null; summary: string };
 type DagState = { key: string; state: Exclude<DagNodeState, "pending"> };
@@ -32,6 +32,7 @@ function statusPresentation(state: DagNodeState) {
   if (state === "succeeded") return { label: "已完成", tone: "border-emerald-200 bg-emerald-50 text-emerald-800", Icon: CheckCircle2 };
   if (state === "failed") return { label: "未完成", tone: "border-rose-200 bg-rose-50 text-rose-800", Icon: AlertCircle };
   if (state === "revising") return { label: "修改中", tone: "border-amber-200 bg-amber-50 text-amber-800", Icon: RotateCcw };
+  if (state === "skipped") return { label: "未适用", tone: "border-slate-200 bg-slate-50 text-slate-500", Icon: Circle };
   if (state === "running") return { label: "进行中", tone: "border-blue-200 bg-blue-50 text-blue-800", Icon: LoaderCircle };
   return { label: "等待中", tone: "border-slate-200 bg-background text-slate-500", Icon: Circle };
 }
@@ -44,12 +45,12 @@ export function DagProgress({ states, events, summary, completed }: { states: Da
   const currentKey = phases.flatMap((phase) => phase.keys).find((key) => stateByKey.get(key) === "running" || stateByKey.get(key) === "revising") ?? null;
   const focusKey = selectedKey ?? currentKey;
   const detail = focusKey ? [...events].reverse().find((event) => event.nodeKey === focusKey)?.summary ?? "该步骤暂未产生可公开的处理摘要。" : summary;
-  const completedCount = phases.flatMap((phase) => phase.keys).filter((key) => stateByKey.get(key) === "succeeded").length;
+  const completedCount = phases.flatMap((phase) => phase.keys).filter((key) => stateByKey.get(key) === "succeeded" || stateByKey.get(key) === "skipped").length;
 
   return <section aria-label="多智能体协同进度" className="rounded-xl border bg-muted/20 p-3">
     <div className="flex items-center justify-between gap-3">
-      <div><div className="text-xs font-semibold text-slate-800">协同处理流程</div><p className="mt-0.5 text-[10px] leading-4 text-muted-foreground">{completed ? "本次处理已结束，点击步骤查看公开摘要。" : "状态由实时处理事件更新，点击步骤查看公开摘要。"}</p></div>
-      <span className="shrink-0 text-[10px] font-medium tabular-nums text-muted-foreground">{completedCount} / 10</span>
+      <div><div className="text-xs font-semibold text-slate-800">协同处理流程</div></div>
+      <span className="shrink-0 text-[10px] font-medium tabular-nums text-muted-foreground" title={`${completed ? "已结束，" : "正在处理，"}已处理 ${completedCount} 个步骤`}>{completedCount} / 10</span>
     </div>
     <div className="mt-3 space-y-2.5" aria-label="十个协同处理步骤">
       {phases.map((phase, phaseIndex) => <div key={phase.label}>
@@ -65,7 +66,6 @@ export function DagProgress({ states, events, summary, completed }: { states: Da
               <span className="min-w-0 whitespace-nowrap">{labels[key]}</span>
             </button>;
           })}
-          {phaseIndex === 0 && <div className="col-span-2 text-[9px] leading-3 text-slate-400">画像、数据与资料可并行完成后再进入分析。</div>}
         </div>
       </div>)}
     </div>
