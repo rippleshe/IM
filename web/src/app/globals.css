@@ -2536,18 +2536,6 @@ summary:focus-visible {
   color: #20343b;
 }
 
-.workspace-mark {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 23px;
-  height: 23px;
-  border: 1px solid #c9ded9;
-  border-radius: 7px;
-  color: #3e8b80;
-  background: #eef8f4;
-}
-
 .workspace-brand-tag {
   display: inline-flex;
   align-items: center;
@@ -2563,7 +2551,6 @@ summary:focus-visible {
 }
 
 .workspace-user {
-  margin-left: 31px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

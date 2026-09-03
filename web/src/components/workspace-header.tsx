@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  Activity,
   BookOpen,
   CircleUserRound,
   FileCheck2,
@@ -38,7 +37,6 @@ export function WorkspaceHeader({ user, activeView, onNavigate, onSettings, onPr
         <AvatarBubble user={user} size="h-9 w-9 text-xs" />
         <div className="workspace-wordmark min-w-0">
           <div className="flex items-center gap-2">
-            <span className="workspace-mark" aria-hidden="true"><Activity className="h-3.5 w-3.5" /></span>
             <span className="block text-sm font-semibold tracking-tight">智辩无幻</span>
             <span className="workspace-brand-tag">诊断学习空间</span>
           </div>
