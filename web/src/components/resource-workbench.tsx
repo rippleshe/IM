@@ -18,7 +18,6 @@ import {
   Play,
   Plus,
   Presentation,
-  Quote,
   Save,
   Target,
   ListTree,
@@ -65,18 +64,6 @@ const typeItems: Array<{ type: ResourceType; label: string; icon: typeof BookOpe
 
 function typeLabel(type: ResourceType) {
   return typeItems.find((item) => item.type === type)?.label ?? "资源";
-}
-
-function ResourcePrimer({ type }: { type: ResourceType }) {
-  const message = type === "tiered_quiz"
-    ? "不会的词不用硬背。先读题干里的中文说明，再判断这一题只问哪一个小问题。"
-    : type === "presentation"
-      ? "每页只抓一个重点：先看它在解决什么问题，再看示例和讲解词，最后跟着做一个小动作。"
-      : "不用先记住整张字段表。每个新词都会先用中文说明，再给一个小例子，最后带你做一步。";
-  return <div className="mb-6 rounded-xl border border-amber-200 bg-amber-50/70 px-5 py-4 text-[12px] leading-6 text-amber-950" aria-label="阅读方法提示">
-    <div className="flex items-center gap-2 font-semibold"><BookOpen className="h-3.5 w-3.5 text-amber-700" />先这样读</div>
-    <p className="mt-1.5">{message}</p>
-  </div>;
 }
 
 function conciseAssetTitle(title: string, type: ResourceType): string {
@@ -218,6 +205,12 @@ function MermaidDiagram({ code }: { code: string }) {
   return <div className="flex justify-center overflow-x-auto rounded-xl border bg-gradient-to-b from-background to-muted/20 p-5 [&_svg]:h-auto [&_svg]:max-w-full" dangerouslySetInnerHTML={{ __html: svg }} />;
 }
 
+function parseMisconceptionItem(item: unknown): { wrong: string; correct: string } | null {
+  if (typeof item !== "string") return null;
+  const match = item.replace(/\r/g, "").match(/^\*\*误区\*\*[：:]\s*(.*?)\s*→\s*\*\*正确理解\*\*[：:]\s*(.*)$/u);
+  return match ? { wrong: match[1] ?? "", correct: match[2] ?? "" } : null;
+}
+
 function renderBlockContent(block: ResourceBlock, sectionNumber?: number) {
   if (block.type === "evidence") return null;
   if (block.type === "heading") return <h3 className="flex items-center gap-3 border-b border-border/70 pb-3 text-xl font-semibold tracking-tight text-foreground">{typeof sectionNumber === "number" ? <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-blue-500 to-indigo-500 text-[13px] font-bold text-white">{sectionNumber}</span> : <span className="h-5 w-1 rounded-full bg-gradient-to-b from-blue-500 to-indigo-500" />}<RichInlineText text={String(block.content)} /></h3>;
@@ -225,14 +218,22 @@ function renderBlockContent(block: ResourceBlock, sectionNumber?: number) {
     return <MermaidDiagram code={block.content} />;
   }
   if (typeof block.content === "string") return <div className="space-y-1"><RichText text={block.content} variant="doc" /></div>;
-  if (Array.isArray(block.content)) return <ul className="space-y-2 rounded-xl border border-border/70 bg-card/60 p-4 text-sm leading-7 text-muted-foreground">{block.content.map((item, index) => <li key={index} className="flex gap-2"><span className="mt-[11px] h-1.5 w-1.5 shrink-0 rounded-full bg-foreground/45" />{typeof item === "string" ? <RichInlineText text={item} /> : String(item)}</li>)}</ul>;
+  if (Array.isArray(block.content)) {
+    const misconceptions = block.content.map(parseMisconceptionItem);
+    if (misconceptions.length > 0 && misconceptions.every((item): item is { wrong: string; correct: string } => Boolean(item))) {
+      return <div className="resource-misconception-list">{misconceptions.map((item, index) => <div key={index} className="resource-misconception-card"><div className="resource-misconception-row resource-misconception-row-wrong"><span className="resource-misconception-label">误区</span><p><RichInlineText text={item.wrong} /></p></div><div className="resource-misconception-divider" /><div className="resource-misconception-row resource-misconception-row-correct"><span className="resource-misconception-label">正确理解</span><p><RichInlineText text={item.correct} /></p></div></div>)}</div>;
+    }
+    return <ul className="space-y-2 rounded-xl border border-border/70 bg-card/60 p-4 text-sm leading-7 text-muted-foreground">{block.content.map((item, index) => <li key={index} className="flex gap-2"><span className="mt-[11px] h-1.5 w-1.5 shrink-0 rounded-full bg-foreground/45" />{typeof item === "string" ? <RichInlineText text={item} /> : String(item)}</li>)}</ul>;
+  }
   if (block.content && typeof block.content === "object") {
     const data = block.content as { label?: string; locator?: string; summary?: string; language?: string; caption?: string; code?: string; columns?: unknown; rows?: unknown };
     if (Array.isArray(data.columns) && Array.isArray(data.rows)) {
-      return <div className="resource-data-table"><div className="border-b bg-muted/30 px-4 py-3"><div className="text-xs font-medium">先看一小段数据</div><p className="mt-1 text-[11px] leading-5 text-muted-foreground">每一行是一次记录，每一列是一个观察项。字段名先不用背，先对照上面的中文解释，观察它记录了什么。</p></div><div className="overflow-x-auto"><table className="w-full text-left text-xs"><thead><tr className="border-b bg-muted/15 text-muted-foreground">{(data.columns as string[]).map((column) => <th key={column} className="whitespace-nowrap px-3 py-2 font-medium">{column}</th>)}</tr></thead><tbody>{(data.rows as Array<Array<string | number | null>>).map((row, rowIndex) => <tr key={rowIndex} className="border-b transition-colors last:border-b-0 hover:bg-muted/20">{row.map((cell, cellIndex) => <td key={cellIndex} className="whitespace-nowrap px-3 py-2 font-mono text-[11px] text-muted-foreground">{cell === null ? "—" : String(cell)}</td>)}</tr>)}</tbody></table></div></div>;
+      const columns = data.columns as string[];
+      const rows = data.rows as Array<Array<string | number | null>>;
+      return <div className="resource-data-table"><div className="resource-data-table-header"><div><div className="resource-data-table-kicker">数据样本</div><div className="resource-data-table-title">先看记录长什么样</div></div><span className="resource-data-table-count">{rows.length} 条记录</span></div><div className="resource-table-scroll"><table><thead><tr><th className="resource-table-index">#</th>{columns.map((column) => <th key={column}>{column}</th>)}</tr></thead><tbody>{rows.map((row, rowIndex) => <tr key={rowIndex}><td className="resource-table-index">{String(rowIndex + 1).padStart(2, "0")}</td>{columns.map((column, cellIndex) => <td key={`${column}-${cellIndex}`}>{row[cellIndex] === null || row[cellIndex] === undefined ? <span className="resource-table-empty">—</span> : String(row[cellIndex])}</td>)}</tr>)}</tbody></table></div></div>;
     }
     if (typeof data.code === "string") {
-      return <div><div className="mb-2 rounded-lg bg-slate-50 px-3 py-2 text-[11px] leading-5 text-slate-600">跟着做：这段代码只完成当前这一步。先看注释，运行后只检查它是否完成了本节要解决的小问题。</div><CodeFigure language={data.language ?? "python"} code={data.code} caption={data.caption ?? "代码示例"} /></div>;
+      return <CodeFigure language={data.language ?? "python"} code={data.code} caption={data.caption ?? "代码示例"} />;
     }
     if (data.summary || data.locator) return <div className="resource-callout"><div className="flex items-center gap-1.5 text-xs font-medium"><span className="flex h-4 w-4 items-center justify-center rounded bg-[#e5f2e9] text-[9px] font-bold text-[#397b61]">证</span>{data.label ?? "证据说明"}</div><p className="mt-2 text-sm leading-6 text-[#53645a]">{data.summary}</p></div>;
   }
@@ -262,6 +263,16 @@ function presentationShortText(value: string, max = 90): string {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
 }
 
+function learnerFacingPresentationText(value: string): string {
+  return value
+    .replace(/这一页先让学习者复述重点，再完成页面底部的小动作。/gu, "本页先看清重点，再完成页面底部的小动作。")
+    .replace(/让学习者/gu, "帮助你")
+    .replace(/学习者/gu, "你")
+    .replace(/讲解词/gu, "本页说明")
+    .replace(/讲解时/gu, "阅读时")
+    .trim();
+}
+
 function presentationSlideKind(title: string, hasTable: boolean, hasCode: boolean): PresentationSlide["kind"] {
   if (hasTable) return "evidence";
   if (/词|术语|字段含义|关键词/.test(title)) return "glossary";
@@ -281,7 +292,7 @@ function buildPresentationSlides(blocks: ResourceBlock[], asset: ResourceAsset):
   if (current.length > 0) groups.push(current);
   return (groups.length ? groups : [blocks]).map((group) => {
     const heading = group.find((block) => block.type === "heading");
-    const paragraphs = group.filter((block) => block.type === "paragraph" && typeof block.content === "string").map((block) => String(block.content).trim()).filter(Boolean);
+    const paragraphs = group.filter((block) => block.type === "paragraph" && typeof block.content === "string").map((block) => learnerFacingPresentationText(String(block.content))).filter(Boolean);
     const bullets = group.filter((block) => (block.type === "list" || block.type === "checklist") && Array.isArray(block.content)).flatMap((block) => (block.content as unknown[]).filter((item): item is string => typeof item === "string")).map(presentationPlainText).filter(Boolean).slice(0, 5);
     const tableBlock = group.find((block) => block.type === "table");
     const codeBlock = group.find((block) => block.type === "code");
@@ -329,9 +340,9 @@ function PresentationSlideCanvas({ slide, asset, index, total }: { slide: Presen
     {slide.kind === "glossary" ? <div className="presentation-glossary-grid">{slide.bullets.slice(0, 4).map((item, itemIndex) => { const [term, ...rest] = item.split(/[:：]/); return <div key={itemIndex} className={`presentation-glossary-card ${itemIndex % 2 ? "is-teal" : ""}`}><strong>{term}</strong><p>{presentationShortText(rest.join("：") || item, 108)}</p></div>; })}</div>
       : slide.kind === "evidence" ? <div className="presentation-evidence-layout"><div><div className="presentation-visual-label">当前样本 · 先描述再判断</div><PresentationTableView table={slide.table} />{slide.table?.sources?.[0] ? <p className="presentation-source">来源：{presentationShortText(slide.table.sources[0], 70)}</p> : null}</div><PresentationMiniChart table={slide.table} /></div>
         : slide.kind === "process" ? <div className="presentation-process-row">{slide.bullets.slice(0, 4).map((item, itemIndex) => <div key={itemIndex} className="presentation-process-step"><span>{itemIndex + 1}</span><strong>{presentationShortText(item, 64)}</strong></div>)}</div>
-          : slide.kind === "practice" ? <div className="presentation-practice-layout"><div className="presentation-practice-question"><span>现在只做一件事</span><strong>{presentationShortText(slide.paragraphs[0] ?? slide.bullets[0] ?? "请用自己的话说出这一页的关键判断。", 170)}</strong><small>完成后再看讲解词，先保留自己的判断。</small></div><div className="presentation-practice-steps">{slide.bullets.slice(0, 3).map((item, itemIndex) => <div key={itemIndex}><span>{itemIndex + 1}</span><p>{presentationShortText(item, 80)}</p></div>)}</div></div>
+            : slide.kind === "practice" ? <div className="presentation-practice-layout"><div className="presentation-practice-question"><span>现在只做一件事</span><strong>{presentationShortText(slide.paragraphs[0] ?? slide.bullets[0] ?? "请用自己的话说出这一页的关键判断。", 170)}</strong><small>完成后对照本页说明，先保留自己的判断。</small></div><div className="presentation-practice-steps">{slide.bullets.slice(0, 3).map((item, itemIndex) => <div key={itemIndex}><span>{itemIndex + 1}</span><p>{presentationShortText(item, 80)}</p></div>)}</div></div>
             : <div className="presentation-concept-layout"><div className="presentation-focus-panel"><span>这一页只记住</span><strong>{presentationShortText(slide.bullets[0] ?? slide.paragraphs[0] ?? "先用一句话说清这一页的核心意思。", 105)}</strong><small>{slide.kind === "summary" ? "把结论和边界一起说" : "先观察，再解释"}</small></div><div className="presentation-bullet-list">{slide.bullets.slice(1, 5).map((item, itemIndex) => <div key={itemIndex}><span>{itemIndex + 2}</span><p>{presentationShortText(item, 110)}</p></div>)}</div></div>}
-  </div><div className="presentation-slide-action">{slide.kind === "evidence" ? "读图提醒：表格告诉你“记录是什么样”，不能单独证明设备已经故障。" : slide.kind === "process" ? "跟着做：每完成一步，先说出“我看到了什么”，再决定下一步。" : "跟着做：先用自己的话复述重点，再回到样本中找一个对应的地方。"}</div></div>;
+  </div><div className="presentation-slide-action">{slide.kind === "evidence" ? "读图提醒：表格告诉你“记录是什么样”，不能单独证明设备已经故障。" : slide.kind === "process" ? "下一步：先说出看到的变化，再决定是否需要补充证据。" : "下一步：用自己的话概括重点，再回到样本找对应依据。"}</div></div>;
 }
 
 function PresentationSlideHeader({ title, index, total }: { title: string; index: number; total: number }) {
@@ -374,7 +385,6 @@ export function ResourceWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
   const [notesWidth, setNotesWidth] = useState(330);
   const [resizing, setResizing] = useState(false);
   const [qaOpen, setQaOpen] = useState(false);
-  const [selectedQuote, setSelectedQuote] = useState("");
   const readerRequestRef = useRef(0);
 
   const activeAssets = useMemo(() => assets.filter((asset) => asset.type === activeType), [assets, activeType]);
@@ -424,13 +434,11 @@ export function ResourceWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
   const selectType = (type: ResourceType) => {
     setActiveType(type);
     setSelectedId(assets.find((asset) => asset.type === type)?.id ?? null);
-    setSelectedQuote("");
     setNotice("");
   };
 
   const selectAsset = (assetId: string) => {
     setSelectedId(assetId);
-    setSelectedQuote("");
     setNotice("");
   };
 
@@ -483,12 +491,12 @@ export function ResourceWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
 
       <section className="flex min-w-[460px] flex-1 flex-col overflow-hidden bg-card" aria-label="资源阅读与作答">
         {notice ? <div className="shrink-0 border-b border-destructive/20 bg-destructive/5 px-5 py-2 text-xs text-destructive">{notice}</div> : null}
-        {selectedReader?.asset.type === "lecture" ? <LectureReader reader={selectedReader} onExport={exportAsset} onQuote={setSelectedQuote} /> : selectedReader?.asset.type === "tiered_quiz" ? <QuizReader key={selectedReader.asset.id} apiBase={apiBase} reader={selectedReader} onReaderChange={setReader} /> : selectedReader?.asset.type === "presentation" ? <PresentationReader reader={selectedReader} onExport={exportAsset} /> : selectedReader ? <GenericReader apiBase={apiBase} reader={selectedReader} onReaderChange={setReader} onExport={exportAsset} /> : loading || selectedAsset ? <div className="flex h-full items-center justify-center text-sm text-muted-foreground">正在读取资源</div> : <EmptyReader label={typeLabel(activeType)} />}
+        {selectedReader?.asset.type === "lecture" ? <LectureReader reader={selectedReader} onExport={exportAsset} /> : selectedReader?.asset.type === "tiered_quiz" ? <QuizReader key={selectedReader.asset.id} apiBase={apiBase} reader={selectedReader} onReaderChange={setReader} /> : selectedReader?.asset.type === "presentation" ? <PresentationReader reader={selectedReader} onExport={exportAsset} /> : selectedReader ? <GenericReader apiBase={apiBase} reader={selectedReader} onReaderChange={setReader} onExport={exportAsset} /> : loading || selectedAsset ? <div className="flex h-full items-center justify-center text-sm text-muted-foreground">正在读取资源</div> : <EmptyReader label={typeLabel(activeType)} />}
       </section>
 
       <div role="separator" aria-orientation="vertical" onMouseDown={() => setResizing(true)} className="w-1.5 shrink-0 cursor-col-resize bg-border/60 transition-colors hover:bg-foreground/30" />
       <aside style={{ width: notesWidth }} className="flex shrink-0 flex-col border-l bg-muted/15" aria-label="资源笔记或解析">
-        {selectedReader?.asset.type === "tiered_quiz" ? <QuizAnswerPanel reader={selectedReader} /> : selectedReader ? <LectureNotes key={selectedReader.asset.id} apiBase={apiBase} reader={selectedReader} selectedQuote={selectedReader.asset.type === "lecture" ? selectedQuote : ""} onClearQuote={() => setSelectedQuote("")} onReaderChange={setReader} onReinforce={() => reinforceFromAsset(selectedReader.asset, selectedReader.feedback?.masteryLevel ?? null)} /> : <div className="flex h-full items-center justify-center px-8 text-center text-sm text-muted-foreground">选择一份资源后，在这里查看笔记、反馈或答案解析。</div>}
+        {selectedReader?.asset.type === "tiered_quiz" ? <QuizAnswerPanel reader={selectedReader} /> : selectedReader ? <LectureNotes key={selectedReader.asset.id} apiBase={apiBase} reader={selectedReader} onReaderChange={setReader} onReinforce={() => reinforceFromAsset(selectedReader.asset, selectedReader.feedback?.masteryLevel ?? null)} /> : <div className="flex h-full items-center justify-center px-8 text-center text-sm text-muted-foreground">选择一份资源后，在这里查看笔记、反馈或答案解析。</div>}
       </aside>
     </div>
     {settingsOpen && <SettingsDialog apiBase={apiBase} onClose={() => setSettingsOpen(false)} />}
@@ -502,7 +510,7 @@ function EmptyReader({ label }: { label: string }) {
 }
 
 // 讲义为持续下滑的富文本长文：标题即章节锚点（自动编号），顶部细条显示阅读进度，右侧目录滚动定位。
-function LectureReader({ reader, onExport, onQuote }: { reader: ReaderData; onExport: (format: "md" | "txt" | "json" | "ppt") => void; onQuote: (quote: string) => void }) {
+function LectureReader({ reader, onExport }: { reader: ReaderData; onExport: (format: "md" | "txt" | "json" | "ppt") => void }) {
   const blocks = useMemo(() => visibleLearningBlocks(reader.asset.blocks), [reader.asset.blocks]);
   const headings = blocks.filter((block) => block.type === "heading");
   const sectionNumber = useMemo(() => {
@@ -519,12 +527,6 @@ function LectureReader({ reader, onExport, onQuote }: { reader: ReaderData; onEx
     const max = el.scrollHeight - el.clientHeight;
     setProgress(max > 4 ? Math.min(1, el.scrollTop / max) : 0);
   };
-  const captureSelection = () => {
-    const selection = window.getSelection();
-    const text = selection?.toString().trim() ?? "";
-    const anchor = selection?.anchorNode;
-    if (text.length >= 2 && anchor && scrollRef.current?.contains(anchor)) onQuote(text.slice(0, 1_200));
-  };
   return <div className="flex min-h-0 flex-1 flex-col">
     <div className="resource-reading-toolbar flex shrink-0 items-center justify-end gap-3 border-b px-5 py-3">
       <div className="flex shrink-0 items-center gap-2.5">
@@ -535,10 +537,9 @@ function LectureReader({ reader, onExport, onQuote }: { reader: ReaderData; onEx
         <ResourceExportMenu assetType={reader.asset.type} onExport={onExport} />
       </div>
     </div>
-    <div ref={scrollRef} onScroll={handleScroll} onMouseUp={captureSelection} className="min-h-0 flex-1 overflow-y-auto bg-background/40">
+    <div ref={scrollRef} onScroll={handleScroll} className="min-h-0 flex-1 overflow-y-auto bg-background/40">
       <div className="sticky top-0 z-10 h-0.5 bg-transparent"><div className="h-full rounded-r-full bg-gradient-to-r from-blue-500 to-indigo-500 transition-[width] duration-150" style={{ width: `${Math.round(progress * 100)}%` }} /></div>
       <article className="mx-auto max-w-3xl px-8 py-8">
-        <ResourcePrimer type="lecture" />
         {reader.asset.learningObjectives.length > 0 && <div className="mb-8 border-y border-blue-100 bg-blue-50/45 px-5 py-4"><div className="flex items-center gap-2 text-[11px] font-semibold tracking-wide text-blue-700"><Target className="h-3.5 w-3.5" />学习目标</div><ul className="mt-3 space-y-2">{reader.asset.learningObjectives.map((objective) => <li key={objective} className="flex gap-2.5 text-[13px] leading-6 text-blue-950"><span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-blue-500" />{objective}</li>)}</ul></div>}
         <div className="space-y-7">{blocks.map((block) => <section key={block.id} id={block.type === "heading" ? `sec-${block.id}` : undefined} className="scroll-mt-4">{renderBlockContent(block, sectionNumber.get(block.id))}</section>)}</div>
         <div className="h-12" />
@@ -589,16 +590,16 @@ function PresentationReader({ reader, onExport }: { reader: ReaderData; onExport
     }
   };
   const slide = slides[index] ?? slides[0];
-  return <div ref={presentationRef} className="resource-presentation-reader flex min-h-0 flex-1 flex-col bg-[#eef3f7]">
+  return <div ref={presentationRef} className={`resource-presentation-reader flex min-h-0 flex-1 flex-col bg-[#eef3f7] ${isPresenting ? "is-presenting" : ""}`}>
     <div className="resource-reading-toolbar flex shrink-0 items-center justify-between border-b bg-background px-5 py-3.5"><div className="resource-reading-title"><Presentation className="h-4 w-4" /><span>演示阅读</span><span className="presentation-reader-hint">每页一个重点 · 方向键可翻页</span></div><div className="flex items-center gap-2">{presentationNotice ? <span role="alert" className="text-[11px] text-rose-600">{presentationNotice}</span> : null}<button type="button" onClick={() => void togglePresentation()} className="resource-toolbar-button" title={isPresenting ? "退出放映" : "开始放映"}>{isPresenting ? <Minimize2 className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}{isPresenting ? "退出放映" : "放映"}</button><ResourceExportMenu assetType={reader.asset.type} onExport={onExport} /></div></div>
-    <div className="min-h-0 flex-1 overflow-y-auto px-4 py-6 sm:px-6 sm:py-7">
-      <div className="mx-auto w-full max-w-5xl"><div className="presentation-stage"><PresentationSlideCanvas slide={slide} asset={reader.asset} index={index + 1} total={slides.length} /></div><details className="presentation-speaker-notes"><summary><span>本页说明</span><span>打开查看本页说明</span></summary><div>{slide.paragraphs.length > 0 ? slide.paragraphs.map((paragraph, paragraphIndex) => <RichText key={paragraphIndex} text={paragraph} />) : <p>这一页先让学习者复述重点，再完成页面底部的小动作。</p>}</div></details></div>
+    <div className="presentation-reading-body min-h-0 flex-1 overflow-y-auto px-4 py-6 sm:px-6 sm:py-7">
+      <div className="mx-auto w-full max-w-5xl"><div className="presentation-stage"><PresentationSlideCanvas slide={slide} asset={reader.asset} index={index + 1} total={slides.length} /></div><details className="presentation-page-explanation"><summary><span>本页说明</span><span>打开查看本页说明</span></summary><div>{slide.paragraphs.length > 0 ? slide.paragraphs.map((paragraph, paragraphIndex) => <RichText key={paragraphIndex} text={paragraph} />) : <p>本页聚焦“{slide.title}”。先看页面中的关键依据，用自己的话概括一个结论，再继续下一页。</p>}</div></details></div>
     </div>
     <div className="presentation-pagination border-t bg-background px-4 py-3"><div className="presentation-pager"><button type="button" disabled={index === 0} onClick={() => setIndex((value) => Math.max(0, value - 1))} aria-label="上一页" className="presentation-pager-button"><ChevronLeft className="h-4 w-4" /></button><div className="presentation-slide-strip" role="tablist" aria-label="演示页码">{slides.map((item, itemIndex) => <button key={`${item.title}-${itemIndex}`} type="button" role="tab" aria-selected={index === itemIndex} onClick={() => setIndex(itemIndex)} className={`presentation-slide-tab ${index === itemIndex ? "is-active" : ""}`}><span>{String(itemIndex + 1).padStart(2, "0")}</span><strong>{presentationShortText(item.title, 16)}</strong></button>)}</div><button type="button" disabled={index === slides.length - 1} onClick={() => setIndex((value) => Math.min(slides.length - 1, value + 1))} aria-label="下一页" className="presentation-pager-button"><ChevronRight className="h-4 w-4" /></button></div></div>
   </div>;
 }
 
-function LectureNotes({ apiBase, reader, selectedQuote, onClearQuote, onReaderChange, onReinforce }: { apiBase: string; reader: ReaderData; selectedQuote: string; onClearQuote: () => void; onReaderChange: (data: ReaderData) => void; onReinforce: () => void }) {
+function LectureNotes({ apiBase, reader, onReaderChange, onReinforce }: { apiBase: string; reader: ReaderData; onReaderChange: (data: ReaderData) => void; onReinforce: () => void }) {
   const [draft, setDraft] = useState("");
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -607,12 +608,6 @@ function LectureNotes({ apiBase, reader, selectedQuote, onClearQuote, onReaderCh
   const notes = reader.pageNotes.filter((note) => note.content.trim()).sort((a, b) => b.updatedAt - a.updatedAt);
   const startNewNote = () => { setEditingKey(null); setDraft(""); setSaved(false); setNoteError(""); };
   const editNote = (note: PageNote) => { setEditingKey(note.pageKey); setDraft(note.content); setSaved(false); setNoteError(""); };
-  const insertQuote = () => {
-    if (!selectedQuote) return;
-    const quote = selectedQuote.split("\n").map((line) => `> ${line}`).join("\n");
-    setDraft((current) => current.trim() ? `${current.trim()}\n\n${quote}\n\n` : `${quote}\n\n`);
-    onClearQuote();
-  };
   const save = async () => {
     if (!draft.trim()) return;
     setSaving(true);
@@ -639,7 +634,6 @@ function LectureNotes({ apiBase, reader, selectedQuote, onClearQuote, onReaderCh
   return <div className="resource-notes flex min-h-0 flex-1 flex-col">
     <div className="resource-notes-header"><div className="text-sm font-semibold">笔记</div><button type="button" onClick={startNewNote} className="resource-note-new"><Plus className="h-3.5 w-3.5" />新建</button></div>
     <div className="min-h-0 flex-1 overflow-y-auto p-4">
-      {selectedQuote ? <div className="resource-selection-quote"><div className="flex items-center gap-1.5 text-[10px] font-medium text-blue-700"><Quote className="h-3 w-3" />已选正文</div><blockquote className="mt-2 line-clamp-4 text-xs leading-5 text-slate-600">{selectedQuote}</blockquote><button type="button" onClick={insertQuote} className="mt-2 text-[11px] font-medium text-blue-700 hover:text-blue-800">引用到当前笔记</button></div> : null}
       <div className="resource-note-editor"><textarea value={draft} onChange={(event) => { setDraft(event.target.value); setSaved(false); }} placeholder={editingKey ? "编辑这条笔记" : "写下你的笔记"} aria-label="笔记内容" />{noteError ? <div className="mb-2 text-xs text-rose-600">{noteError}</div> : null}<div className="flex justify-end"><button type="button" disabled={saving || !draft.trim()} onClick={() => void save()} className="resource-note-save">{saved ? <Check className="h-3.5 w-3.5" /> : <Save className="h-3.5 w-3.5" />}{saved ? "已保存" : saving ? "保存中" : "保存笔记"}</button></div></div>
       {notes.length > 0 ? <div className="mt-4 space-y-2">{notes.map((note) => <button key={note.pageKey} type="button" onClick={() => editNote(note)} className={`resource-note-card ${editingKey === note.pageKey ? "resource-note-card-active" : ""}`}><span className="line-clamp-3">{note.content.replace(/^> /gm, "")}</span></button>)}</div> : null}
     </div>
@@ -712,7 +706,7 @@ function QuizReader({ apiBase, reader, onReaderChange }: { apiBase: string; read
     }
   };
   const canSubmit = questionType === "choice" ? Boolean(answerId) : questionType === "blank" ? Boolean(answerId.trim()) : Boolean(answerId.trim()) && showReference;
-  return <div className="flex min-h-0 flex-1 flex-col"><div className="flex shrink-0 items-center justify-between border-b px-5 py-3.5"><div className="text-[10px] font-medium tracking-wide text-[#74837b]">开始练习</div><div className="flex items-center gap-2"><span className="rounded-full border px-2.5 py-1 text-[11px]">{question.level}</span><span className="rounded-full bg-muted px-2.5 py-1 text-[11px] font-medium">{QUESTION_TYPE_LABELS[questionType]}</span>{answered ? <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-medium ${latest!.correct ? "bg-emerald-100 text-emerald-900" : "bg-rose-100 text-rose-700"}`}>{latest!.correct ? <CheckCircle2 className="h-3 w-3" /> : <XCircle className="h-3 w-3" />}{latest!.correct ? "答对" : "再想想"}</span> : null}</div></div><div className="min-h-0 flex-1 overflow-y-auto"><article className="mx-auto max-w-3xl px-8 py-10"><ResourcePrimer type="tiered_quiz" />{glossary.length > 0 && <div className="mb-7 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3"><div className="text-xs font-semibold text-[#334155]">先认识几个词</div><ul className="mt-2 space-y-1.5 text-xs leading-5 text-[#334155]">{glossary.map((item, itemIndex) => <li key={itemIndex}><RichInlineText text={item} /></li>)}</ul></div>}<div className="text-xs text-muted-foreground">第 {index + 1} 题 / 共 {questions.length} 题</div><h2 className="mt-4 text-xl font-semibold leading-8">{question.prompt}</h2>
+  return <div className="flex min-h-0 flex-1 flex-col"><div className="flex shrink-0 items-center justify-between border-b px-5 py-3.5"><div className="text-[10px] font-medium tracking-wide text-[#74837b]">开始练习</div><div className="flex items-center gap-2"><span className="rounded-full border px-2.5 py-1 text-[11px]">{question.level}</span><span className="rounded-full bg-muted px-2.5 py-1 text-[11px] font-medium">{QUESTION_TYPE_LABELS[questionType]}</span>{answered ? <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-medium ${latest!.correct ? "bg-emerald-100 text-emerald-900" : "bg-rose-100 text-rose-700"}`}>{latest!.correct ? <CheckCircle2 className="h-3 w-3" /> : <XCircle className="h-3 w-3" />}{latest!.correct ? "答对" : "再想想"}</span> : null}</div></div><div className="min-h-0 flex-1 overflow-y-auto"><article className="mx-auto max-w-3xl px-8 py-10">{glossary.length > 0 && <div className="mb-7 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3"><div className="text-xs font-semibold text-[#334155]">先认识几个词</div><ul className="mt-2 space-y-1.5 text-xs leading-5 text-[#334155]">{glossary.map((item, itemIndex) => <li key={itemIndex}><RichInlineText text={item} /></li>)}</ul></div>}<div className="text-xs text-muted-foreground">第 {index + 1} 题 / 共 {questions.length} 题</div><h2 className="mt-4 text-xl font-semibold leading-8">{question.prompt}</h2>
     {questionType === "choice" ? <div className="mt-8 space-y-3">{(question.options ?? []).map((option) => {
       const state = optionState(option.id);
       return <button key={option.id} type="button" onClick={() => setAnswerId(option.id)} className={`flex w-full items-start gap-3 rounded-xl border p-4 text-left text-sm leading-6 transition-all ${optionClass(state)}`}><span className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md border text-[11px] font-semibold transition-colors ${chipClass(state)}`}>{option.id}</span><span>{option.text}</span></button>;
@@ -745,5 +739,5 @@ function QuizAnswerPanel({ reader }: { reader: ReaderData }) {
 
 function GenericReader({ reader, onExport }: { apiBase: string; reader: ReaderData; onReaderChange: (data: ReaderData) => void; onExport: (format: "md" | "txt" | "json" | "ppt") => void }) {
   const blocks = useMemo(() => visibleLearningBlocks(reader.asset.blocks), [reader.asset.blocks]);
-  return <div className="resource-generic-reader flex min-h-0 flex-1 flex-col"><div className="resource-reading-toolbar flex shrink-0 items-center justify-between border-b px-5 py-3.5"><div className="resource-reading-title"><MapIcon className="h-4 w-4" /><span>知识脉络</span></div><ResourceExportMenu assetType={reader.asset.type} onExport={onExport} /></div><div className="min-h-0 flex-1 overflow-y-auto"><article className="mx-auto max-w-3xl space-y-7 px-8 py-9"><ResourcePrimer type="concept_map" /><div className="resource-learning-objectives"><div className="text-[11px] font-semibold text-slate-700">学习目标</div><ul className="mt-3 space-y-2 text-sm leading-6 text-muted-foreground">{reader.asset.learningObjectives.map((objective) => <li key={objective} className="flex gap-2"><span className="resource-objective-dot" />{objective}</li>)}</ul></div>{blocks.map((block) => <section key={block.id}>{renderBlockContent(block)}</section>)}</article></div></div>;
+  return <div className="resource-generic-reader flex min-h-0 flex-1 flex-col"><div className="resource-reading-toolbar flex shrink-0 items-center justify-between border-b px-5 py-3.5"><div className="resource-reading-title"><MapIcon className="h-4 w-4" /><span>知识脉络</span></div><ResourceExportMenu assetType={reader.asset.type} onExport={onExport} /></div><div className="min-h-0 flex-1 overflow-y-auto"><article className="mx-auto max-w-3xl space-y-7 px-8 py-9"><div className="resource-learning-objectives"><div className="text-[11px] font-semibold text-slate-700">学习目标</div><ul className="mt-3 space-y-2 text-sm leading-6 text-muted-foreground">{reader.asset.learningObjectives.map((objective) => <li key={objective} className="flex gap-2"><span className="resource-objective-dot" />{objective}</li>)}</ul></div>{blocks.map((block) => <section key={block.id}>{renderBlockContent(block)}</section>)}</article></div></div>;
 }

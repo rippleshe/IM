@@ -383,6 +383,7 @@ app.get('/api/learning/chat', async (req, res) => {
     messages: await learningStore.listChatMessages(learner.id, 80, surface),
     studyRunning: Boolean(activeRun),
     activeRunId: activeRun?.id ?? null,
+    studyRunStatus: activeRun?.status ?? null,
   });
 });
 

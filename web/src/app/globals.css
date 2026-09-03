@@ -565,14 +565,155 @@ summary:focus-visible {
   margin: 18px 0;
   overflow: hidden;
   border: 1px solid #dce6f1;
-  border-radius: 10px;
-  background: #fbfdff;
-  box-shadow: var(--app-shadow-soft);
+  border-radius: 14px;
+  background: #ffffff;
+  box-shadow: 0 12px 28px rgb(40 72 105 / 8%);
 }
 
-.resource-data-table > div:first-child {
-  color: #536b86;
-  background: #f1f6fc;
+.resource-data-table-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border-bottom: 1px solid #e5edf5;
+  padding: 14px 16px;
+  color: #243b53;
+  background: linear-gradient(135deg, #f6faff 0%, #eef6fb 100%);
+}
+
+.resource-data-table-kicker {
+  color: #6380a0;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+}
+
+.resource-data-table-title {
+  margin-top: 3px;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.resource-data-table-count {
+  flex-shrink: 0;
+  border: 1px solid #d6e4f1;
+  border-radius: 999px;
+  padding: 4px 8px;
+  color: #6280a0;
+  background: rgb(255 255 255 / 72%);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.resource-table-scroll {
+  overflow-x: auto;
+}
+
+.resource-data-table table {
+  width: 100%;
+  min-width: 560px;
+  border-collapse: separate;
+  border-spacing: 0;
+  text-align: left;
+  font-size: 12px;
+}
+
+.resource-data-table th {
+  border-bottom: 1px solid #dce7f2;
+  padding: 11px 14px;
+  color: #526b86;
+  background: #f8fbfe;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.resource-data-table td {
+  border-bottom: 1px solid #edf2f7;
+  padding: 12px 14px;
+  color: #40546b;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.resource-data-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.resource-data-table tbody tr:hover td {
+  background: #f7fbff;
+}
+
+.resource-table-index {
+  width: 42px;
+  color: #9aacbe !important;
+  font-size: 10px !important;
+  text-align: center;
+}
+
+.resource-table-empty {
+  color: #b3c0ce;
+}
+
+.resource-misconception-list {
+  display: grid;
+  gap: 12px;
+  margin: 18px 0;
+}
+
+.resource-misconception-card {
+  overflow: hidden;
+  border: 1px solid #dce6f1;
+  border-radius: 14px;
+  background: #ffffff;
+  box-shadow: 0 8px 20px rgb(40 72 105 / 6%);
+}
+
+.resource-misconception-row {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr);
+  gap: 14px;
+  padding: 14px 16px;
+  font-size: 13px;
+  line-height: 1.8;
+}
+
+.resource-misconception-row p {
+  min-width: 0;
+  margin: 0;
+  color: #40546b;
+}
+
+.resource-misconception-row-wrong {
+  background: #fffaf2;
+}
+
+.resource-misconception-row-correct {
+  background: #f5fbf9;
+}
+
+.resource-misconception-label {
+  align-self: start;
+  justify-self: start;
+  border-radius: 999px;
+  padding: 3px 8px;
+  color: #8a6a3e;
+  background: #fbe9c8;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.resource-misconception-row-correct .resource-misconception-label {
+  color: #317765;
+  background: #d9f2e9;
+}
+
+.resource-misconception-divider {
+  height: 1px;
+  margin: 0 16px;
+  background: #edf2f7;
 }
 
 .resource-folder-heading {
@@ -723,19 +864,6 @@ summary:focus-visible {
 
 .resource-note-editor textarea::placeholder {
   color: #a4b1bf;
-}
-
-.resource-selection-quote {
-  margin-bottom: 10px;
-  border: 1px solid #d8e4f5;
-  border-radius: 8px;
-  padding: 9px 10px;
-  background: #f5f9ff;
-}
-
-.resource-selection-quote button {
-  padding: 0;
-  background: transparent;
 }
 
 .resource-note-card {
@@ -1328,7 +1456,7 @@ summary:focus-visible {
   font-size: clamp(1.65rem, 3vw, 2.45rem);
 }
 
-/* 演示阅读器：画布是真正的 16:9 页面，讲解词单独收纳，避免把段落当成幻灯片正文。 */
+/* 演示阅读器：画布是真正的 16:9 页面，本页说明单独收纳，避免把段落当成幻灯片正文。 */
 .presentation-reader-hint {
   color: #8a9aab;
   font-size: 10px;
@@ -1352,6 +1480,103 @@ summary:focus-visible {
   max-width: 1440px;
   margin: 0 auto;
   box-shadow: 0 20px 46px rgb(49 76 102 / 16%);
+}
+
+.resource-presentation-reader.is-presenting {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  min-height: 100dvh;
+  background: #071a2a;
+}
+
+.resource-presentation-reader.is-presenting .resource-reading-toolbar {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  z-index: 2;
+  border-bottom: 0;
+  color: #fff;
+  background: linear-gradient(180deg, rgb(5 19 32 / 76%), transparent);
+}
+
+.resource-presentation-reader.is-presenting .resource-reading-title {
+  color: #fff;
+}
+
+.resource-presentation-reader.is-presenting .presentation-reader-hint {
+  color: rgb(225 239 249 / 68%);
+}
+
+.resource-presentation-reader.is-presenting .presentation-reading-body {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  padding: clamp(24px, 5vw, 76px);
+  background: radial-gradient(circle at 50% 42%, #173c58 0%, #0b2539 44%, #071a2a 100%);
+}
+
+.resource-presentation-reader.is-presenting .presentation-reading-body > div {
+  width: min(94vw, 1440px);
+  max-width: none;
+}
+
+.resource-presentation-reader.is-presenting .presentation-stage {
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.resource-presentation-reader.is-presenting .presentation-slide {
+  box-shadow: 0 26px 70px rgb(0 0 0 / 34%);
+}
+
+.resource-presentation-reader.is-presenting .presentation-page-explanation {
+  display: none;
+}
+
+.resource-presentation-reader.is-presenting .presentation-pagination {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 2;
+  border-top: 0;
+  background: linear-gradient(0deg, rgb(5 19 32 / 82%), transparent);
+}
+
+.resource-presentation-reader.is-presenting .presentation-pager {
+  border-color: rgb(255 255 255 / 12%);
+  background: rgb(7 26 42 / 64%);
+  backdrop-filter: blur(12px);
+}
+
+.resource-presentation-reader.is-presenting .presentation-pager-button {
+  color: #d9e8f3;
+  background: transparent;
+}
+
+.resource-presentation-reader.is-presenting .presentation-pager-button:hover:not(:disabled) {
+  color: #fff;
+  background: rgb(255 255 255 / 12%);
+}
+
+.resource-presentation-reader.is-presenting .presentation-pager-button:disabled {
+  color: rgb(217 232 243 / 35%);
+  background: transparent;
+}
+
+.resource-presentation-reader.is-presenting .presentation-slide-tab {
+  color: rgb(235 245 251 / 76%);
+}
+
+.resource-presentation-reader.is-presenting .presentation-slide-tab.is-active {
+  color: #fff;
+  background: rgb(255 255 255 / 14%);
 }
 
 .presentation-slide {
@@ -1913,14 +2138,14 @@ summary:focus-visible {
   white-space: nowrap;
 }
 
-.presentation-speaker-notes {
+.presentation-page-explanation {
   margin: 13px 3px 0;
   border: 1px solid #dbe5ee;
   border-radius: 10px;
   background: #fff;
 }
 
-.presentation-speaker-notes summary {
+.presentation-page-explanation summary {
   display: flex;
   justify-content: space-between;
   gap: 12px;
@@ -1931,16 +2156,16 @@ summary:focus-visible {
   list-style: none;
 }
 
-.presentation-speaker-notes summary::-webkit-details-marker {
+.presentation-page-explanation summary::-webkit-details-marker {
   display: none;
 }
 
-.presentation-speaker-notes summary span:last-child {
+.presentation-page-explanation summary span:last-child {
   color: #8a9aab;
   font-size: 10px;
 }
 
-.presentation-speaker-notes > div {
+.presentation-page-explanation > div {
   border-top: 1px solid #e3ebf4;
   padding: 11px 13px 13px;
   color: #5e7184;

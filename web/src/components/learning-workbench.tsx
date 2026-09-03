@@ -86,6 +86,23 @@ function consumeStudyPrefill(graph: PathGraph): { nodeId: string | null; draft: 
 }
 
 type RunNodeState = "running" | "succeeded" | "failed" | "revising";
+type RunStatus = "idle" | "queued" | "running" | "succeeded" | "failed" | "cancelled";
+
+function isTerminalRunStatus(status: RunStatus): status is "succeeded" | "failed" | "cancelled" {
+  return status === "succeeded" || status === "failed" || status === "cancelled";
+}
+
+function runStatusFromServer(status: string | undefined): RunStatus {
+  if (status === "queued" || status === "running" || status === "succeeded" || status === "failed" || status === "cancelled") return status;
+  return "idle";
+}
+
+function runNodeStateFromServer(status: string | undefined): RunNodeState | null {
+  if (status === "running") return "running";
+  if (status === "succeeded") return "succeeded";
+  if (status === "failed") return "failed";
+  return null;
+}
 
 function agentTone(id: string | undefined) {
   if (id === "orchestrator") return "bg-slate-100 text-slate-700";
@@ -171,6 +188,7 @@ export function LearningWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
   const [clearingConversation, setClearingConversation] = useState(false);
   const [clearDialogOpen, setClearDialogOpen] = useState(false);
   const [studyRunning, setStudyRunning] = useState(false);
+  const [runStatus, setRunStatus] = useState<RunStatus>("idle");
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const [finishedRunId, setFinishedRunId] = useState<string | null>(null);
   const [nodeStates, setNodeStates] = useState<Array<{ key: string; state: RunNodeState }>>([]);
@@ -186,6 +204,7 @@ export function LearningWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
   const [resizing, setResizing] = useState<"left" | "right" | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const feedRef = useRef<HTMLDivElement | null>(null);
+  const streamSourceRef = useRef<EventSource | null>(null);
   const streamTimersRef = useRef<Map<string, number>>(new Map());
   const streamMessageCounterRef = useRef(0);
 
@@ -220,12 +239,15 @@ export function LearningWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
 
   // SSE 事件流：驱动节点状态条与运行终态；断线由 Last-Event-ID 续传（总规 §4.4）
   const openRunStream = useCallback((runId: string) => {
+    streamSourceRef.current?.close();
     setStudyRunning(true);
+    setRunStatus("running");
     setActiveRunId(runId);
     setNodeStates([]);
     setLiveEvents([]);
     setLiveSummary("已受理，等待节点调度…");
     const source = new EventSource(`${apiBase}/api/learning/runs/${encodeURIComponent(runId)}/events`, { withCredentials: true });
+    streamSourceRef.current = source;
     source.onmessage = () => { /* 具名事件为主；默认消息忽略 */ };
     const handle = (event: MessageEvent<string>) => {
       try {
@@ -270,19 +292,21 @@ export function LearningWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
     for (const type of ["node.started", "node.progress", "node.succeeded", "node.failed", "node.retrying", "plan.amended", "run.revision", "run.cancelled", "run.succeeded", "run.failed"]) {
       source.addEventListener(type, handle as EventListener);
     }
-    const finish = () => {
+    const finish = (status: "succeeded" | "failed" | "cancelled") => {
       source.close();
+      if (streamSourceRef.current === source) streamSourceRef.current = null;
       for (const timer of streamTimersRef.current.values()) window.clearInterval(timer);
       streamTimersRef.current.clear();
+      setRunStatus(status);
       setFinishedRunId(runId);
       void Promise.all([refreshMessages(), refreshLearningContext()]).finally(() => {
         setStudyRunning(false);
         setActiveRunId(null);
       });
     };
-    source.addEventListener("run.succeeded", finish);
-    source.addEventListener("run.failed", finish);
-    source.addEventListener("run.cancelled", finish);
+    source.addEventListener("run.succeeded", () => finish("succeeded"));
+    source.addEventListener("run.failed", () => finish("failed"));
+    source.addEventListener("run.cancelled", () => finish("cancelled"));
     source.onerror = () => {
       // 连接被永久关闭时兜底：拉一次快照判定终态；否则交给 EventSource 自动重连
       if (source.readyState !== EventSource.CLOSED) return;
@@ -290,8 +314,8 @@ export function LearningWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
         try {
           const response = await fetch(`${apiBase}/api/learning/runs/${encodeURIComponent(runId)}`, { credentials: "include" });
           const data = await response.json() as { run?: { status?: string } };
-          const status = data.run?.status;
-          if (status === "succeeded" || status === "failed" || status === "cancelled") finish();
+          const status = runStatusFromServer(data.run?.status);
+          if (isTerminalRunStatus(status)) finish(status);
         } catch { /* 下次交互重试 */ }
       })();
     };
@@ -302,11 +326,13 @@ export function LearningWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
       const response = await fetch(`${apiBase}/api/learning/runs/${encodeURIComponent(runId)}`, { credentials: "include" });
       const data = await response.json() as { run?: { id?: string; status?: string }; nodes?: Array<{ nodeKey?: string; status?: string; resultSummary?: string | null }> };
       if (!response.ok || !data.run) return;
-      const terminal = data.run.status === "succeeded" || data.run.status === "failed" || data.run.status === "cancelled";
-      const states = (data.nodes ?? []).filter((node) => typeof node.nodeKey === "string" && ["running", "succeeded", "failed"].includes(node.status ?? "")).map((node) => ({
-        key: node.nodeKey as string,
-        state: node.status === "failed" ? "failed" as const : node.status === "running" ? "running" as const : "succeeded" as const,
-      }));
+      const status = runStatusFromServer(data.run.status);
+      const terminal = isTerminalRunStatus(status);
+      const states = (data.nodes ?? []).flatMap((node) => {
+        const state = runNodeStateFromServer(node.status);
+        return typeof node.nodeKey === "string" && state ? [{ key: node.nodeKey, state }] : [];
+      });
+      setRunStatus(status);
       setNodeStates(states);
       if (terminal) {
         setStudyRunning(false);
@@ -315,16 +341,18 @@ export function LearningWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
         setLiveSummary(data.run.status === "succeeded" ? "本次任务已完成，处理记录已保留，可继续查看。" : "本次任务已结束，可查看处理记录。");
         await refreshMessages();
       } else {
-        setStudyRunning(true);
+        setStudyRunning(status === "queued" || status === "running");
         setActiveRunId(runId);
         setFinishedRunId(null);
         const current = (data.nodes ?? []).find((node) => node.status === "running");
-        setLiveSummary(current?.resultSummary || (data.run.status === "queued" ? "已受理，等待节点调度…" : "正在按步骤处理，结果会逐条显示…"));
+        setLiveSummary(current?.resultSummary || (status === "queued" ? "已受理，等待节点调度…" : "正在按步骤处理，结果会逐条显示…"));
       }
     } catch { /* 页面切换期间读取失败时，保留当前状态，下一轮继续同步 */ }
   }, [apiBase, refreshMessages]);
 
   useEffect(() => () => {
+    streamSourceRef.current?.close();
+    streamSourceRef.current = null;
     for (const timer of streamTimersRef.current.values()) window.clearInterval(timer);
     streamTimersRef.current.clear();
   }, []);
@@ -338,7 +366,7 @@ export function LearningWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
       if (!pathResponse.ok || !messageResponse.ok) throw new Error("学习空间读取失败，请重新登录后再试");
       const [pathData, messageData] = await Promise.all([
         pathResponse.json() as Promise<{ path?: PathGraph }>,
-        messageResponse.json() as Promise<{ messages?: StudyMessage[]; studyRunning?: boolean; activeRunId?: string | null }>,
+        messageResponse.json() as Promise<{ messages?: StudyMessage[]; studyRunning?: boolean; activeRunId?: string | null; studyRunStatus?: string | null }>,
       ]);
       if (!active) return;
       const nextPath = pathData.path ?? { nodes: [], edges: [] };
@@ -348,6 +376,7 @@ export function LearningWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
       setPath(nextPath);
       setMessages(studyMessages);
       setStudyRunning(serverRunRunning);
+      setRunStatus(serverRunRunning ? runStatusFromServer(messageData.studyRunStatus ?? "running") : "idle");
       setActiveRunId(serverRunRunning ? messageData.activeRunId ?? null : null);
       setFinishedRunId(null);
       setNodeStates([]);
@@ -374,12 +403,26 @@ export function LearningWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
           if (!traceResponse.ok || !active) return;
           const trace = await traceResponse.json() as { run?: { status?: string }; nodes?: Array<{ nodeKey?: string; status?: string; resultSummary?: string | null }> };
           if (!active) return;
-          const states = (trace.nodes ?? []).filter((node) => typeof node.nodeKey === "string").map((node) => ({ key: node.nodeKey as string, state: node.status === "failed" ? "failed" as const : node.status === "running" ? "running" as const : "succeeded" as const }));
-          const events = (trace.nodes ?? []).filter((node) => typeof node.nodeKey === "string" && node.resultSummary).map((node, index) => ({ id: `restored-${latestRunId}-${index}`, type: node.status === "failed" ? "node.failed" : "node.succeeded", nodeKey: node.nodeKey as string, summary: node.resultSummary as string }));
-          setFinishedRunId(latestRunId);
+          const status = runStatusFromServer(trace.run?.status);
+          const states = (trace.nodes ?? []).flatMap((node) => {
+            const state = runNodeStateFromServer(node.status);
+            return typeof node.nodeKey === "string" && state ? [{ key: node.nodeKey, state }] : [];
+          });
+          const events = (trace.nodes ?? []).filter((node) => typeof node.nodeKey === "string" && node.resultSummary && runNodeStateFromServer(node.status)).map((node, index) => ({ id: `restored-${latestRunId}-${index}`, type: node.status === "failed" ? "node.failed" : "node.succeeded", nodeKey: node.nodeKey as string, summary: node.resultSummary as string }));
+          setRunStatus(status);
           setNodeStates(states);
           setLiveEvents(events.slice(-16));
-          setLiveSummary(trace.run?.status === "succeeded" ? "本次任务已完成，处理记录已保留，可继续查看。" : "本次任务已结束，可查看处理记录。");
+          if (isTerminalRunStatus(status)) {
+            setFinishedRunId(latestRunId);
+            setStudyRunning(false);
+            setActiveRunId(null);
+            setLiveSummary(status === "succeeded" ? "本次任务已完成，处理记录已保留，可继续查看。" : "本次任务已结束，可查看处理记录。");
+          } else {
+            setFinishedRunId(null);
+            setStudyRunning(status === "queued" || status === "running");
+            setActiveRunId(latestRunId);
+            setLiveSummary(status === "queued" ? "已受理，等待节点调度…" : "正在按步骤处理，结果会逐条显示…");
+          }
         }).catch(() => undefined);
     }).catch((error) => {
       if (active) setNotice(error instanceof Error ? error.message : "学习空间读取失败");
@@ -463,7 +506,7 @@ export function LearningWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
   const send = async () => {
     const content = draft.trim();
     if (!content || sending) return;
-    setSending(true); setNotice(""); setDraft(""); setFinishedRunId(null); setLiveSummary("");
+    setSending(true); setNotice(""); setDraft(""); setFinishedRunId(null); setRunStatus("queued"); setLiveSummary("");
     try {
       const response = await fetch(`${apiBase}/api/learning/runs`, {
         method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
@@ -490,6 +533,7 @@ export function LearningWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
       if (!response.ok || !data.success) throw new Error(data.error || "清除对话失败");
       setMessages([]);
       setFinishedRunId(null);
+      setRunStatus("idle");
       setNodeStates([]);
       setLiveEvents([]);
       setLiveSummary("");
@@ -518,10 +562,10 @@ export function LearningWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
 
     <div className="study-layout flex min-h-0 min-w-[1000px] flex-1 overflow-hidden">
       <aside style={{ width: leftWidth }} className="flex shrink-0 flex-col border-r bg-card" aria-label="任务上下文">
-        <div className="workspace-pane-titlebar flex shrink-0 items-center justify-between border-b px-4 py-3.5"><div className="flex items-center gap-2"><ListTree className="h-4 w-4" /><h1 className="text-sm font-semibold">任务进度</h1></div><span className="text-xs text-muted-foreground">{studyRunning ? "进行中" : finishedRunId ? "已完成" : "待发起"}</span></div>
+        <div className="workspace-pane-titlebar flex shrink-0 items-center justify-between border-b px-4 py-3.5"><div className="flex items-center gap-2"><ListTree className="h-4 w-4" /><h1 className="text-sm font-semibold">任务进度</h1></div><span className="text-xs text-muted-foreground">{runStatus === "queued" ? "排队中" : runStatus === "running" ? "进行中" : runStatus === "succeeded" ? "已完成" : runStatus === "failed" ? "处理异常" : runStatus === "cancelled" ? "已取消" : "待发起"}</span></div>
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
       <section aria-label="当前节点" aria-live="polite" className="current-node-panel"><div className="current-node-label">当前节点</div>{selectedNode ? <div className="current-node-card mt-2"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><div className="text-sm font-semibold leading-5 text-slate-800">{selectedNode.title}</div></div>{selectedNode.mastered ? <span className="current-node-status">已掌握</span> : null}</div><div className="mt-3"><DescriptionList text={selectedNode.description} compact /></div>{selectedNode.recommendation ? <div className="mt-3"><RecommendationBadge recommendation={selectedNode.recommendation} /></div> : null}<div className="mt-3 flex flex-wrap gap-1.5"><button type="button" onClick={() => addMention(selectedNode)} className="current-node-action"><MessageSquarePlus className="h-3.5 w-3.5" />引用到问题</button><button type="button" disabled={savingNodeId === selectedNode.id} onClick={() => updateNode(selectedNode, { userStatus: selectedNode.userStatus === "completed" ? "learning" : "completed" })} className="current-node-action current-node-action-quiet">{selectedNode.userStatus === "completed" ? "继续学习" : "标记学完"}</button><button type="button" disabled={savingNodeId === selectedNode.id} onClick={() => updateNode(selectedNode, { mastered: !selectedNode.mastered, userStatus: selectedNode.mastered ? selectedNode.userStatus : "completed" })} className="current-node-action current-node-action-quiet">{selectedNode.mastered ? "取消掌握" : "标记掌握"}</button></div><details className="current-node-adjustment mt-3"><summary>调整路径关系</summary><div className="mt-2 flex flex-wrap gap-1.5">{(["前置", "分支", "应用"] as const).map((kind) => <button key={kind} type="button" onClick={() => requestPathAdjustment(kind)} className="current-node-action current-node-action-quiet">+ {kind}</button>)}</div></details></div> : <div className="current-node-empty mt-2">在右侧路径中选择一个节点</div>}</section>
-          <section aria-label="任务处理状态">{studyRunning || finishedRunId || nodeStates.length > 0 ? <DagProgress states={nodeStates} summary={readableProcessText(liveSummary)} events={liveEvents.map((event) => ({ ...event, summary: readableProcessText(event.summary) }))} completed={!studyRunning} /> : <div className="mt-2 rounded-xl border border-dashed p-4 text-[11px] leading-4 text-muted-foreground">开始任务后，这里会显示十个协同步骤与公开处理摘要。</div>}</section>
+          <section aria-label="任务处理状态">{runStatus !== "idle" || nodeStates.length > 0 ? <DagProgress states={nodeStates} summary={readableProcessText(liveSummary)} events={liveEvents.map((event) => ({ ...event, summary: readableProcessText(event.summary) }))} completed={isTerminalRunStatus(runStatus)} /> : <div className="mt-2 rounded-xl border border-dashed p-4 text-[11px] leading-4 text-muted-foreground">开始任务后，这里会显示十个协同步骤与公开处理摘要。</div>}</section>
         </div>
       </aside>
       <div role="separator" aria-orientation="vertical" onMouseDown={() => setResizing("left")} className="w-1.5 shrink-0 cursor-col-resize bg-border/60 transition-colors hover:bg-foreground/30" />
@@ -535,7 +579,7 @@ export function LearningWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
           <div className="mx-auto max-w-3xl space-y-4">
             {loading ? <div className="flex min-h-[240px] items-center justify-center text-sm text-muted-foreground">正在加载学习记录</div> : messages.length === 0 && !studyRunning && nodeStates.length === 0 ? <div className="flex min-h-[200px] flex-col items-center justify-center text-center"><Bot className="mb-3 h-8 w-8 text-muted-foreground/50" /><p className="text-sm font-medium">输入一个学习任务，开始生成内容</p><p className="mt-1 text-xs text-muted-foreground">@ 引用路径节点，选择资源类型后发送即可。</p></div> : messages.map((message) => <MessageCard key={message.id} message={message} onExport={exportAsset} />)}
             {studyRunning && <div className="flex items-center gap-2 text-xs text-muted-foreground"><span className="h-2 w-2 animate-pulse rounded-full bg-foreground" />正在按步骤处理，结果会逐条显示…</div>}
-            {!studyRunning && finishedRunId && (
+            {!studyRunning && finishedRunId && isTerminalRunStatus(runStatus) && (
               <div className="flex items-center justify-between rounded-xl border bg-muted/20 px-3.5 py-2.5 text-xs">
                 <span className="text-muted-foreground">本次任务已结束</span>
                 <button type="button" onClick={() => {

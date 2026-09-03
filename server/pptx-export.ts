@@ -59,6 +59,16 @@ function shortText(value: string, max = 54): string {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
 }
 
+function learnerFacingText(value: string): string {
+  return value
+    .replace(/这一页先让学习者复述重点，再完成页面底部的小动作。/gu, '本页先看清重点，再完成页面底部的小动作。')
+    .replace(/让学习者/gu, '帮助你')
+    .replace(/学习者/gu, '你')
+    .replace(/讲解词/gu, '本页说明')
+    .replace(/讲解时/gu, '阅读时')
+    .trim();
+}
+
 function slideKind(title: string, hasTable: boolean, hasCode: boolean): PresentationSlide['kind'] {
   if (hasTable) return 'evidence';
   if (/词|术语|字段含义|关键词/.test(title)) return 'glossary';
@@ -86,7 +96,7 @@ function groupPresentationBlocks(resource: ResourceDocument): PresentationSlide[
     const heading = group.find((block) => block.type === 'heading');
     const paragraphs = group
       .filter((block) => block.type === 'paragraph' && typeof block.content === 'string')
-      .map((block) => String(block.content).trim())
+      .map((block) => learnerFacingText(String(block.content)))
       .filter(Boolean);
     const bullets = group
       .filter((block) => (block.type === 'list' || block.type === 'checklist') && Array.isArray(block.content))
@@ -145,7 +155,7 @@ function addCoverSlide(pptx: pptxgen, resource: ResourceDocument, slide: Present
   addText(output, shortText(lead, 190), { x: 1.12, y: 3.22, w: 7.25, h: 0.78, fontSize: 15, color: 'D6E4EF', breakLine: true, valign: 'top' });
   addRoundedCard(output, 1.1, 4.55, 7.8, 1.12, '173751', '2B526B');
   addText(output, '这套演示怎么用', { x: 1.42, y: 4.8, w: 1.65, h: 0.22, fontSize: 10, bold: true, color: '9FD5CB' });
-  addText(output, '先读每页的一个重点，再按讲解词完成一个小动作。遇到不懂的字段，回到中文解释，不靠猜。', { x: 1.42, y: 5.08, w: 6.95, h: 0.4, fontSize: 12, color: COLORS.white, breakLine: true });
+  addText(output, '先看每页的一个重点，再用页面中的依据完成一个小判断。遇到不懂的字段，回到中文解释，不靠猜。', { x: 1.42, y: 5.08, w: 6.95, h: 0.4, fontSize: 12, color: COLORS.white, breakLine: true });
   const objective = resource.learningObjectives[0] ? shortText(resource.learningObjectives[0], 80) : '理解本次主题，并能沿着证据完成一次基础判断';
   addText(output, objective, { x: 1.12, y: 6.55, w: 8.6, h: 0.27, fontSize: 10, color: '9DB5C7' });
   addText(output, `01 / ${String(total).padStart(2, '0')}`, { x: 11.65, y: 6.55, w: 0.95, h: 0.24, fontSize: 10, color: '9DB5C7', align: 'right' });
@@ -249,7 +259,7 @@ function addPracticeSlide(slide: pptxgen.Slide, data: PresentationSlide): void {
     addText(slide, String(index + 1), { x: 8.75, y: 2.19 + index * 1.1, w: 0.48, h: 0.16, fontSize: 9, bold: true, color: COLORS.white, align: 'center' });
     addText(slide, shortText(task, 82), { x: 9.5, y: 2.12 + index * 1.1, w: 2.85, h: 0.38, fontSize: 12, color: COLORS.ink, breakLine: true });
   });
-  addText(slide, '完成后再看答案或讲解词，先保留自己的判断。', { x: 1.2, y: 4.78, w: 5.8, h: 0.24, fontSize: 11, color: COLORS.muted });
+  addText(slide, '完成后对照本页说明，先保留自己的判断。', { x: 1.2, y: 4.78, w: 5.8, h: 0.24, fontSize: 11, color: COLORS.muted });
 }
 
 function addConceptSlide(slide: pptxgen.Slide, data: PresentationSlide): void {
@@ -297,7 +307,7 @@ export async function resourceToPptx(resource: ResourceDocument): Promise<Buffer
     else if (data.kind === 'process') addProcessSlide(slide, data);
     else if (data.kind === 'practice') addPracticeSlide(slide, data);
     else addConceptSlide(slide, data);
-    addNotes(slide, data.paragraphs.join('\n\n'), `这一页围绕“${data.title}”展开。请先让学习者用自己的话复述重点，再完成一个与页面对应的小观察。`);
+    addNotes(slide, data.paragraphs.join('\n\n'), `这一页围绕“${data.title}”展开。请先看页面中的关键依据，再用自己的话概括结论，并标出仍需确认的部分。`);
   });
   const output = await pptx.write({ outputType: 'nodebuffer', compression: true });
   if (!Buffer.isBuffer(output)) throw new Error('PowerPoint 导出结果不是二进制文件');

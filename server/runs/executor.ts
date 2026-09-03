@@ -657,7 +657,7 @@ async function runGenerateResource(run: StudyRunRow, node: RunNodeSpec, attempt:
     const questionBlock = doc.blocks.find((block) => block.type === 'question')?.content as { questions?: unknown[] } | undefined;
     const charCount = doc.blocks.reduce((sum, block) => sum + (typeof block.content === 'string' ? block.content.length : 0), 0);
     if (doc.type === 'tiered_quiz' && questionBlock?.questions) return `共 ${questionBlock.questions.length} 道题（选择/填空/简答混合，L1-L3 分层）`;
-    if (doc.type === 'presentation') return `${headings.length} 页幻灯片，每页要点与讲解词`;
+    if (doc.type === 'presentation') return `${headings.length} 页幻灯片，每页要点与本页说明`;
     if (doc.type === 'concept_map') return '知识关系图 + 逐节点解读 + 阅读路径';
     return `${headings.length} 节正文（约 ${charCount} 字），含代码示例与数据摘录`;
   };

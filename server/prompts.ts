@@ -104,13 +104,13 @@ const TYPE_GUIDES: Record<ResourceGenerationContext['type'], string> = {
     '- text 中引用证据数据时写成自然句子（例如「证据样本中 Air temperature [K] 为 298.1」），不要贴大段原始数据。',
   ].join('\n'),
   presentation: [
-    '这是「PPT 演示稿」：一份可直接讲解的完整演示，每页只表达一个论点，整体按「问题 → 证据 → 判断 → 行动」的叙事推进。',
+    '这是「PPT 演示稿」：一份学习者可以直接阅读和操作的完整演示，每页只表达一个论点，整体按「问题 → 证据 → 判断 → 行动」的叙事推进。',
     '写作标准：',
     '- 10 到 12 页 slides：第 1 页封面（标题 + lead 副标题），第 2 页议程或问题定义，第 3 页术语入口，中间页每页一个论点，至少 1 页展示真实样本或可回溯数据，最后 2 页行动总结与练习引导。',
     '- 每页 bullets 3 到 5 条，每条不超过 22 字、一个完整意思，禁止整段文字搬上幻灯片；页面之间要有承接（上一页的结论是下一页的问题）。',
-    '- 每页写 notes（100 到 200 字讲解词）：讲这一页时对学习者说什么、如何串联上下页；notes 用连贯的口语化书面语。',
+    '- 每页写 notes（100 到 200 字本页说明）：直接告诉学习者这一页解决什么问题、该看哪些依据、能形成什么判断以及还不能确定什么；用连贯的书面语，不写教师口吻或讲课动作。',
     '- 第 2 页必须先用白话解释本次最重要的 2 到 3 个词；后续每页最多引入 2 个新词，字段名必须和中文含义同时出现。',
-    '- 每页讲解词必须包含一个“你现在只需要做什么”的小动作，不能只给结论或术语；每页还要有一个清晰的视觉锚点（术语卡、流程、对照、样本表或练习框），不要让页面退化成文字清单。',
+    '- 每页说明必须包含一个“你现在只需要做什么”的小动作，不能只给结论或术语；每页还要有一个清晰的视觉锚点（术语卡、流程、对照、样本表或练习框），不要让页面退化成文字清单。',
     '- 涉及证据的页面在 bullet 中直接引用字段名和数据，让「证据说话」。',
   ].join('\n'),
   tiered_quiz: [
@@ -184,7 +184,7 @@ function schemaHint(type: ResourceGenerationContext['type']): string {
     case 'lecture':
       return base + '"sections":[{"heading":"小节标题（12 字内）","text":"400 到 700 字、分为 2 到 4 个自然段的正文","code":{"caption":"代码标题","language":"python","code":"多行代码"} 或省略,"keyPoints":["2 到 4 条记忆点"]}],"misconceptions":[{"wrong":"错误理解","correct":"正确理解"}],"reviewQuestions":["3 个自测问题"]}';
     case 'presentation':
-       return base + '"slides":[{"heading":"页标题（不超过 16 字）","bullets":["3 到 5 条要点，每条不超过 22 字"],"notes":"100 到 200 字讲解词；必须包含一个现在就能做的小动作"}]}';
+      return base + '"slides":[{"heading":"页标题（不超过 16 字）","bullets":["3 到 5 条要点，每条不超过 22 字"],"notes":"100 到 200 字本页说明：直接说明本页要解决的问题、关键依据、可形成的判断和现在就能做的小动作，不写教师讲课口吻"}]}';
     case 'tiered_quiz':
       return base + '"questions":[{"type":"choice|blank|short_answer","level":"L1|L2|L3","prompt":"题干（情境化，含具体问题；填空题用 ____ 标出空位）","options":[{"id":"A","text":"选项内容"}]（仅 choice 需要）,"answerId":"正确选项 id"（仅 choice）,"answer":"标准答案或参考答案要点"（blank 与 short_answer）,"explanation":"100 到 200 字解析"}]}';
     case 'concept_map':

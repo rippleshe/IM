@@ -116,7 +116,7 @@ export function buildResourceDraft(
     content: isLecture
       ? '如果你第一次接触这类设备数据，不用先记住所有字段。我们会先说清要解决的问题，再用一个小例子认识最关键的词，然后一步一步完成观察。遇到资料没有说明的地方，会明确标出来，不让你靠猜。'
       : isPresentation
-      ? '如果你第一次接触这类设备数据，请先看每页的中文解释，再跟着讲解词做一个小动作。整份 PPT 按“问题、看到什么、怎么判断、下一步做什么”展开。'
+      ? '这份演示围绕一个具体问题展开：先看数据，再理解判断边界，最后完成一步练习。每页都给出当前页的关键解释和下一步动作。'
       : type === 'tiered_quiz'
       ? '练习按“先看懂、再判断、最后迁移”分层。题干会先交代情境；遇到不熟的词，先回到题干里的中文解释，再作答。'
       : '先从学习者要解决的问题开始，再看关键概念、跟做步骤和复核行动。图里的每条关系都服务于“下一步该做什么”，不要求你先背完整字段表。',
@@ -139,14 +139,6 @@ export function buildResourceDraft(
   };
 
   const extraBlocks: ResourceBlock[] = [];
-  if (!isLecture && !isPresentation) {
-    pushHeading(extraBlocks, '开始前先记住', pack.items.map((item) => item.id), knowledgePoint);
-    pushList(extraBlocks, [
-      '不需要先背完整字段表，只看完成本次任务所需的几个词。',
-      '每个新词先看中文解释，再看例子，最后跟着做一个小动作。',
-      '资料没有说明的地方会保留待核对，不把猜测写成结论。',
-    ], pack.items.map((item) => item.id), knowledgePoint);
-  }
   if (isLecture) {
     const table = representativeTable(pack);
     const selectedTableItem = table
@@ -375,7 +367,7 @@ export interface LlmLectureSection {
   keyPoints?: string[];
 }
 
-/** PPT 单页：页标题 + 要点 + 讲解词 */
+/** PPT 单页：页标题 + 要点 + 本页说明 */
 export interface LlmPresentationSlide {
   heading: string;
   bullets: string[];
@@ -570,7 +562,7 @@ export function validateLlmResourceDraftQuality(draft: LlmResourceDraft): string
   } else if (draft.kind === 'presentation') {
     if (draft.slides.length < 10) issues.push('PPT 少于 10 页，叙事不完整');
     if (draft.slides.some((slide) => slide.bullets.length < 3)) issues.push('存在少于 3 条要点的幻灯片');
-    if (draft.slides.filter((slide) => (slide.notes?.replace(/\s/g, '').length ?? 0) >= 80).length < Math.max(1, draft.slides.length - 1)) issues.push('多数幻灯片缺少完整讲解词');
+    if (draft.slides.filter((slide) => (slide.notes?.replace(/\s/g, '').length ?? 0) >= 80).length < Math.max(1, draft.slides.length - 1)) issues.push('多数幻灯片缺少完整本页说明');
   } else if (draft.kind === 'tiered_quiz') {
     if (draft.questions.length < 9) issues.push('分层习题少于 9 道');
     for (const level of ['L1', 'L2', 'L3'] as const) {
