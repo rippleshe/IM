@@ -9,15 +9,15 @@ import {
   FileJson,
   Link2,
   ListChecks,
-  LogOut,
   RefreshCw,
   ScrollText,
   ShieldCheck,
   Table2,
 } from "lucide-react";
 import type { AuthenticatedUser } from "@/components/auth-entry";
-import { AvatarBubble, ProfileDialog } from "@/components/profile-dialog";
+import { ProfileDialog } from "@/components/profile-dialog";
 import { SettingsDialog } from "@/components/settings-dialog";
+import { WorkspaceHeader } from "@/components/workspace-header";
 
 type RunSummary = {
   id: string;
@@ -294,14 +294,10 @@ export function ValidationWorkbench({ apiBase, user, onLogout, onNavigate, onUse
   const published = Boolean(trace?.run.finalAssetId);
 
   return <main className="app-shell flex h-screen min-h-0 flex-col overflow-hidden bg-background">
-    <header className="flex h-16 shrink-0 items-center justify-between border-b px-5 sm:px-7">
-      <div className="flex items-center gap-2.5"><AvatarBubble user={user} size="h-9 w-9 text-xs" /><span className="min-w-0"><span className="block text-sm font-semibold tracking-tight">智辩无幻</span><span className="block text-[11px] text-muted-foreground">{user.displayName}</span></span></div>
-      <nav aria-label="学习空间" className="flex items-center rounded-lg border bg-muted/40 p-1 text-sm"><button type="button" onClick={() => setSettingsOpen(true)} className="rounded-md px-3 py-1.5 text-muted-foreground hover:text-foreground">设置</button><button type="button" onClick={() => setProfileOpen(true)} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">画像</button><button type="button" onClick={() => onNavigate("path")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">路径</button><button type="button" onClick={() => onNavigate("study")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">学习</button><button type="button" onClick={() => onNavigate("resources")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">资源</button><button type="button" className="rounded-md bg-background px-4 py-1.5 font-medium shadow-sm">验证</button></nav>
-      <button type="button" onClick={() => void logout()} className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-2 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"><LogOut className="h-3.5 w-3.5" />退出</button>
-     </header>
+    <WorkspaceHeader user={user} activeView="validation" onNavigate={onNavigate} onSettings={() => setSettingsOpen(true)} onProfile={() => setProfileOpen(true)} onLogout={logout} />
 
     <div className="min-h-0 flex-1 overflow-y-auto">
-      <div className="mx-auto max-w-5xl space-y-6 px-5 py-6 sm:px-7">
+      <div className="validation-content mx-auto max-w-5xl space-y-6 px-5 py-6 sm:px-7">
 
         {/* 1. 任务选择区 */}
         <section aria-label="运行选择" className="validation-panel rounded-xl border bg-card p-4">

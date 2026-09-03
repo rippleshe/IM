@@ -6,7 +6,6 @@ import {
   Download,
   Eraser,
   ListTree,
-  LogOut,
   MessageSquarePlus,
   Network,
   Paperclip,
@@ -16,11 +15,12 @@ import {
 } from "lucide-react";
 import type { AuthenticatedUser } from "@/components/auth-entry";
 import { SettingsDialog } from "@/components/settings-dialog";
-import { AvatarBubble, ProfileDialog } from "@/components/profile-dialog";
+import { ProfileDialog } from "@/components/profile-dialog";
 import { RecommendationBadge, type PathGraph, type PathNode, TreeCanvas } from "@/components/learning-path-workbench";
 import { RichText, DescriptionList } from "@/components/rich-text";
 import { ContextClearDialog } from "@/components/context-clear-dialog";
 import { DagProgress } from "@/components/dag-progress";
+import { WorkspaceHeader } from "@/components/workspace-header";
 
 type ResourceType = "lecture" | "tiered_quiz" | "presentation" | "concept_map";
 type StudyAsset = { id: string; title: string; type: ResourceType; auditStatus: string; persisted: boolean; producer?: "llm" | "rule" | "unknown"; generationNote?: string; failureReason?: string };
@@ -496,11 +496,7 @@ export function LearningWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
   const logout = async () => { await fetch(`${apiBase}/api/auth/logout`, { method: "POST", credentials: "include" }).catch(() => undefined); onLogout(); };
 
   return <main className={`app-shell flex h-screen min-h-0 flex-col overflow-hidden bg-background ${resizing ? "select-none" : ""}`}>
-    <header className="flex h-16 shrink-0 items-center justify-between border-b px-5 sm:px-7">
-      <div className="flex items-center gap-2.5"><AvatarBubble user={user} size="h-9 w-9 text-xs" /><span className="min-w-0"><span className="block text-sm font-semibold tracking-tight">智辩无幻</span><span className="block text-[11px] text-muted-foreground">{user.displayName}</span></span></div>
-      <nav aria-label="学习空间" className="flex items-center rounded-lg border bg-muted/40 p-1 text-sm"><button type="button" onClick={() => setSettingsOpen(true)} className="rounded-md px-3 py-1.5 text-muted-foreground hover:text-foreground">设置</button><button type="button" onClick={() => setProfileOpen(true)} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">画像</button><button type="button" onClick={() => onNavigate("path")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">路径</button><button type="button" className="rounded-md bg-background px-4 py-1.5 font-medium shadow-sm">学习</button><button type="button" onClick={() => onNavigate("resources")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">资源</button><button type="button" onClick={() => onNavigate("validation")} className="px-4 py-1.5 text-muted-foreground hover:text-foreground">验证</button></nav>
-      <button type="button" onClick={logout} className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-2 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"><LogOut className="h-3.5 w-3.5" />退出</button>
-    </header>
+    <WorkspaceHeader user={user} activeView="study" onNavigate={onNavigate} onSettings={() => setSettingsOpen(true)} onProfile={() => setProfileOpen(true)} onLogout={logout} />
 
     <div className="study-layout flex min-h-0 min-w-[1000px] flex-1 overflow-hidden">
       <aside style={{ width: leftWidth }} className="flex shrink-0 flex-col border-r bg-card" aria-label="任务上下文">

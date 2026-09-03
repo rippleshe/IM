@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { ArrowRight, Loader2 } from "lucide-react";
+import { Activity, ArrowRight, CheckCircle2, Loader2, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -89,16 +89,22 @@ export function AuthEntry({ apiBase, user, onAuthenticated }: AuthEntryProps) {
   return (
     <main className="app-entry min-h-screen bg-background px-5 py-10 text-foreground">
       <div className="mx-auto flex min-h-[calc(100vh-5rem)] max-w-5xl items-center justify-center">
-        <div className="grid w-full max-w-4xl overflow-hidden rounded-2xl border bg-card shadow-sm md:grid-cols-[0.92fr_1.08fr]">
-          <section className="flex flex-col border-b bg-muted/35 p-7 md:border-b-0 md:border-r md:p-10">
-            <div className="flex items-center gap-2 text-sm font-semibold"><span className="flex h-7 w-7 items-center justify-center rounded-md border border-blue-200 bg-blue-50 text-blue-700">IM</span>设备数据诊断训练</div>
-            <div className="my-auto max-w-sm text-center">
-              <h1 className="whitespace-nowrap text-2xl font-semibold leading-tight tracking-tight">从数据理解，走到诊断工具。</h1>
-              <p className="mt-4 text-sm leading-6 text-muted-foreground">建立你的学习路径，使用学习助手生成讲义、习题、PPT、知识关系图和带来源的问答。</p>
+        <div className="auth-frame grid w-full max-w-5xl overflow-hidden rounded-2xl border bg-card shadow-sm md:grid-cols-[0.92fr_1.08fr]">
+          <section className="auth-hero flex flex-col border-b bg-muted/35 p-7 md:border-b-0 md:border-r md:p-10">
+            <div className="auth-brand flex items-center gap-2.5"><span className="auth-brand-mark" aria-hidden="true"><Activity className="h-4 w-4" /></span><span><strong className="block text-sm font-semibold">智辩无幻</strong><span className="block text-[10px] text-muted-foreground">设备数据诊断训练</span></span></div>
+            <div className="auth-hero-copy my-auto max-w-sm">
+              <h1 className="text-3xl font-semibold leading-tight tracking-[-0.03em]">从数据理解，走到诊断工具。</h1>
+              <p className="mt-4 text-sm leading-7 text-muted-foreground">把真实设备数据拆成一条适合你的学习路径，边学边做，最后完成一次能复查的诊断判断。</p>
+              <div className="auth-proof-list mt-8 space-y-3" aria-label="学习空间特点">
+                <div><CheckCircle2 className="h-4 w-4" /><span>路径跟着你的基础与作答记录调整</span></div>
+                <div><Activity className="h-4 w-4" /><span>讲义、习题、PPT 和知识脉络一次串起来</span></div>
+                <div><ShieldCheck className="h-4 w-4" /><span>内容经过依据核对，结论保留可复查边界</span></div>
+              </div>
             </div>
+            <div className="auth-signal" aria-hidden="true"><span /><span /><span /><span /><span /><span /><span /></div>
           </section>
 
-          <section className="p-7 md:p-10">
+          <section className="auth-form p-7 md:p-10">
             {onboarding ? (
               <form onSubmit={submitOnboarding} className="space-y-5">
                 <div><p className="text-sm font-semibold">先告诉我们你的学习起点</p></div>
