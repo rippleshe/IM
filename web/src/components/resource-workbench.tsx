@@ -12,6 +12,7 @@ import {
   Clock3,
   Download,
   FileText,
+  Lightbulb,
   Minimize2,
   Map as MapIcon,
   MessageCircleQuestion,
@@ -27,6 +28,7 @@ import {
 import type { AuthenticatedUser } from "@/components/auth-entry";
 import { SettingsDialog } from "@/components/settings-dialog";
 import { ProfileDialog } from "@/components/profile-dialog";
+import { SocraticDialog } from "@/components/socratic-dialog";
 import { ResourceQuestionDialog } from "@/components/resource-question-dialog";
 import { CodeFigure, RichInlineText, RichText } from "@/components/rich-text";
 import { WorkspaceHeader } from "@/components/workspace-header";
@@ -395,6 +397,7 @@ export function ResourceWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
   const [notice, setNotice] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
+  const [socraticOpen, setSocraticOpen] = useState(false);
   const [notesWidth, setNotesWidth] = useState(330);
   const [resizing, setResizing] = useState(false);
   const [qaOpen, setQaOpen] = useState(false);
@@ -514,6 +517,7 @@ export function ResourceWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
     </div>
     {settingsOpen && <SettingsDialog apiBase={apiBase} onClose={() => setSettingsOpen(false)} />}
     {profileOpen && <ProfileDialog apiBase={apiBase} user={user} onUserChange={onUserChange} onClose={() => setProfileOpen(false)} />}
+    {socraticOpen && <SocraticDialog apiBase={apiBase} onClose={() => setSocraticOpen(false)} />}
     {qaOpen && <ResourceQuestionDialog apiBase={apiBase} selectedAssetId={selectedAsset?.id ?? null} selectedAssetTitle={selectedAsset?.title} onClose={() => setQaOpen(false)} />}
   </main>;
 }

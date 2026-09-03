@@ -17,10 +17,11 @@ import {
 import type { AuthenticatedUser } from "@/components/auth-entry";
 import { SettingsDialog } from "@/components/settings-dialog";
 import { ProfileDialog } from "@/components/profile-dialog";
+import { LearnerReportDialog } from "@/components/learner-report-dialog";
 import { RecommendationBadge, type PathGraph, type PathNode, TreeCanvas } from "@/components/learning-path-workbench";
 import { RichText, DescriptionList } from "@/components/rich-text";
 import { ContextClearDialog } from "@/components/context-clear-dialog";
-import { DagProgress } from "@/components/dag-progress";
+import { DagProgressEnhanced } from "@/components/dag-progress-enhanced";
 import { WorkspaceHeader } from "@/components/workspace-header";
 
 type ResourceType = "lecture" | "tiered_quiz" | "presentation" | "concept_map";
@@ -200,6 +201,7 @@ export function LearningWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
   const [mentionOpen, setMentionOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [reportOpen, setReportOpen] = useState(false);
   const [leftWidth, setLeftWidth] = useState(286);
   const [rightWidth, setRightWidth] = useState(362);
   const [resizing, setResizing] = useState<"left" | "right" | null>(null);
@@ -563,10 +565,15 @@ export function LearningWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
 
     <div className="study-layout flex min-h-0 min-w-[1000px] flex-1 overflow-hidden">
       <aside style={{ width: leftWidth }} className="flex shrink-0 flex-col border-r bg-card" aria-label="任务上下文">
-        <div className="workspace-pane-titlebar flex shrink-0 items-center justify-between border-b px-4 py-3.5"><div className="flex items-center gap-2"><ListTree className="h-4 w-4" /><h1 className="text-sm font-semibold">任务进度</h1></div><span className="text-xs text-muted-foreground">{runStatus === "queued" ? "排队中" : runStatus === "running" ? "进行中" : runStatus === "succeeded" ? "已完成" : runStatus === "failed" ? "处理异常" : runStatus === "cancelled" ? "已取消" : "待发起"}</span></div>
+        <div className="workspace-pane-titlebar flex shrink-0 items-center justify-between border-b px-4 py-3.5">
+          <div className="flex items-center gap-2"><ListTree className="h-4 w-4" /><h1 className="text-sm font-semibold">任务进度</h1></div>
+          <button type="button" onClick={() => setReportOpen(true)} className="rounded-lg border px-2 py-1 text-[10px] font-medium hover:bg-muted" title="查看学情报告">
+            学情报告
+          </button>
+        </div>
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
       <section aria-label="当前节点" aria-live="polite" className="current-node-panel"><div className="current-node-label">当前节点</div>{selectedNode ? <div className="current-node-card mt-2"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><div className="text-sm font-semibold leading-5 text-slate-800">{selectedNode.title}</div></div>{selectedNode.mastered ? <span className="current-node-status">已掌握</span> : null}</div><div className="mt-3"><DescriptionList text={selectedNode.description} compact /></div>{selectedNode.recommendation ? <div className="mt-3"><RecommendationBadge recommendation={selectedNode.recommendation} /></div> : null}<div className="mt-3 flex flex-wrap gap-1.5"><button type="button" onClick={() => addMention(selectedNode)} className="current-node-action"><MessageSquarePlus className="h-3.5 w-3.5" />引用到问题</button><button type="button" disabled={savingNodeId === selectedNode.id} onClick={() => updateNode(selectedNode, { userStatus: selectedNode.userStatus === "completed" ? "learning" : "completed" })} className="current-node-action current-node-action-quiet">{selectedNode.userStatus === "completed" ? "继续学习" : "标记学完"}</button><button type="button" disabled={savingNodeId === selectedNode.id} onClick={() => updateNode(selectedNode, { mastered: !selectedNode.mastered, userStatus: selectedNode.mastered ? selectedNode.userStatus : "completed" })} className="current-node-action current-node-action-quiet">{selectedNode.mastered ? "取消掌握" : "标记掌握"}</button></div><details className="current-node-adjustment mt-3"><summary>调整路径关系</summary><div className="mt-2 flex flex-wrap gap-1.5">{(["前置", "分支", "应用"] as const).map((kind) => <button key={kind} type="button" onClick={() => requestPathAdjustment(kind)} className="current-node-action current-node-action-quiet">+ {kind}</button>)}</div></details></div> : <div className="current-node-empty mt-2">在右侧路径中选择一个节点</div>}</section>
-          <section aria-label="任务处理状态">{runStatus !== "idle" || nodeStates.length > 0 ? <DagProgress states={nodeStates} summary={readableProcessText(liveSummary)} events={liveEvents.map((event) => ({ ...event, summary: readableProcessText(event.summary) }))} completed={isTerminalRunStatus(runStatus)} /> : <div className="mt-2 rounded-xl border border-dashed p-4 text-[11px] leading-4 text-muted-foreground">开始任务后，这里会显示十个协同步骤与公开处理摘要。</div>}</section>
+          <section aria-label="任务处理状态">{runStatus !== "idle" || nodeStates.length > 0 ? <DagProgressEnhanced states={nodeStates} summary={readableProcessText(liveSummary)} events={liveEvents.map((event) => ({ ...event, summary: readableProcessText(event.summary) }))} completed={isTerminalRunStatus(runStatus)} /> : <div className="mt-2 rounded-xl border border-dashed p-4 text-[11px] leading-4 text-muted-foreground">开始任务后，这里会显示十个协同步骤与公开处理摘要。</div>}</section>
         </div>
       </aside>
       <div role="separator" aria-orientation="vertical" onMouseDown={() => setResizing("left")} className="w-1.5 shrink-0 cursor-col-resize bg-border/60 transition-colors hover:bg-foreground/30" />
@@ -620,6 +627,7 @@ export function LearningWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
 
     {profileOpen && <ProfileDialog apiBase={apiBase} user={user} onUserChange={onUserChange} onClose={() => setProfileOpen(false)} />}
     {settingsOpen && <SettingsDialog apiBase={apiBase} onClose={() => setSettingsOpen(false)} />}
+    {reportOpen && <LearnerReportDialog apiBase={apiBase} onClose={() => setReportOpen(false)} />}
     <ContextClearDialog open={clearDialogOpen} pending={clearingConversation} title="清除本次对话" description="仅清空当前学习任务的对话和后续参考；学习路径、已生成资源与验证记录会保留。" onClose={() => setClearDialogOpen(false)} onConfirm={() => void clearConversation()} />
   </main>;
 }
