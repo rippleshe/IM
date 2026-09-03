@@ -12,8 +12,10 @@ import {
   Clock3,
   Download,
   FileText,
+  Minimize2,
   Map as MapIcon,
   MessageCircleQuestion,
+  Play,
   Plus,
   Presentation,
   Quote,
@@ -486,7 +488,7 @@ export function ResourceWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
 
       <div role="separator" aria-orientation="vertical" onMouseDown={() => setResizing(true)} className="w-1.5 shrink-0 cursor-col-resize bg-border/60 transition-colors hover:bg-foreground/30" />
       <aside style={{ width: notesWidth }} className="flex shrink-0 flex-col border-l bg-muted/15" aria-label="资源笔记或解析">
-        {selectedReader?.asset.type === "lecture" ? <LectureNotes key={selectedReader.asset.id} apiBase={apiBase} reader={selectedReader} selectedQuote={selectedQuote} onClearQuote={() => setSelectedQuote("")} onReaderChange={setReader} onReinforce={() => reinforceFromAsset(selectedReader.asset, selectedReader.feedback?.masteryLevel ?? null)} /> : selectedReader?.asset.type === "tiered_quiz" ? <QuizAnswerPanel reader={selectedReader} /> : selectedReader ? <GenericFeedback apiBase={apiBase} reader={selectedReader} onReaderChange={setReader} onReinforce={() => reinforceFromAsset(selectedReader.asset, selectedReader.feedback?.masteryLevel ?? null)} /> : <div className="flex h-full items-center justify-center px-8 text-center text-sm text-muted-foreground">选择一份资源后，在这里查看笔记、反馈或答案解析。</div>}
+        {selectedReader?.asset.type === "tiered_quiz" ? <QuizAnswerPanel reader={selectedReader} /> : selectedReader ? <LectureNotes key={selectedReader.asset.id} apiBase={apiBase} reader={selectedReader} selectedQuote={selectedReader.asset.type === "lecture" ? selectedQuote : ""} onClearQuote={() => setSelectedQuote("")} onReaderChange={setReader} onReinforce={() => reinforceFromAsset(selectedReader.asset, selectedReader.feedback?.masteryLevel ?? null)} /> : <div className="flex h-full items-center justify-center px-8 text-center text-sm text-muted-foreground">选择一份资源后，在这里查看笔记、反馈或答案解析。</div>}
       </aside>
     </div>
     {settingsOpen && <SettingsDialog apiBase={apiBase} onClose={() => setSettingsOpen(false)} />}
@@ -562,11 +564,35 @@ function PresentationReader({ reader, onExport }: { reader: ReaderData; onExport
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [slides.length]);
+  const presentationRef = useRef<HTMLDivElement | null>(null);
+  const [isPresenting, setIsPresenting] = useState(false);
+  const [presentationNotice, setPresentationNotice] = useState("");
+  useEffect(() => {
+    const syncFullscreen = () => setIsPresenting(document.fullscreenElement === presentationRef.current);
+    document.addEventListener("fullscreenchange", syncFullscreen);
+    return () => document.removeEventListener("fullscreenchange", syncFullscreen);
+  }, []);
+  const togglePresentation = async () => {
+    setPresentationNotice("");
+    if (document.fullscreenElement) {
+      await document.exitFullscreen();
+      return;
+    }
+    if (!presentationRef.current?.requestFullscreen) {
+      setPresentationNotice("当前浏览器不支持放映模式");
+      return;
+    }
+    try {
+      await presentationRef.current.requestFullscreen();
+    } catch {
+      setPresentationNotice("放映模式未能打开，请检查浏览器的全屏权限");
+    }
+  };
   const slide = slides[index] ?? slides[0];
-  return <div className="resource-presentation-reader flex min-h-0 flex-1 flex-col bg-[#eef3f7]">
-    <div className="resource-reading-toolbar flex shrink-0 items-center justify-between border-b bg-background px-5 py-3.5"><div className="resource-reading-title"><Presentation className="h-4 w-4" /><span>演示阅读</span><span className="presentation-reader-hint">每页一个重点 · 方向键可翻页</span></div><ResourceExportMenu assetType={reader.asset.type} onExport={onExport} /></div>
+  return <div ref={presentationRef} className="resource-presentation-reader flex min-h-0 flex-1 flex-col bg-[#eef3f7]">
+    <div className="resource-reading-toolbar flex shrink-0 items-center justify-between border-b bg-background px-5 py-3.5"><div className="resource-reading-title"><Presentation className="h-4 w-4" /><span>演示阅读</span><span className="presentation-reader-hint">每页一个重点 · 方向键可翻页</span></div><div className="flex items-center gap-2">{presentationNotice ? <span role="alert" className="text-[11px] text-rose-600">{presentationNotice}</span> : null}<button type="button" onClick={() => void togglePresentation()} className="resource-toolbar-button" title={isPresenting ? "退出放映" : "开始放映"}>{isPresenting ? <Minimize2 className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}{isPresenting ? "退出放映" : "放映"}</button><ResourceExportMenu assetType={reader.asset.type} onExport={onExport} /></div></div>
     <div className="min-h-0 flex-1 overflow-y-auto px-4 py-6 sm:px-6 sm:py-7">
-      <div className="mx-auto w-full max-w-5xl"><div className="presentation-stage"><PresentationSlideCanvas slide={slide} asset={reader.asset} index={index + 1} total={slides.length} /></div><details className="presentation-speaker-notes"><summary><span>讲解词</span><span>打开查看本页怎么讲</span></summary><div>{slide.paragraphs.length > 0 ? slide.paragraphs.map((paragraph, paragraphIndex) => <RichText key={paragraphIndex} text={paragraph} />) : <p>这一页先让学习者复述重点，再完成页面底部的小动作。</p>}</div></details></div>
+      <div className="mx-auto w-full max-w-5xl"><div className="presentation-stage"><PresentationSlideCanvas slide={slide} asset={reader.asset} index={index + 1} total={slides.length} /></div><details className="presentation-speaker-notes"><summary><span>本页说明</span><span>打开查看本页说明</span></summary><div>{slide.paragraphs.length > 0 ? slide.paragraphs.map((paragraph, paragraphIndex) => <RichText key={paragraphIndex} text={paragraph} />) : <p>这一页先让学习者复述重点，再完成页面底部的小动作。</p>}</div></details></div>
     </div>
     <div className="presentation-pagination border-t bg-background px-4 py-3"><div className="presentation-pager"><button type="button" disabled={index === 0} onClick={() => setIndex((value) => Math.max(0, value - 1))} aria-label="上一页" className="presentation-pager-button"><ChevronLeft className="h-4 w-4" /></button><div className="presentation-slide-strip" role="tablist" aria-label="演示页码">{slides.map((item, itemIndex) => <button key={`${item.title}-${itemIndex}`} type="button" role="tab" aria-selected={index === itemIndex} onClick={() => setIndex(itemIndex)} className={`presentation-slide-tab ${index === itemIndex ? "is-active" : ""}`}><span>{String(itemIndex + 1).padStart(2, "0")}</span><strong>{presentationShortText(item.title, 16)}</strong></button>)}</div><button type="button" disabled={index === slides.length - 1} onClick={() => setIndex((value) => Math.min(slides.length - 1, value + 1))} aria-label="下一页" className="presentation-pager-button"><ChevronRight className="h-4 w-4" /></button></div></div>
   </div>;
@@ -628,6 +654,7 @@ function QuizReader({ apiBase, reader, onReaderChange }: { apiBase: string; read
   const [index, setIndex] = useState(0);
   const [answerId, setAnswerId] = useState("");
   const [showReference, setShowReference] = useState(false);
+  const [retrying, setRetrying] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState("");
   const startedAt = useRef<number | null>(null);
@@ -636,7 +663,8 @@ function QuizReader({ apiBase, reader, onReaderChange }: { apiBase: string; read
   const glossary = useMemo(() => getGlossaryItems(reader.asset), [reader.asset]);
   const questionType: QuizQuestionType = question?.type ?? "choice";
   const latest = reader.quizAttempts.filter((attempt) => attempt.questionId === question?.id).at(-1) ?? null;
-  const jump = (next: number) => { setIndex(next); setAnswerId(""); setShowReference(false); setSubmitError(""); startedAt.current = currentTimestamp(); };
+  const jump = (next: number) => { setIndex(next); setAnswerId(""); setShowReference(false); setRetrying(false); setSubmitError(""); startedAt.current = currentTimestamp(); };
+  const startRetry = () => { setAnswerId(""); setShowReference(false); setRetrying(true); setSubmitError(""); startedAt.current = currentTimestamp(); };
   const submit = async (selfAssessed?: boolean) => {
     if (!question || submitting) return;
     const answer = questionType === "choice" ? answerId : answerId.trim();
@@ -652,6 +680,7 @@ function QuizReader({ apiBase, reader, onReaderChange }: { apiBase: string; read
       const data = await response.json() as { success?: boolean; attempt?: QuizAttempt; error?: string };
       if (!response.ok || !data.success || !data.attempt) throw new Error(data.error || "作答提交失败");
       onReaderChange({ ...reader, quizAttempts: [...reader.quizAttempts, data.attempt] });
+      setRetrying(false);
       notifyEvidenceUpdated();
     } catch (error) {
       setSubmitError(error instanceof Error ? error.message : "作答提交失败，请重试");
@@ -659,7 +688,7 @@ function QuizReader({ apiBase, reader, onReaderChange }: { apiBase: string; read
   };
   if (!question) return <EmptyReader label="习题" />;
   // 提交后当场标出对错：正确答案绿色，错选/答错红色；未提交时保持选中高亮
-  const answered = Boolean(latest);
+  const answered = Boolean(latest) && !retrying;
   const optionState = (optionId: string): "idle" | "selected" | "correct" | "wrong" => {
     if (answered && optionId === question.answerId) return "correct";
     if (answered && !latest!.correct && optionId === latest!.answerId) return "wrong";
@@ -693,10 +722,10 @@ function QuizReader({ apiBase, reader, onReaderChange }: { apiBase: string; read
       <textarea value={answerId} disabled={answered} onChange={(event) => setAnswerId(event.target.value)} rows={5} placeholder="写下你的思路和判断依据……" className={`w-full resize-none rounded-xl border bg-card p-4 text-sm leading-7 outline-none placeholder:text-muted-foreground focus:ring-2 focus:ring-foreground/10 ${answered ? (latest!.correct ? "border-emerald-400" : "border-rose-300") : ""}`} />
       {!showReference && !answered ? <button type="button" disabled={!answerId.trim()} onClick={() => setShowReference(true)} className="inline-flex h-9 items-center gap-1.5 rounded-lg border px-3.5 text-xs font-medium hover:bg-muted disabled:opacity-40">写完了，对照参考答案</button> : null}
       {showReference && !answered ? <div className="rounded-xl border bg-muted/30 p-4"><div className="text-xs font-semibold">参考答案要点</div><p className="mt-2 text-sm leading-6 text-muted-foreground">{question.answerId}</p><div className="mt-4 flex gap-2"><button type="button" onClick={() => void submit(true)} className="h-9 flex-1 rounded-lg border border-emerald-300 bg-emerald-50 text-xs font-medium text-emerald-700 hover:bg-emerald-100">我答出了关键要点</button><button type="button" onClick={() => void submit(false)} className="h-9 flex-1 rounded-lg border border-amber-300 bg-amber-50 text-xs font-medium text-amber-700 hover:bg-amber-100">还有要点没答到</button></div></div> : null}
-      {answered ? <div className={`rounded-xl border px-4 py-3 text-xs leading-5 ${latest!.correct ? "border-emerald-200 bg-emerald-50/50 text-emerald-800" : "border-amber-200 bg-amber-50/50 text-amber-800"}`}>你的回答：{latest!.answerId || "（未作答）"}</div> : null}
+      {answered ? <><div className={`rounded-xl border px-4 py-3 text-xs leading-5 ${latest!.correct ? "border-emerald-200 bg-emerald-50/50 text-emerald-800" : "border-amber-200 bg-amber-50/50 text-amber-800"}`}>你的回答：{latest!.answerId || "（未作答）"}</div><button type="button" onClick={startRetry} className="h-9 rounded-lg border px-3.5 text-xs font-medium hover:bg-muted">再次作答</button></> : null}
     </div> : null}
     {submitError ? <p role="alert" className="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs leading-5 text-rose-700">{submitError}</p> : null}
-    {questionType !== "short_answer" ? <button type="button" disabled={!canSubmit || submitting} onClick={() => void submit()} className="mt-8 inline-flex h-10 items-center justify-center rounded-lg bg-blue-400 px-5 text-sm font-medium text-white shadow-sm shadow-blue-200 transition-colors hover:bg-blue-500 disabled:opacity-35">{submitting ? "正在提交" : answered ? "再次提交" : "提交答案"}</button> : null}
+    {questionType !== "short_answer" ? <button type="button" disabled={submitting || (answered ? false : !canSubmit)} onClick={() => { if (answered) { startRetry(); return; } void submit(); }} className="mt-8 inline-flex h-10 items-center justify-center rounded-lg bg-blue-400 px-5 text-sm font-medium text-white shadow-sm shadow-blue-200 transition-colors hover:bg-blue-500 disabled:opacity-35">{submitting ? "正在提交" : answered ? "再次作答" : "提交答案"}</button> : null}
     </article></div><div className="shrink-0 border-t bg-background px-5 py-4"><div className="flex flex-wrap gap-2">{questions.map((item, itemIndex) => { const attempt = reader.quizAttempts.filter((record) => record.questionId === item.id).at(-1); return <button key={item.id} type="button" onClick={() => jump(itemIndex)} className={`flex h-9 w-9 items-center justify-center rounded-lg border text-xs font-medium transition-colors ${itemIndex === index ? "border-blue-400 bg-blue-400 text-white" : attempt?.correct ? "border-emerald-300 bg-emerald-50 text-emerald-700" : attempt ? "border-rose-300 bg-rose-50 text-rose-700" : "hover:bg-muted"}`}>{itemIndex + 1}</button>; })}</div></div></div>;
 }
 
@@ -717,13 +746,4 @@ function QuizAnswerPanel({ reader }: { reader: ReaderData }) {
 function GenericReader({ reader, onExport }: { apiBase: string; reader: ReaderData; onReaderChange: (data: ReaderData) => void; onExport: (format: "md" | "txt" | "json" | "ppt") => void }) {
   const blocks = useMemo(() => visibleLearningBlocks(reader.asset.blocks), [reader.asset.blocks]);
   return <div className="resource-generic-reader flex min-h-0 flex-1 flex-col"><div className="resource-reading-toolbar flex shrink-0 items-center justify-between border-b px-5 py-3.5"><div className="resource-reading-title"><MapIcon className="h-4 w-4" /><span>知识脉络</span></div><ResourceExportMenu assetType={reader.asset.type} onExport={onExport} /></div><div className="min-h-0 flex-1 overflow-y-auto"><article className="mx-auto max-w-3xl space-y-7 px-8 py-9"><ResourcePrimer type="concept_map" /><div className="resource-learning-objectives"><div className="text-[11px] font-semibold text-slate-700">学习目标</div><ul className="mt-3 space-y-2 text-sm leading-6 text-muted-foreground">{reader.asset.learningObjectives.map((objective) => <li key={objective} className="flex gap-2"><span className="resource-objective-dot" />{objective}</li>)}</ul></div>{blocks.map((block) => <section key={block.id}>{renderBlockContent(block)}</section>)}</article></div></div>;
-}
-
-function GenericFeedback({ apiBase, reader, onReaderChange, onReinforce }: { apiBase: string; reader: ReaderData; onReaderChange: (data: ReaderData) => void; onReinforce: () => void }) {
-  const markRead = async () => {
-    const response = await fetch(`${apiBase}/api/learning/assets/${encodeURIComponent(reader.asset.id)}/feedback`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ completed: true }) });
-    const data = await response.json() as { success?: boolean };
-    if (response.ok && data.success) { onReaderChange({ ...reader, feedback: { completed: true, mastered: reader.feedback?.mastered ?? false, masteryLevel: reader.feedback?.masteryLevel ?? null, updatedAt: Date.now() } }); notifyEvidenceUpdated(); }
-  };
-  return <div className="flex h-full flex-col"><div className="border-b bg-background px-5 py-3.5"><div className="text-sm font-semibold">学习记录</div></div><div className="flex flex-1 flex-col justify-between p-5"><div className="rounded-xl border bg-card p-4 text-sm font-semibold">{typeLabel(reader.asset.type)}</div><div><button type="button" onClick={() => void markRead()} className={`h-9 w-full rounded-lg border text-xs font-medium ${reader.feedback?.completed ? "border-emerald-300 bg-emerald-50 text-emerald-700" : "hover:bg-muted"}`}>{reader.feedback?.completed ? "已记录完成" : "记录已学习"}</button><button type="button" onClick={onReinforce} className="mt-2 flex h-9 w-full items-center justify-center gap-1.5 rounded-lg border border-foreground/25 bg-muted/40 text-xs font-medium hover:bg-muted"><Target className="h-3.5 w-3.5" />按这份资源的薄弱点生成练习</button></div></div></div>;
 }

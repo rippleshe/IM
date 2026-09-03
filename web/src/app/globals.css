@@ -829,6 +829,42 @@ summary:focus-visible {
   min-width: 0 !important;
 }
 
+.path-layout {
+  grid-template-columns: minmax(360px, var(--path-chat-width, 40%)) 7px minmax(0, 1fr) !important;
+}
+
+.path-resize-handle {
+  position: relative;
+  z-index: 2;
+  width: 7px;
+  cursor: col-resize;
+  background: var(--app-border);
+  transition: background-color 160ms ease;
+}
+
+.path-resize-handle::after {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 3px;
+  height: 42px;
+  border-radius: 999px;
+  background: rgb(93 124 164 / 28%);
+  content: "";
+  transform: translate(-50%, -50%);
+}
+
+.path-resize-handle:hover,
+.path-resize-handle:focus-visible {
+  background: #dbe7f4;
+  outline: none;
+}
+
+.path-resize-handle:hover::after,
+.path-resize-handle:focus-visible::after {
+  background: #6d92c1;
+}
+
 @media (max-width: 1080px) {
   .study-layout > aside[aria-label="任务上下文"] {
     width: 230px !important;
@@ -1305,6 +1341,17 @@ summary:focus-visible {
   border-radius: 18px;
   background: #e3ebf2;
   box-shadow: 0 14px 32px rgb(49 76 102 / 10%);
+}
+
+.resource-presentation-reader:fullscreen {
+  min-height: 100dvh;
+  background: #e3ebf2;
+}
+
+.resource-presentation-reader:fullscreen .presentation-stage {
+  max-width: 1440px;
+  margin: 0 auto;
+  box-shadow: 0 20px 46px rgb(49 76 102 / 16%);
 }
 
 .presentation-slide {
@@ -2721,7 +2768,7 @@ summary:focus-visible {
 
 @media (min-width: 1200px) {
   .path-layout {
-    grid-template-columns: minmax(400px, 42%) minmax(0, 1fr) !important;
+    grid-template-columns: minmax(360px, var(--path-chat-width, 42%)) 7px minmax(0, 1fr) !important;
   }
 }
 
@@ -2813,6 +2860,10 @@ summary:focus-visible {
     min-height: 470px;
     border-top: 1px solid var(--app-border);
     border-left: 0;
+  }
+
+  .path-layout > .path-resize-handle {
+    display: none;
   }
 
   .study-layout {

@@ -3,7 +3,7 @@
  * study_runs / study_run_nodes / run_events 是运行状态唯一事实；
  * learnerId 以数据库记录为准，队列消息与 URL 不作为授权依据。
  */
-import { and, asc, eq, gt } from 'drizzle-orm';
+import { and, asc, desc, eq, gt } from 'drizzle-orm';
 import { sql } from 'drizzle-orm';
 import { createLearningDatabase, type LearningDatabase } from '../db/client.js';
 import { runEvents, studyRunNodes, studyRuns } from '../db/schema.js';
@@ -152,6 +152,18 @@ export async function createStudyRun(input: {
 
 export async function getRunById(runId: string): Promise<StudyRunRow | null> {
   const rows = await db().db.select().from(studyRuns).where(eq(studyRuns.id, runId)).limit(1);
+  return rows[0] ? rowToRun(rows[0]) : null;
+}
+
+/** 学习页恢复时只认数据库中的活动运行，避免页面挂载状态把历史运行误判为当前任务。 */
+export async function getActiveRunForLearner(learnerId: string): Promise<StudyRunRow | null> {
+  const rows = await db().db.select().from(studyRuns)
+    .where(and(
+      eq(studyRuns.learnerId, learnerId),
+      sql`${studyRuns.status} IN ('queued', 'running')`,
+    ))
+    .orderBy(desc(studyRuns.createdAt))
+    .limit(1);
   return rows[0] ? rowToRun(rows[0]) : null;
 }
 

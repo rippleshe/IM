@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { PointerEvent as ReactPointerEvent } from "react";
+import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
 import {
   ArrowDownUp,
   Bot,
@@ -156,6 +156,13 @@ function readablePathActivityText(text: string): string {
     .replace(/知识检索智能体/g, "资料检索助手")
     .replace(/交叉验证智能体/g, "内容检查助手")
     .replace(/协同/g, "任务处理");
+}
+
+function orderedPathMessages(messages: ChatMessage[]): ChatMessage[] {
+  return messages
+    .map((message, index) => ({ message, index }))
+    .sort((left, right) => left.message.createdAt - right.message.createdAt || left.index - right.index)
+    .map(({ message }) => message);
 }
 
 function pathAgentTone(agentId: string | undefined): string {
@@ -496,6 +503,8 @@ export function LearningPathWorkbench({ apiBase, user, onLogout, onNavigate, onU
   const [profileOpen, setProfileOpen] = useState(false);
   const [notice, setNotice] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [chatWidth, setChatWidth] = useState(520);
+  const [pathResizing, setPathResizing] = useState(false);
   const feedRef = useRef<HTMLDivElement | null>(null);
   const feedFollowRef = useRef(true);
   const detailsRef = useRef<HTMLDivElement | null>(null);
@@ -506,6 +515,18 @@ export function LearningPathWorkbench({ apiBase, user, onLogout, onNavigate, onU
     agentTimersRef.current.forEach((timer) => window.clearInterval(timer));
     agentTimersRef.current.clear();
   }, []);
+
+  useEffect(() => {
+    if (!pathResizing) return;
+    const move = (event: MouseEvent) => {
+      const max = Math.min(720, Math.max(480, window.innerWidth - 420));
+      setChatWidth(Math.max(360, Math.min(max, event.clientX)));
+    };
+    const release = () => setPathResizing(false);
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", release);
+    return () => { window.removeEventListener("mousemove", move); window.removeEventListener("mouseup", release); };
+  }, [pathResizing]);
 
   const consumePathPrefill = useCallback((graph: PathGraph) => {
     try {
@@ -548,7 +569,7 @@ export function LearningPathWorkbench({ apiBase, user, onLogout, onNavigate, onU
       const preferredNodeId = consumePathPrefill(nextPath) ?? rememberedNodeId(nextPath);
       setPath(nextPath);
       setProfile(profileData.profile ?? null);
-      setMessages(chatData.messages ?? []);
+      setMessages(orderedPathMessages(chatData.messages ?? []));
       setSelectedNodeId((current) => preferredNodeId ?? (current && nextPath.nodes.some((node) => node.id === current) ? current : nextPath.nodes[0]?.id ?? null));
     }).catch((error) => { if (alive) setNotice(error instanceof Error ? error.message : "学习路径读取失败"); }).finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
@@ -637,7 +658,8 @@ export function LearningPathWorkbench({ apiBase, user, onLogout, onNavigate, onU
     setNotice("");
     feedFollowRef.current = true;
     const temporaryUser: ChatMessage = { id: `local-${Date.now()}`, role: "user", content, metadata: {}, createdAt: Date.now() };
-    setMessages((current) => [...current, temporaryUser]);
+    setMessages((current) => orderedPathMessages([...current, temporaryUser]));
+    window.requestAnimationFrame(() => { if (feedRef.current) { feedFollowRef.current = true; feedRef.current.scrollTop = feedRef.current.scrollHeight; } });
     try {
       const response = await fetch(`${apiBase}/api/learning/chat`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json", Accept: "text/event-stream" }, body: JSON.stringify({ content }) });
       if (!response.ok || !response.body) throw new Error("路径调整失败，请稍后重试");
@@ -647,7 +669,8 @@ export function LearningPathWorkbench({ apiBase, user, onLogout, onNavigate, onU
       const finalDataBox: { value: { success?: boolean; error?: string; userMessage?: ChatMessage; agentMessages?: ChatMessage[]; assistantMessage?: ChatMessage; path?: PathGraph; profile?: ProfileMetric | null } | null } = { value: null };
       const liveId = `live-path-${Date.now()}`;
       streamMessageRef.current = liveId;
-      setMessages((current) => [...current, { id: liveId, role: "assistant", content: "", metadata: {}, createdAt: Date.now() }]);
+      setMessages((current) => orderedPathMessages([...current, { id: liveId, role: "assistant", content: "", metadata: {}, createdAt: Date.now() }]));
+      window.requestAnimationFrame(() => { if (feedRef.current) feedRef.current.scrollTop = feedRef.current.scrollHeight; });
       const consumeFrame = (frame: string) => {
         const eventName = frame.match(/^event:\s*(.+)$/m)?.[1]?.trim() ?? "message";
         const dataLine = frame.match(/^data:\s*(.+)$/m)?.[1];
@@ -708,7 +731,7 @@ export function LearningPathWorkbench({ apiBase, user, onLogout, onNavigate, onU
           if (!seen.has(agentMessage.id)) rebuilt.push({ ...agentMessage, metadata: { ...agentMessage.metadata, streaming: false } });
         }
         if (!seen.has(finalData.assistantMessage!.id)) rebuilt.push(finalData.assistantMessage as ChatMessage);
-        return rebuilt;
+        return orderedPathMessages(rebuilt);
       });
       if (finalData.path) setPath(finalData.path);
       if (finalData.profile) setProfile(finalData.profile);
@@ -736,10 +759,10 @@ export function LearningPathWorkbench({ apiBase, user, onLogout, onNavigate, onU
     detailsRef.current?.scrollTo({ top: 0, behavior: "smooth" });
   }, [selectedNodeId]);
 
-  return <main className="app-shell flex h-screen min-h-0 flex-col overflow-hidden bg-background text-foreground">
+  return <main className={`app-shell flex h-screen min-h-0 flex-col overflow-hidden bg-background text-foreground ${pathResizing ? "select-none" : ""}`}>
     <WorkspaceHeader user={user} activeView="path" onNavigate={(nextView) => onNavigate?.(nextView)} onSettings={() => setSettingsOpen(true)} onProfile={() => setProfileOpen(true)} onLogout={logout} />
 
-    <div className="path-layout grid min-h-0 flex-1 grid-cols-[minmax(360px,40%)_minmax(0,1fr)] overflow-hidden">
+    <div className="path-layout grid min-h-0 flex-1 grid-cols-[minmax(360px,40%)_minmax(0,1fr)] overflow-hidden" style={{ "--path-chat-width": `${chatWidth}px` } as CSSProperties}>
        <section className="flex min-h-0 min-w-0 flex-col bg-card" aria-label="路径调整对话与处理过程">
         <div className="workspace-pane-titlebar flex shrink-0 items-center justify-between border-b px-5 py-3.5 sm:px-6"><div className="flex items-center gap-2"><MessageSquareText className="h-4 w-4" /><h1 className="text-sm font-semibold">路径调整</h1></div></div>
          <div ref={feedRef} role="log" aria-live="polite" aria-busy={sending} onScroll={(event) => { const feed = event.currentTarget; feedFollowRef.current = feed.scrollHeight - feed.scrollTop - feed.clientHeight < 72; }} className="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-6">
@@ -773,6 +796,8 @@ export function LearningPathWorkbench({ apiBase, user, onLogout, onNavigate, onU
         </div>
         <div className="shrink-0 border-t bg-background p-4 sm:px-6">{notice && <div className="mb-2 rounded-lg border border-destructive/25 bg-destructive/5 px-3 py-2 text-xs text-destructive">{notice}</div>}<div className="mx-auto flex max-w-2xl items-end gap-2 rounded-2xl border bg-card p-2 focus-within:ring-2 focus-within:ring-foreground/10"><textarea value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void sendMessage(); } }} rows={2} placeholder="输入想如何调整路径" className="max-h-32 min-h-[42px] flex-1 resize-none bg-transparent px-2 py-2 text-sm leading-5 outline-none placeholder:text-muted-foreground" /><button type="button" disabled={!draft.trim() || sending} onClick={() => void sendMessage()} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-foreground text-background disabled:cursor-not-allowed disabled:opacity-35"><Send className="h-4 w-4" /></button></div></div>
       </section>
+
+      <div role="separator" aria-orientation="vertical" aria-label="调整路径对话宽度" aria-valuemin={360} aria-valuemax={720} aria-valuenow={chatWidth} tabIndex={0} onMouseDown={() => setPathResizing(true)} onKeyDown={(event) => { if (event.key === "ArrowLeft") { event.preventDefault(); setChatWidth((value) => Math.max(360, value - 24)); } if (event.key === "ArrowRight") { event.preventDefault(); setChatWidth((value) => Math.min(720, value + 24)); } }} className="path-resize-handle" />
 
       <aside className="flex min-w-0 flex-col overflow-hidden border-l bg-muted/15" aria-label="知识树学习路径">
         <div className="workspace-pane-titlebar flex shrink-0 items-center justify-between border-b bg-background px-5 py-3.5"><div className="flex items-center gap-2"><Network className="h-4 w-4" /><h2 className="text-sm font-semibold">我的学习路径</h2></div><div className="flex items-center gap-2"><button type="button" aria-label="一键更新路径" title="根据最新画像、学习记录与资源更新路径" disabled={sending || loading || path.nodes.length === 0} onClick={() => void sendMessage("请根据当前学习画像、最近学习记录、已生成资源与证据，重新评估并更新我的学习路径；只有在有充分依据时才修改节点或关系，并说明本次变更原因。") } className="path-update-action"><RefreshCw className={`h-3.5 w-3.5 ${sending ? "animate-spin" : ""}`} />更新路径</button></div></div>

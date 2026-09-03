@@ -188,7 +188,6 @@ export function LearningWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
   const feedRef = useRef<HTMLDivElement | null>(null);
   const streamTimersRef = useRef<Map<string, number>>(new Map());
   const streamMessageCounterRef = useRef(0);
-  const progressStorageKey = `im-training-agent:study-progress:${user.id}`;
 
   const applyResourceType = (value: ResourceType) => {
     setResourceType(value);
@@ -298,6 +297,33 @@ export function LearningWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
     };
   }, [apiBase, refreshLearningContext, refreshMessages]);
 
+  const refreshRunSnapshot = useCallback(async (runId: string) => {
+    try {
+      const response = await fetch(`${apiBase}/api/learning/runs/${encodeURIComponent(runId)}`, { credentials: "include" });
+      const data = await response.json() as { run?: { id?: string; status?: string }; nodes?: Array<{ nodeKey?: string; status?: string; resultSummary?: string | null }> };
+      if (!response.ok || !data.run) return;
+      const terminal = data.run.status === "succeeded" || data.run.status === "failed" || data.run.status === "cancelled";
+      const states = (data.nodes ?? []).filter((node) => typeof node.nodeKey === "string" && ["running", "succeeded", "failed"].includes(node.status ?? "")).map((node) => ({
+        key: node.nodeKey as string,
+        state: node.status === "failed" ? "failed" as const : node.status === "running" ? "running" as const : "succeeded" as const,
+      }));
+      setNodeStates(states);
+      if (terminal) {
+        setStudyRunning(false);
+        setActiveRunId((current) => current === runId ? null : current);
+        setFinishedRunId(runId);
+        setLiveSummary(data.run.status === "succeeded" ? "本次任务已完成，处理记录已保留，可继续查看。" : "本次任务已结束，可查看处理记录。");
+        await refreshMessages();
+      } else {
+        setStudyRunning(true);
+        setActiveRunId(runId);
+        setFinishedRunId(null);
+        const current = (data.nodes ?? []).find((node) => node.status === "running");
+        setLiveSummary(current?.resultSummary || (data.run.status === "queued" ? "已受理，等待节点调度…" : "正在按步骤处理，结果会逐条显示…"));
+      }
+    } catch { /* 页面切换期间读取失败时，保留当前状态，下一轮继续同步 */ }
+  }, [apiBase, refreshMessages]);
+
   useEffect(() => () => {
     for (const timer of streamTimersRef.current.values()) window.clearInterval(timer);
     streamTimersRef.current.clear();
@@ -312,7 +338,7 @@ export function LearningWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
       if (!pathResponse.ok || !messageResponse.ok) throw new Error("学习空间读取失败，请重新登录后再试");
       const [pathData, messageData] = await Promise.all([
         pathResponse.json() as Promise<{ path?: PathGraph }>,
-        messageResponse.json() as Promise<{ messages?: StudyMessage[]; studyRunning?: boolean }>,
+        messageResponse.json() as Promise<{ messages?: StudyMessage[]; studyRunning?: boolean; activeRunId?: string | null }>,
       ]);
       if (!active) return;
       const nextPath = pathData.path ?? { nodes: [], edges: [] };
@@ -322,6 +348,11 @@ export function LearningWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
       setPath(nextPath);
       setMessages(studyMessages);
       setStudyRunning(serverRunRunning);
+      setActiveRunId(serverRunRunning ? messageData.activeRunId ?? null : null);
+      setFinishedRunId(null);
+      setNodeStates([]);
+      setLiveEvents([]);
+      setLiveSummary(serverRunRunning ? "正在恢复当前任务…" : "");
       if (prefill) {
         setDraft(prefill.draft);
         if (prefill.resourceType) {
@@ -331,6 +362,10 @@ export function LearningWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
       }
       const rememberedId = readRememberedNodeId(nextPath);
       setSelectedNodeId((current) => prefill?.nodeId ?? rememberedId ?? (current && nextPath.nodes.some((item) => item.id === current) ? current : nextPath.nodes[0]?.id ?? null));
+      if (serverRunRunning && messageData.activeRunId) {
+        void refreshRunSnapshot(messageData.activeRunId);
+        return;
+      }
       if (serverRunRunning) return;
       const latestRunId = [...studyMessages].reverse().find((message) => typeof message.metadata.runId === "string")?.metadata.runId;
       if (!latestRunId) return;
@@ -352,39 +387,16 @@ export function LearningWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
       if (active) setLoading(false);
     });
     return () => { active = false; };
-  }, [apiBase]);
+  }, [apiBase, refreshRunSnapshot]);
 
-  // 页面切换或刷新后恢复最近一次协同的公开过程，避免运行记录只在当前挂载周期内可见。
+  // 页面切换后只轮询服务端活动运行；不再把本地快照当成任务终态。
   useEffect(() => {
-    let active = true;
-    try {
-      const raw = window.localStorage.getItem(progressStorageKey);
-      if (!raw) return;
-      const snapshot = JSON.parse(raw) as { runId?: unknown; summary?: unknown; states?: unknown; events?: unknown; completed?: unknown };
-      if (typeof snapshot.runId !== "string" || snapshot.completed !== true) return;
-      const restoredRunId = snapshot.runId;
-      const states = Array.isArray(snapshot.states) ? snapshot.states.filter((item): item is { key: string; state: RunNodeState } => Boolean(item) && typeof item === "object" && typeof (item as { key?: unknown }).key === "string" && ["running", "succeeded", "failed", "revising"].includes(String((item as { state?: unknown }).state))) : [];
-      const events = Array.isArray(snapshot.events) ? snapshot.events.filter((item): item is { id: string; type: string; nodeKey: string | null; summary: string } => Boolean(item) && typeof item === "object" && typeof (item as { id?: unknown }).id === "string" && typeof (item as { summary?: unknown }).summary === "string") : [];
-      queueMicrotask(() => {
-        if (!active) return;
-        setFinishedRunId(restoredRunId);
-        setNodeStates(states);
-        setLiveEvents(events);
-        setLiveSummary(typeof snapshot.summary === "string" ? snapshot.summary : "");
-      });
-    } catch { /* 本地快照损坏时不影响学习记录读取 */ }
-    return () => { active = false; };
-  }, [progressStorageKey]);
+    if (!studyRunning || !activeRunId) return;
+    const timer = window.setInterval(() => void refreshRunSnapshot(activeRunId), 2_000);
+    return () => window.clearInterval(timer);
+  }, [activeRunId, refreshRunSnapshot, studyRunning]);
 
-  useEffect(() => {
-    const runId = activeRunId ?? finishedRunId;
-    if (!runId) return;
-    try {
-      window.localStorage.setItem(progressStorageKey, JSON.stringify({ runId, summary: liveSummary, states: nodeStates, events: liveEvents, completed: !studyRunning }));
-    } catch { /* 本地存储不可用时仍保留当前页面展示 */ }
-  }, [activeRunId, finishedRunId, liveEvents, liveSummary, nodeStates, progressStorageKey, studyRunning]);
-
-  useEffect(() => { feedRef.current?.scrollTo({ top: feedRef.current.scrollHeight, behavior: "smooth" }); }, [messages, sending, studyRunning, nodeStates]);
+  useEffect(() => { feedRef.current?.scrollTo({ top: feedRef.current.scrollHeight }); }, [messages, sending, studyRunning, nodeStates]);
   useEffect(() => {
     const refresh = () => void refreshLearningContext();
     window.addEventListener("im-training-agent:learning-evidence-updated", refresh);
@@ -481,7 +493,7 @@ export function LearningWorkbench({ apiBase, user, onLogout, onNavigate, onUserC
       setNodeStates([]);
       setLiveEvents([]);
       setLiveSummary("");
-      window.localStorage.removeItem(progressStorageKey);
+      setActiveRunId(null);
       setClearDialogOpen(false);
     } catch (error) { setNotice(error instanceof Error ? error.message : "清除对话失败"); }
     finally { setClearingConversation(false); }

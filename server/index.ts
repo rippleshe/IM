@@ -377,9 +377,12 @@ app.get('/api/learning/chat', async (req, res) => {
   const learner = await requireLearner(req, res);
   if (!learner) return;
   const surface = req.query['surface'] === 'study' ? 'study' : 'path';
+  const activeRun = surface === 'study' ? await getActiveRunForLearner(learner.id) : null;
   res.json({
     success: true,
     messages: await learningStore.listChatMessages(learner.id, 80, surface),
+    studyRunning: Boolean(activeRun),
+    activeRunId: activeRun?.id ?? null,
   });
 });
 
@@ -455,6 +458,7 @@ app.post('/api/learning/chat', async (req, res) => {
 
 // ---------- StudyRun：BullMQ 动态 DAG + SSE 事件流（docs/挑战杯技术开发总规.md §4） ----------
 import { createRunsRouter } from "./runs/routes.js";
+import { getActiveRunForLearner } from './runs/service.js';
 app.use("/api/learning/runs", createRunsRouter(requireLearner));
 
 // ---------- 苏格拉底启发式追问（总规 §7.4）：低置信关键知识点多轮引导 ----------
@@ -830,6 +834,7 @@ app.get('/api/settings', async (_req, res) => {
 /** 设置页主动探测：只有拿到模型真实响应才算“已连接”。 */
 function readableModelServiceError(error: unknown, fallback: string) {
   const message = error instanceof Error ? error.message : String(error ?? '');
+  if (/模型连接超时/.test(message)) return '模型服务响应超过 45 秒。当前地址和密钥已配置，更可能是上游响应较慢或排队，不是页面配置错误。';
   if (/超时|timeout|ETIMEDOUT/i.test(message)) return '模型服务响应超时，请稍后重试或检查服务状态';
   if (/未返回可见正文/i.test(message)) return '模型服务已响应，但没有返回可见内容；请检查模型是否支持对话接口';
   if (/fetch|ECONN|ENOTFOUND|network|socket/i.test(message)) return '无法连接模型服务，请检查接口地址和网络';
@@ -850,7 +855,7 @@ app.post('/api/settings/model-connection', async (_req, res) => {
       temperature: 0,
       // 推理模型可能先输出隐藏推理；8 token 足以连通却不足以得到可见正文。
       maxTokens: 256,
-    }), 20_000, '模型连接超时');
+    }), 45_000, '模型连接超时');
     if (!response.text.trim()) throw new Error('模型未返回可见正文');
     res.json({ success: true, provider: response.provider, model: response.model });
   } catch (error) {
