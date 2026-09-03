@@ -53,7 +53,7 @@ export function DagProgress({ states, events, summary, completed }: { states: Da
       <span className="shrink-0 text-[10px] font-medium tabular-nums text-muted-foreground" title={`${completed ? "已结束，" : "正在处理，"}已处理 ${completedCount} 个步骤`}>{completedCount} / 10</span>
     </div>
     <div className="mt-3 space-y-2.5" aria-label="十个协同处理步骤">
-      {phases.map((phase) => <div key={phase.label}>
+      {phases.map((phase, phaseIndex) => <div key={phase.label}>
         <div className="mb-1 text-[10px] font-medium text-slate-500">{phase.label}</div>
         <div className="grid min-w-0 grid-cols-2 gap-1.5">
           {phase.keys.map((key) => {
