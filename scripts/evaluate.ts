@@ -94,7 +94,7 @@ async function main(): Promise<void> {
 
   const results: CaseResult[] = [];
   const selected = cases.slice(0, limit === Infinity ? cases.length : limit);
-  // --stride N：每 N 个案例取 1 个，分层覆盖三画像与六类资源（live 模式用）
+  // --stride N：每 N 个案例取 1 个，分层覆盖三画像与四类资源（live 模式用）
   const selectedStratified = stride > 1 ? selected.filter((_, index) => index % stride === 0) : selected;
   for (const caseItem of selectedStratified) {
     const prior = PERSONA_PRIORS[caseItem.persona];

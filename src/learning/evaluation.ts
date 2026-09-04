@@ -1,6 +1,6 @@
 /**
  * 评测案例与指标（docs/挑战杯技术开发总规.md §8.2）
- * 60 个固定案例：三画像各 20，覆盖 AI4I、MetroPT-3、六类资源与基础/进阶/迁移三层任务。
+ * 60 个固定案例：三画像各 20，覆盖 AI4I、MetroPT-3、四类资源与基础/进阶/迁移三层任务。
  * 纯函数：案例生成确定性，指标计算可复现。
  */
 import type { LearningResourceType } from './types.js';
